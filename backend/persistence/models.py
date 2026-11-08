@@ -1544,3 +1544,27 @@ class RevokedToken(Base):
     revoked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class IdentityMembership(Base):
+    """Server-managed mapping from an introspected identity-provider subject to tenant roles."""
+
+    __tablename__ = "identity_membership"
+    __table_args__ = (
+        UniqueConstraint("issuer", "subject", "tenant_id", name="uq_identity_membership_subject_tenant"),
+        Index("ix_identity_membership_lookup", "issuer", "subject", "is_active"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    issuer: Mapped[str] = mapped_column(String(512), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenant.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'HUMAN'"))
+    roles: Mapped[list[str]] = mapped_column(JSON, nullable=False, server_default=text("'[]'::json"))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
