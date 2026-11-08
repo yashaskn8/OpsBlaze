@@ -8,10 +8,11 @@ import time
 import uuid
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
 from backend.config import Settings
+from backend.api.main import create_app
 from backend.domain.auth import (
     ActorKind,
     AuthenticationError,
@@ -228,3 +229,40 @@ async def test_revocation_is_persisted_and_scoped_to_the_current_token(
 
     rejected = await api_client.get("/v1/auth/me", headers=headers)
     assert rejected.status_code == 401
+
+
+
+@pytest.mark.asyncio
+async def test_revocation_survives_new_application_instance(
+    api_client: AsyncClient,
+    test_settings,
+    isolated_tenant: uuid.UUID,
+) -> None:
+    """A second independently constructed API app observes the PostgreSQL revocation record."""
+    login = await api_client.post(
+        "/v1/auth/login",
+        json={
+            "username": "release_owner",
+            "password": "dev-password-secure",
+            "tenant_id": str(isolated_tenant),
+        },
+    )
+    assert login.status_code == 200
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    revoked = await api_client.post("/v1/auth/revoke", headers=headers, json={})
+    assert revoked.status_code == 200
+
+    second_app = create_app(test_settings)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=second_app),
+            base_url="http://second-process.test",
+        ) as second_client:
+            response = await second_client.get("/v1/auth/me", headers=headers)
+            assert response.status_code == 401
+            assert "revoked" in response.json()["detail"].lower()
+    finally:
+        if getattr(second_app.state, "engine", None) is not None:
+            await second_app.state.engine.dispose()
