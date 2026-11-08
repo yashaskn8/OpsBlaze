@@ -85,6 +85,7 @@ async def test_stage8_tables_and_columns_exist() -> None:
     await engine.dispose()
 
 
+@pytest.mark.historical
 @pytest.mark.asyncio
 async def test_historical_data_preservation_opsblaze() -> None:
     """Verify that historical counts in opsblaze are strictly preserved."""
@@ -103,6 +104,7 @@ async def test_historical_data_preservation_opsblaze() -> None:
     await engine.dispose()
 
 
+@pytest.mark.historical
 @pytest.mark.asyncio
 async def test_historical_data_preservation_opsblaze_test() -> None:
     """Verify that historical counts in opsblaze_test are strictly preserved."""
