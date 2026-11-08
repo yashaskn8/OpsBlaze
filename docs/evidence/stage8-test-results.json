@@ -1,0 +1,117 @@
+{
+  "timestamp": "2026-11-08T15:43:00+05:30",
+  "milestone": "Stage 8 (Features E3 & E4)",
+  "title": "OpsBlaze / TITAN-20 Stage 8 Test Results & Evidence Summary",
+  "governing_adr": "ADR-0009",
+  "environment": {
+    "os": "Windows 11",
+    "python": "3.14.7",
+    "postgresql": "17.11",
+    "pytest": "9.2.0",
+    "alembic_head": "stage8_001_e3_e4"
+  },
+  "summary": {
+    "total_tests_collected": 194,
+    "total_tests_passed": 194,
+    "total_tests_failed": 0,
+    "total_tests_skipped": 0,
+    "full_suite_duration_seconds": 91.57,
+    "stage8_isolated_suite_tests": 35,
+    "stage8_isolated_duration_seconds": 6.28
+  },
+  "stage8_test_suites": {
+    "tests/unit/test_e3_failure_taxonomy.py": {
+      "tests": 15,
+      "passed": 15,
+      "failed": 0,
+      "coverage": [
+        "ProposalValidator prompt refinement diff validation",
+        "ProposalValidator budget tuning bounds validation",
+        "ProposalValidator rejects forbidden target components",
+        "ProposalValidator rejects SQL smuggling directives",
+        "ProposalValidator rejects Python code smuggling directives",
+        "ProposalValidator extra='forbid' rejects unregistered fields",
+        "FailureClassifier VERIFIED_FAILURE classification",
+        "FailureClassifier DISPUTED outcome classification",
+        "FailureClassifier ignores synthetic evaluation incidents (INV-E3-5)",
+        "FailureClusterService deterministic signature clustering & exemplar tracking",
+        "FailureClusterService tenant isolation",
+        "ImprovementProposal CAS optimistic locking (DRAFT -> PROPOSED -> REVIEWED -> EVALUATION_READY)",
+        "ProposalValidator allows benign English verbs (Select, Create, Update)",
+        "ProposalValidator scans variable_deltas for nested smuggling",
+        "FailureClusterService rejects missing or cross-tenant exemplar case"
+      ]
+    },
+    "tests/unit/test_e4_lesson_registry.py": {
+      "tests": 8,
+      "passed": 8,
+      "failed": 0,
+      "coverage": [
+        "sanitize_lesson_summary_for_llm strips code blocks, role prefixes, injection directives",
+        "Lesson drafting requires settled outcome and active tenant consent epoch",
+        "Dual-key human validation & activation lifecycle (DRAFT -> VALIDATED -> ACTIVE)",
+        "PostgreSQL 17 STORED TSVector full-text search retrieval",
+        "Synchronous query-time invalidation on consent revocation (INV-E1-1)",
+        "Synchronous query-time invalidation on outcome revision supersession",
+        "Cross-tenant operational lesson isolation",
+        "Lesson usage audit trail and P3 causal lineage recording"
+      ]
+    },
+    "tests/unit/test_stage8_schema_integrity.py": {
+      "tests": 3,
+      "passed": 3,
+      "failed": 0,
+      "coverage": [
+        "Stage 8 tables (failure_cluster, failure_case, improvement_proposal, operational_lesson, lesson_usage) exist with correct columns and constraints",
+        "Historical data preservation in opsblaze database (13 tenants, 67 incidents, 201 effect receipts intact)",
+        "Historical data preservation in opsblaze_test database (29 incidents intact)"
+      ]
+    },
+    "tests/integration/test_stage8_e3_e4_lifecycle.py": {
+      "tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "coverage": [
+        "Complete E3 failure classification -> cluster formation -> proposal review -> E4 lesson drafting -> human activation -> A1 probe loop ingestion -> P3 causal trace DAG projection"
+      ]
+    },
+    "tests/chaos/test_stage8_omega_adversarial.py": {
+      "tests": 8,
+      "passed": 8,
+      "failed": 0,
+      "coverage": [
+        "Adversarial prompt injection sanitization across all layers",
+        "Forbidden proposal diff tampering rejection",
+        "Outcome reversal instant invalidation race (zero staleness window)",
+        "Consent epoch invalidation race vs query-time retrieval",
+        "Strict cross-tenant isolation across all E3 and E4 resources",
+        "CAS optimistic concurrency race conditions on proposals and lessons",
+        "Quarantined cluster rejects new proposal drafting",
+        "Synthetic evaluation incident exclusion from operational memory"
+      ]
+    }
+  },
+  "static_analysis": {
+    "ruff": {
+      "status": "PASSED",
+      "errors": 0,
+      "files_checked": 131
+    },
+    "mypy": {
+      "status": "PASSED",
+      "errors": 0,
+      "files_checked": 85
+    },
+    "frontend_build": {
+      "status": "PASSED",
+      "modules_transformed": 21,
+      "build_duration_ms": 320
+    },
+    "graphify": {
+      "status": "PASSED",
+      "nodes": 2385,
+      "edges": 8439,
+      "communities": 103
+    }
+  }
+}

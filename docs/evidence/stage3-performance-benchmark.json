@@ -1,0 +1,204 @@
+{
+  "benchmark": "TITAN-20 Stage 3 (B2 + B3 + E8) Controlled Performance & Reliability",
+  "timestamp_utc": "2026-11-07T16:40:16.902082+00:00",
+  "concurrency_levels": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "same_target_reservation_contention": {
+    "concurrency_1": {
+      "count": 1,
+      "elapsed_seconds": 0.0259,
+      "throughput_ops_per_sec": 38.67,
+      "p50_ms": 25.704,
+      "p95_ms": 25.704,
+      "p99_ms": 25.704,
+      "max_ms": 25.704,
+      "mean_ms": 25.704,
+      "winners": 1,
+      "conflicts": 0
+    },
+    "concurrency_5": {
+      "count": 5,
+      "elapsed_seconds": 0.2049,
+      "throughput_ops_per_sec": 24.41,
+      "p50_ms": 109.796,
+      "p95_ms": 185.601,
+      "p99_ms": 198.171,
+      "max_ms": 201.313,
+      "mean_ms": 111.935,
+      "winners": 1,
+      "conflicts": 4
+    },
+    "concurrency_10": {
+      "count": 10,
+      "elapsed_seconds": 0.1266,
+      "throughput_ops_per_sec": 78.98,
+      "p50_ms": 81.118,
+      "p95_ms": 114.975,
+      "p99_ms": 115.457,
+      "max_ms": 115.577,
+      "mean_ms": 82.012,
+      "winners": 1,
+      "conflicts": 9
+    },
+    "concurrency_20": {
+      "count": 20,
+      "elapsed_seconds": 0.3597,
+      "throughput_ops_per_sec": 55.6,
+      "p50_ms": 277.164,
+      "p95_ms": 324.133,
+      "p99_ms": 332.112,
+      "max_ms": 334.107,
+      "mean_ms": 240.901,
+      "winners": 1,
+      "conflicts": 19
+    }
+  },
+  "different_target_b2_b3_execution": {
+    "concurrency_1": {
+      "count": 1,
+      "elapsed_seconds": 0.0682,
+      "throughput_ops_per_sec": 14.67,
+      "p50_ms": 67.996,
+      "p95_ms": 67.996,
+      "p99_ms": 67.996,
+      "max_ms": 67.996,
+      "mean_ms": 67.996
+    },
+    "concurrency_5": {
+      "count": 5,
+      "elapsed_seconds": 0.1187,
+      "throughput_ops_per_sec": 42.11,
+      "p50_ms": 116.276,
+      "p95_ms": 117.411,
+      "p99_ms": 117.478,
+      "max_ms": 117.495,
+      "mean_ms": 110.087
+    },
+    "concurrency_10": {
+      "count": 10,
+      "elapsed_seconds": 0.2686,
+      "throughput_ops_per_sec": 37.23,
+      "p50_ms": 259.654,
+      "p95_ms": 266.272,
+      "p99_ms": 266.359,
+      "max_ms": 266.381,
+      "mean_ms": 253.867
+    },
+    "concurrency_20": {
+      "count": 20,
+      "elapsed_seconds": 0.7802,
+      "throughput_ops_per_sec": 25.64,
+      "p50_ms": 722.083,
+      "p95_ms": 750.947,
+      "p99_ms": 752.937,
+      "max_ms": 753.434,
+      "mean_ms": 685.039
+    }
+  },
+  "effect_receipt_lookup": {
+    "concurrency_1": {
+      "count": 1,
+      "elapsed_seconds": 0.003,
+      "throughput_ops_per_sec": 332.72,
+      "p50_ms": 2.921,
+      "p95_ms": 2.921,
+      "p99_ms": 2.921,
+      "max_ms": 2.921,
+      "mean_ms": 2.921
+    },
+    "concurrency_5": {
+      "count": 5,
+      "elapsed_seconds": 0.0067,
+      "throughput_ops_per_sec": 742.27,
+      "p50_ms": 5.948,
+      "p95_ms": 6.503,
+      "p99_ms": 6.564,
+      "max_ms": 6.58,
+      "mean_ms": 5.977
+    },
+    "concurrency_10": {
+      "count": 10,
+      "elapsed_seconds": 0.0117,
+      "throughput_ops_per_sec": 853.67,
+      "p50_ms": 10.15,
+      "p95_ms": 11.228,
+      "p99_ms": 11.357,
+      "max_ms": 11.39,
+      "mean_ms": 10.196
+    },
+    "concurrency_20": {
+      "count": 20,
+      "elapsed_seconds": 0.2632,
+      "throughput_ops_per_sec": 75.99,
+      "p50_ms": 94.553,
+      "p95_ms": 191.095,
+      "p99_ms": 234.67,
+      "max_ms": 245.564,
+      "mean_ms": 112.459
+    }
+  },
+  "unknown_effect_reconciliation": {
+    "concurrency_1": {
+      "count": 1,
+      "elapsed_seconds": 0.0238,
+      "throughput_ops_per_sec": 42.1,
+      "p50_ms": 23.752,
+      "p95_ms": 23.752,
+      "p99_ms": 23.752,
+      "max_ms": 23.752,
+      "mean_ms": 23.752
+    },
+    "concurrency_5": {
+      "count": 5,
+      "elapsed_seconds": 0.0844,
+      "throughput_ops_per_sec": 59.25,
+      "p50_ms": 16.879,
+      "p95_ms": 16.879,
+      "p99_ms": 16.879,
+      "max_ms": 16.879,
+      "mean_ms": 16.879
+    },
+    "concurrency_10": {
+      "count": 10,
+      "elapsed_seconds": 0.1048,
+      "throughput_ops_per_sec": 95.41,
+      "p50_ms": 10.481,
+      "p95_ms": 10.481,
+      "p99_ms": 10.481,
+      "max_ms": 10.481,
+      "mean_ms": 10.481
+    },
+    "concurrency_20": {
+      "count": 20,
+      "elapsed_seconds": 0.3444,
+      "throughput_ops_per_sec": 58.07,
+      "p50_ms": 17.221,
+      "p95_ms": 17.221,
+      "p99_ms": 17.221,
+      "max_ms": 17.221,
+      "mean_ms": 17.221
+    }
+  },
+  "e8_conformance_runs": {
+    "suite_12_scenarios_x5": {
+      "count": 5,
+      "elapsed_seconds": 0.0649,
+      "throughput_ops_per_sec": 77.07,
+      "p50_ms": 8.287,
+      "p95_ms": 16.034,
+      "p99_ms": 17.535,
+      "max_ms": 17.911,
+      "mean_ms": 10.122
+    }
+  },
+  "connection_pool_status": "Pool size: 10  Connections in pool: 10 Current Overflow: 0 Current Checked out connections: 0",
+  "resource_usage": {
+    "cpu_time_seconds": 5.6094,
+    "wall_time_seconds": 6.9795,
+    "pid": 14288
+  }
+}

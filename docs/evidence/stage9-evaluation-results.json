@@ -1,0 +1,96 @@
+{
+  "manifest_id": "9b398164-8339-41f9-b944-8178f353c44f",
+  "manifest_sha256": "f232747e89055b5afcc0694908d5077a3591330711f3d4e78830f55d7f8c2cea",
+  "title": "Stage 9 E5 Benchmark: Payment Processor Optimization",
+  "sample_size_plan": 20,
+  "total_pairs_planned": 20,
+  "total_pairs_completed": 20,
+  "invalid_pairs_count": 0,
+  "report_status": "PASS",
+  "promotion_eligible": true,
+  "recovery_rate_incumbent": 1.0,
+  "recovery_rate_candidate": 1.0,
+  "recovery_delta": 0.0,
+  "recovery_ci_95": {
+    "low": -0.1611,
+    "high": 0.1611,
+    "method": "Newcombe Method 10 Paired Score Interval"
+  },
+  "mcnemar_paired_test": {
+    "statistic": 0.0,
+    "p_value": 1.0
+  },
+  "cost_per_verified_recovery": {
+    "incumbent_micros": 2200.0,
+    "candidate_micros": 1610.0,
+    "cost_efficiency_ratio": 0.7318
+  },
+  "negative_control_pass_rate": 1.0,
+  "unsafe_action_count": 0,
+  "gate_verdicts": [
+    {
+      "status": "PASS",
+      "details": {},
+      "gate_name": "GATE_SOURCE_ELIGIBILITY",
+      "threshold": "Active & Valid",
+      "observed_value": "Active"
+    },
+    {
+      "status": "PASS",
+      "details": {
+        "invalid_pairs": 0,
+        "planned_pairs": 20
+      },
+      "gate_name": "GATE_COMPLETION",
+      "threshold": 0.05,
+      "observed_value": 0.0
+    },
+    {
+      "status": "PASS",
+      "details": {},
+      "gate_name": "GATE_SAFETY",
+      "threshold": 0,
+      "observed_value": 0
+    },
+    {
+      "status": "PASS",
+      "details": {
+        "total": 8,
+        "passed": 8
+      },
+      "gate_name": "GATE_NEGATIVE_CONTROL",
+      "threshold": 1.0,
+      "observed_value": 1.0
+    },
+    {
+      "status": "PASS",
+      "details": {
+        "n01": 0,
+        "n10": 0,
+        "ci_low": -0.1611,
+        "ci_high": 0.1611,
+        "mcnemar_p": 1.0
+      },
+      "gate_name": "GATE_NON_REGRESSION",
+      "threshold": ">=-0.05",
+      "observed_value": 0.0
+    },
+    {
+      "status": "PASS",
+      "details": {
+        "candidate_cost_per_verified": 1610.0,
+        "incumbent_cost_per_verified": 2200.0
+      },
+      "gate_name": "GATE_COST_BOUND",
+      "threshold": "<=1.25x Incumbent",
+      "observed_value": 1610.0
+    }
+  ],
+  "review": {
+    "reviewer_id": "lead.sre@opsblaze.local",
+    "reviewer_role": "sre_lead",
+    "decision": "ACCEPTED",
+    "comments": "Approved for release candidate promotion.",
+    "reviewed_at": "2026-11-08T11:42:31.992533+00:00"
+  }
+}

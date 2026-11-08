@@ -1,0 +1,86 @@
+{
+  "benchmark_timestamp_utc": "2026-11-07T15:42:00.320431+00:00",
+  "environment": {
+    "os": "Windows",
+    "database": "opsblaze_test",
+    "pool_size": 10,
+    "max_overflow": 10
+  },
+  "admission_concurrency_matrix": [
+    {
+      "concurrency": 1,
+      "total_requests": 20,
+      "wall_time_s": 0.1963,
+      "throughput_rps": 101.87,
+      "latency_p50_ms": 7.178,
+      "latency_p95_ms": 12.212,
+      "latency_p99_ms": 47.823,
+      "latency_mean_ms": 9.794,
+      "error_count": 0,
+      "error_rate_pct": 0.0,
+      "pool_status": "Pool size: 10  Connections in pool: 1 Current Overflow: -9 Current Checked out connections: 0"
+    },
+    {
+      "concurrency": 5,
+      "total_requests": 20,
+      "wall_time_s": 0.1925,
+      "throughput_rps": 103.91,
+      "latency_p50_ms": 29.681,
+      "latency_p95_ms": 129.897,
+      "latency_p99_ms": 130.085,
+      "latency_mean_ms": 46.055,
+      "error_count": 0,
+      "error_rate_pct": 0.0,
+      "pool_status": "Pool size: 10  Connections in pool: 5 Current Overflow: -5 Current Checked out connections: 0"
+    },
+    {
+      "concurrency": 10,
+      "total_requests": 30,
+      "wall_time_s": 0.2428,
+      "throughput_rps": 123.56,
+      "latency_p50_ms": 60.818,
+      "latency_p95_ms": 148.125,
+      "latency_p99_ms": 203.49,
+      "latency_mean_ms": 73.721,
+      "error_count": 0,
+      "error_rate_pct": 0.0,
+      "pool_status": "Pool size: 10  Connections in pool: 10 Current Overflow: 0 Current Checked out connections: 0"
+    },
+    {
+      "concurrency": 20,
+      "total_requests": 60,
+      "wall_time_s": 0.5607,
+      "throughput_rps": 107.0,
+      "latency_p50_ms": 135.734,
+      "latency_p95_ms": 360.07,
+      "latency_p99_ms": 408.26,
+      "latency_mean_ms": 172.323,
+      "error_count": 0,
+      "error_rate_pct": 0.0,
+      "pool_status": "Pool size: 10  Connections in pool: 10 Current Overflow: 0 Current Checked out connections: 0"
+    }
+  ],
+  "outbox_and_temporal_e2e": {
+    "total_outbox_dispatched": 140,
+    "dispatch_wall_time_s": 2.9263,
+    "dispatcher_rate_items_per_sec": 47.84,
+    "timed_workflows_completed_to_awaiting_approval": 10,
+    "time_to_awaiting_approval_p50_ms": 4517.716,
+    "time_to_awaiting_approval_p95_ms": 4547.519,
+    "time_to_awaiting_approval_p99_ms": 4550.803
+  },
+  "mixed_soak_run": {
+    "soak_iterations": 25,
+    "total_operations": 109,
+    "soak_wall_time_s": 1.626,
+    "soak_ops_per_sec": 67.05,
+    "soak_error_count": 0,
+    "duplicate_logical_incident_count": 0
+  },
+  "resource_utilization": {
+    "process_cpu_time_s": 9.328,
+    "memory_start_mb": 112.38,
+    "memory_end_mb": 150.36,
+    "memory_delta_mb": 37.98
+  }
+}

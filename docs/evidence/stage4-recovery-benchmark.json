@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-11-07T17:50:24.694981+00:00",
+  "benchmark_parameters": {
+    "historical_receipts_count": 100,
+    "stalled_workflows_count": 20,
+    "divergent_epoch_fences_count": 5,
+    "pool_size": 10,
+    "max_overflow": 10
+  },
+  "performance_metrics": {
+    "total_recovery_duration_ms": 1011.2,
+    "peak_memory_bytes": 1425124,
+    "peak_memory_kb": 1391.72,
+    "peak_memory_mb": 1.359
+  },
+  "reconciliation_metrics": {
+    "unresolved_receipts_reconciled": 50,
+    "confirmed_receipts_verified": 0,
+    "orphaned_prepared_quarantined": 10,
+    "epochs_synchronized": 5,
+    "reservations_cleaned": 5,
+    "incidents_converged": 20,
+    "degraded_mode_exited": true,
+    "schema_verified": true
+  },
+  "hardware_environment": {
+    "os": "Windows 11 / Windows-native",
+    "python_version": "3.14.7",
+    "postgresql_version": "17.11",
+    "temporal_server": "Temporal SQLite local dev server"
+  }
+}

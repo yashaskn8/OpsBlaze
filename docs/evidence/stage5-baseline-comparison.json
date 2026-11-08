@@ -1,0 +1,157 @@
+{
+  "timestamp": "2026-11-07T19:04:56.949319+00:00",
+  "fixtures_count": 5,
+  "results": [
+    {
+      "strategy": "Strategy A: Static Runbook",
+      "total_probes": 20,
+      "avg_probes": 4.0,
+      "total_tokens": 22500,
+      "total_cost_usd": 0.45,
+      "accuracy_pct": 20.0,
+      "false_positive_pct": 80.0,
+      "abstention_calibration_pct": 0.0,
+      "details": [
+        {
+          "fixture_id": "fix-1-oom-starvation",
+          "probes": 4,
+          "tokens": 4500,
+          "cost_micros": 90000,
+          "action": "RESTART_POD",
+          "outcome": "CORRECT"
+        },
+        {
+          "fixture_id": "fix-2-config-timeout-drift",
+          "probes": 4,
+          "tokens": 4500,
+          "cost_micros": 90000,
+          "action": "RESTART_POD",
+          "outcome": "FALSE_POSITIVE"
+        },
+        {
+          "fixture_id": "fix-3-connection-pool-leak",
+          "probes": 4,
+          "tokens": 4500,
+          "cost_micros": 90000,
+          "action": "RESTART_POD",
+          "outcome": "FALSE_POSITIVE"
+        },
+        {
+          "fixture_id": "fix-4-disk-saturation",
+          "probes": 4,
+          "tokens": 4500,
+          "cost_micros": 90000,
+          "action": "RESTART_POD",
+          "outcome": "FALSE_POSITIVE"
+        },
+        {
+          "fixture_id": "fix-5-transient-upstream-jitter",
+          "probes": 4,
+          "tokens": 4500,
+          "cost_micros": 90000,
+          "action": "RESTART_POD",
+          "outcome": "FALSE_POSITIVE"
+        }
+      ]
+    },
+    {
+      "strategy": "Strategy B: Cheapest-First Heuristic",
+      "total_probes": 13,
+      "avg_probes": 2.6,
+      "total_tokens": 15400,
+      "total_cost_usd": 0.4,
+      "accuracy_pct": 80.0,
+      "false_positive_pct": 20.0,
+      "abstention_calibration_pct": 0.0,
+      "details": [
+        {
+          "fixture_id": "fix-1-oom-starvation",
+          "probes": 3,
+          "tokens": 3400,
+          "cost_micros": 90000,
+          "outcome": "CORRECT"
+        },
+        {
+          "fixture_id": "fix-2-config-timeout-drift",
+          "probes": 2,
+          "tokens": 2600,
+          "cost_micros": 65000,
+          "outcome": "CORRECT"
+        },
+        {
+          "fixture_id": "fix-3-connection-pool-leak",
+          "probes": 4,
+          "tokens": 4200,
+          "cost_micros": 115000,
+          "outcome": "CORRECT"
+        },
+        {
+          "fixture_id": "fix-4-disk-saturation",
+          "probes": 3,
+          "tokens": 3400,
+          "cost_micros": 90000,
+          "outcome": "CORRECT"
+        },
+        {
+          "fixture_id": "fix-5-transient-upstream-jitter",
+          "probes": 1,
+          "tokens": 1800,
+          "cost_micros": 40000,
+          "outcome": "FALSE_POSITIVE"
+        }
+      ]
+    },
+    {
+      "strategy": "Strategy C: A1 Adaptive Probe Planner",
+      "total_probes": 5,
+      "avg_probes": 1.0,
+      "total_tokens": 9400,
+      "total_cost_usd": 0.2,
+      "accuracy_pct": 100.0,
+      "false_positive_pct": 0.0,
+      "abstention_calibration_pct": 100.0,
+      "details": [
+        {
+          "fixture_id": "fix-1-oom-starvation",
+          "probes": 1,
+          "tokens": 1950,
+          "cost_micros": 40000,
+          "status": "PROPOSING",
+          "outcome": "CORRECT_PROPOSAL"
+        },
+        {
+          "fixture_id": "fix-2-config-timeout-drift",
+          "probes": 1,
+          "tokens": 1950,
+          "cost_micros": 40000,
+          "status": "PROPOSING",
+          "outcome": "CORRECT_PROPOSAL"
+        },
+        {
+          "fixture_id": "fix-3-connection-pool-leak",
+          "probes": 1,
+          "tokens": 1950,
+          "cost_micros": 40000,
+          "status": "PROPOSING",
+          "outcome": "CORRECT_PROPOSAL"
+        },
+        {
+          "fixture_id": "fix-4-disk-saturation",
+          "probes": 1,
+          "tokens": 1950,
+          "cost_micros": 40000,
+          "status": "PROPOSING",
+          "outcome": "CORRECT_PROPOSAL"
+        },
+        {
+          "fixture_id": "fix-5-transient-upstream-jitter",
+          "probes": 1,
+          "tokens": 1600,
+          "cost_micros": 40000,
+          "status": "ABSTAINED",
+          "outcome": "CALIBRATED_ABSTENTION"
+        }
+      ]
+    }
+  ]
+}

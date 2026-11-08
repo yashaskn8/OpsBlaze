@@ -1,0 +1,63 @@
+"""OpsBlaze Features B2 (Version-Fenced Resource Reservation) and B3 (Effect Receipt & Reconciliation)."""
+
+from __future__ import annotations
+
+from backend.effects.fencing import (
+    ApprovalRequiredError,
+    ApprovedPlanContext,
+    InvalidReservationStateTransitionError,
+    MutationPermit,
+    ReservationExpiredError,
+    ReservationState,
+    ResourceAlreadyReservedError,
+    ResourceReservationManager,
+    ResourceUncertainEffectPendingError,
+    StaleFenceError,
+    TargetVersionConflictError,
+    validate_reservation_transition,
+    verify_approved_plan_context,
+)
+from backend.effects.receipts import (
+    ActionGateway,
+    ActionSpec,
+    EffectIdempotencyConflictError,
+    EffectReceiptError,
+    EffectReceiptSnapshot,
+    EffectReconciler,
+    EffectState,
+    IndependentPostconditionVerifier,
+    InvalidEffectStateTransitionError,
+    PostconditionVerificationResult,
+    StaleEffectClaimError,
+    compute_effect_idempotency_key,
+    validate_effect_transition,
+)
+
+__all__ = [
+    "ActionGateway",
+    "ActionSpec",
+    "ApprovalRequiredError",
+    "ApprovedPlanContext",
+    "EffectIdempotencyConflictError",
+    "EffectReceiptError",
+    "EffectReceiptSnapshot",
+    "EffectReconciler",
+    "EffectState",
+    "IndependentPostconditionVerifier",
+    "InvalidEffectStateTransitionError",
+    "InvalidReservationStateTransitionError",
+    "MutationPermit",
+    "PostconditionVerificationResult",
+    "ReservationExpiredError",
+    "ReservationState",
+    "ResourceAlreadyReservedError",
+    "ResourceReservationManager",
+    "ResourceUncertainEffectPendingError",
+    "StaleEffectClaimError",
+    "StaleFenceError",
+    "TargetVersionConflictError",
+    "compute_effect_idempotency_key",
+    "validate_effect_transition",
+    "validate_reservation_transition",
+    "verify_approved_plan_context",
+]

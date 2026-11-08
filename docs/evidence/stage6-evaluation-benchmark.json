@@ -1,0 +1,75 @@
+{
+  "manifest_id": "42873c21-6d87-4963-8c04-aab61a294fba",
+  "title": "Stage 6 Production S1 Decision Replay & Statistical Evaluation",
+  "total_pairs": 25,
+  "total_trials": 75,
+  "strategy_accuracies": {
+    "Strategy_A_Runbook": 0.6,
+    "Strategy_B_CheapestFirst": 0.4,
+    "Strategy_C_AdaptivePlanner": 1.0
+  },
+  "strategy_accuracy_confidence_intervals": {
+    "Strategy_A_Runbook": [
+      0.4074,
+      0.766
+    ],
+    "Strategy_B_CheapestFirst": [
+      0.234,
+      0.5926
+    ],
+    "Strategy_C_AdaptivePlanner": [
+      0.8668,
+      1.0
+    ]
+  },
+  "strategy_avg_costs": {
+    "Strategy_A_Runbook": 11500.0,
+    "Strategy_B_CheapestFirst": 1600.0,
+    "Strategy_C_AdaptivePlanner": 7700.0
+  },
+  "strategy_avg_probes": {
+    "Strategy_A_Runbook": 2.4,
+    "Strategy_B_CheapestFirst": 1.0,
+    "Strategy_C_AdaptivePlanner": 1.4
+  },
+  "mcnemar_a_vs_c": {
+    "n00": 0,
+    "n01": 10,
+    "n10": 0,
+    "n11": 15,
+    "statistic": 10.0,
+    "p_value": 0.001953,
+    "significant_at_05": true,
+    "method": "exact_binomial"
+  },
+  "mcnemar_b_vs_c": {
+    "n00": 0,
+    "n01": 15,
+    "n10": 0,
+    "n11": 10,
+    "statistic": 15.0,
+    "p_value": 6.1e-05,
+    "significant_at_05": true,
+    "method": "exact_binomial"
+  },
+  "wilcoxon_cost_a_vs_c": {
+    "n": 15,
+    "w_statistic": 0.0,
+    "w_plus": 120.0,
+    "w_minus": 0.0,
+    "z_score": -3.3794,
+    "p_value": 0.000727,
+    "significant_at_05": true
+  },
+  "wilcoxon_cost_b_vs_c": {
+    "n": 25,
+    "w_statistic": 0.0,
+    "w_plus": 0.0,
+    "w_minus": 325.0,
+    "z_score": -4.3589,
+    "p_value": 1.3e-05,
+    "significant_at_05": true
+  },
+  "negative_control_pass_rate": 1.0,
+  "passed_quality_gate": true
+}

@@ -1,0 +1,56 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/build/
+dist/
+build/
+
+# Local state and backups
+.local/
+backups/
+*.dump
+*.dump.*
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.log.*
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+tmp/
+.tmp/
+
+# Graphify generated output
+graphify-out/cache/
+graphify-out/.*

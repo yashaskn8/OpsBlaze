@@ -1,0 +1,262 @@
+{
+  "drill": "Stage 4 Phase 2 \u2014 PostgreSQL Backup, Isolated Restore & Forward-Migration Drill",
+  "timestamp_utc": "2026-11-07T17:16:09.225754+00:00",
+  "pre_stage3_backups": {
+    "opsblaze_pre_stage3.dump": {
+      "path": ".local\\backups\\opsblaze_pre_stage3.dump",
+      "size_bytes": 19345,
+      "sha256": "3e3859dccbeea03972adc9fc07a8f66d362d215e714a7cf7b81ff9f8591fcd39",
+      "toc_entry_count": 48
+    },
+    "opsblaze_test_pre_stage3.dump": {
+      "path": ".local\\backups\\opsblaze_test_pre_stage3.dump",
+      "size_bytes": 24869,
+      "sha256": "fa32b9098edc21d85960edd5413ff0f1982dfe3ec5784c8a14d0372d664d046c",
+      "toc_entry_count": 48
+    }
+  },
+  "stage4_backups": {
+    "opsblaze": {
+      "path": ".local\\backups\\stage4\\opsblaze_stage4.dump",
+      "size_bytes": 22089,
+      "sha256": "03ca6a44d11dc9ff8d0109a5caba9197683056329a1d050cedf3fcdb056a3852",
+      "toc_entry_count": 51,
+      "backup_duration_ms": 268.02
+    },
+    "opsblaze_test": {
+      "path": ".local\\backups\\stage4\\opsblaze_test_stage4.dump",
+      "size_bytes": 27620,
+      "sha256": "28051170388fa611d22f22a818ce0d87f255a6416c9053132c50850359396ff0",
+      "toc_entry_count": 51,
+      "backup_duration_ms": 271.36
+    }
+  },
+  "live_databases_before_and_after_identical": true,
+  "opsblaze_fingerprint": {
+    "database": "opsblaze",
+    "alembic_version": "stage3_002_b2_b3_e8",
+    "table_count": 8,
+    "tables": [
+      "adapter_conformance",
+      "alembic_version",
+      "effect_receipt",
+      "incident",
+      "outbox",
+      "resource_epoch",
+      "resource_reservation",
+      "tenant"
+    ],
+    "column_count": 63,
+    "constraint_count": 28,
+    "index_count": 22,
+    "sequences": [
+      "outbox_id_seq"
+    ],
+    "row_counts": {
+      "adapter_conformance": 0,
+      "alembic_version": 1,
+      "effect_receipt": 0,
+      "incident": 0,
+      "outbox": 0,
+      "resource_epoch": 0,
+      "resource_reservation": 0,
+      "tenant": 0
+    },
+    "effect_receipt_state_distribution": {},
+    "data_fingerprints": {
+      "tenant_ids_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "incident_rows_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "effect_receipt_rows_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "schema_fingerprint_sha256": "d23cec383a1a3fde0447407dd182188c4f529126f951118bf6f3d8bee2d66f6b"
+  },
+  "opsblaze_test_fingerprint": {
+    "database": "opsblaze_test",
+    "alembic_version": "stage3_002_b2_b3_e8",
+    "table_count": 8,
+    "tables": [
+      "adapter_conformance",
+      "alembic_version",
+      "effect_receipt",
+      "incident",
+      "outbox",
+      "resource_epoch",
+      "resource_reservation",
+      "tenant"
+    ],
+    "column_count": 63,
+    "constraint_count": 28,
+    "index_count": 22,
+    "sequences": [
+      "outbox_id_seq"
+    ],
+    "row_counts": {
+      "adapter_conformance": 0,
+      "alembic_version": 1,
+      "effect_receipt": 29,
+      "incident": 22,
+      "outbox": 0,
+      "resource_epoch": 0,
+      "resource_reservation": 0,
+      "tenant": 22
+    },
+    "effect_receipt_state_distribution": {
+      "FAILED": 2,
+      "NEEDS_REVIEW": 1,
+      "PREPARED": 3,
+      "SENT": 13,
+      "VERIFIED": 10
+    },
+    "data_fingerprints": {
+      "tenant_ids_sha256": "63b140dc7c7e28a982b4c450dd2e538308d0bed410089b3ad40e56ca86907b32",
+      "incident_rows_sha256": "aa5d63e3e0af071eeb9781d5f1c4960e6b3074df8a68935ee579cd2cd57488bb",
+      "effect_receipt_rows_sha256": "30590415460afcb1dd4ab6ec346a8ca95d0c259ff8d755e898ec7ba24e88547d"
+    },
+    "schema_fingerprint_sha256": "d23cec383a1a3fde0447407dd182188c4f529126f951118bf6f3d8bee2d66f6b"
+  },
+  "isolated_restore_drill_a_pre_stage3": {
+    "isolated_db_name": "opsblaze_restore_pre_s3_b37f5cc4",
+    "restore_duration_ms": 261.59,
+    "forward_migration_duration_ms": 216.33,
+    "restored_before_upgrade": {
+      "database": "opsblaze_restore_pre_s3_b37f5cc4",
+      "alembic_version": "b3_005_claim_payload",
+      "table_count": 7,
+      "tables": [
+        "alembic_version",
+        "effect_receipt",
+        "incident",
+        "outbox",
+        "resource_epoch",
+        "resource_reservation",
+        "tenant"
+      ],
+      "column_count": 51,
+      "constraint_count": 23,
+      "index_count": 21,
+      "sequences": [
+        "outbox_id_seq"
+      ],
+      "row_counts": {
+        "alembic_version": 1,
+        "effect_receipt": 29,
+        "incident": 22,
+        "outbox": 0,
+        "resource_epoch": 0,
+        "resource_reservation": 0,
+        "tenant": 22
+      },
+      "effect_receipt_state_distribution": {
+        "FAILED": 2,
+        "NEEDS_REVIEW": 1,
+        "PREPARED": 3,
+        "SENT": 13,
+        "VERIFIED": 10
+      },
+      "data_fingerprints": {
+        "tenant_ids_sha256": "63b140dc7c7e28a982b4c450dd2e538308d0bed410089b3ad40e56ca86907b32",
+        "incident_rows_sha256": "aa5d63e3e0af071eeb9781d5f1c4960e6b3074df8a68935ee579cd2cd57488bb",
+        "effect_receipt_rows_sha256": "30590415460afcb1dd4ab6ec346a8ca95d0c259ff8d755e898ec7ba24e88547d"
+      },
+      "schema_fingerprint_sha256": "5d71ab68ddbe7104ecdfa6e1f406dfb50df19c8561d7c630cd8d2d90e481b835"
+    },
+    "restored_after_upgrade_to_head": {
+      "database": "opsblaze_restore_pre_s3_b37f5cc4",
+      "alembic_version": "stage3_002_b2_b3_e8",
+      "table_count": 8,
+      "tables": [
+        "adapter_conformance",
+        "alembic_version",
+        "effect_receipt",
+        "incident",
+        "outbox",
+        "resource_epoch",
+        "resource_reservation",
+        "tenant"
+      ],
+      "column_count": 63,
+      "constraint_count": 28,
+      "index_count": 22,
+      "sequences": [
+        "outbox_id_seq"
+      ],
+      "row_counts": {
+        "adapter_conformance": 0,
+        "alembic_version": 1,
+        "effect_receipt": 29,
+        "incident": 22,
+        "outbox": 0,
+        "resource_epoch": 0,
+        "resource_reservation": 0,
+        "tenant": 22
+      },
+      "effect_receipt_state_distribution": {
+        "FAILED": 2,
+        "NEEDS_REVIEW": 1,
+        "PREPARED": 3,
+        "SENT": 13,
+        "VERIFIED": 10
+      },
+      "data_fingerprints": {
+        "tenant_ids_sha256": "63b140dc7c7e28a982b4c450dd2e538308d0bed410089b3ad40e56ca86907b32",
+        "incident_rows_sha256": "aa5d63e3e0af071eeb9781d5f1c4960e6b3074df8a68935ee579cd2cd57488bb",
+        "effect_receipt_rows_sha256": "30590415460afcb1dd4ab6ec346a8ca95d0c259ff8d755e898ec7ba24e88547d"
+      },
+      "schema_fingerprint_sha256": "d23cec383a1a3fde0447407dd182188c4f529126f951118bf6f3d8bee2d66f6b"
+    },
+    "schema_matches_live_head": true,
+    "data_matches_live_head": true,
+    "cleaned_up_isolated_db": true
+  },
+  "isolated_restore_drill_b_post_stage3": {
+    "isolated_db_name": "opsblaze_restore_post_s3_b37f5cc4",
+    "restore_duration_ms": 371.45,
+    "restored_fingerprint": {
+      "database": "opsblaze_restore_post_s3_b37f5cc4",
+      "alembic_version": "stage3_002_b2_b3_e8",
+      "table_count": 8,
+      "tables": [
+        "adapter_conformance",
+        "alembic_version",
+        "effect_receipt",
+        "incident",
+        "outbox",
+        "resource_epoch",
+        "resource_reservation",
+        "tenant"
+      ],
+      "column_count": 63,
+      "constraint_count": 28,
+      "index_count": 22,
+      "sequences": [
+        "outbox_id_seq"
+      ],
+      "row_counts": {
+        "adapter_conformance": 0,
+        "alembic_version": 1,
+        "effect_receipt": 29,
+        "incident": 22,
+        "outbox": 0,
+        "resource_epoch": 0,
+        "resource_reservation": 0,
+        "tenant": 22
+      },
+      "effect_receipt_state_distribution": {
+        "FAILED": 2,
+        "NEEDS_REVIEW": 1,
+        "PREPARED": 3,
+        "SENT": 13,
+        "VERIFIED": 10
+      },
+      "data_fingerprints": {
+        "tenant_ids_sha256": "63b140dc7c7e28a982b4c450dd2e538308d0bed410089b3ad40e56ca86907b32",
+        "incident_rows_sha256": "aa5d63e3e0af071eeb9781d5f1c4960e6b3074df8a68935ee579cd2cd57488bb",
+        "effect_receipt_rows_sha256": "30590415460afcb1dd4ab6ec346a8ca95d0c259ff8d755e898ec7ba24e88547d"
+      },
+      "schema_fingerprint_sha256": "d23cec383a1a3fde0447407dd182188c4f529126f951118bf6f3d8bee2d66f6b"
+    },
+    "schema_matches_live_head": true,
+    "data_matches_live_head": true,
+    "cleaned_up_isolated_db": true
+  }
+}
