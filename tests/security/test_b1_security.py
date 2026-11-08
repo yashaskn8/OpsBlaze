@@ -118,13 +118,13 @@ async def test_missing_malformed_or_unregistered_tenant_headers_denied(
     )
     assert r_malformed.status_code == 401
 
-    # Unregistered tenant UUID -> 403
+    # A signed token for an unregistered tenant is rejected by the authoritative tenant lookup -> 401
     r_unregistered = await api_client.post(
         "/v1/incidents",
         json=payload,
         headers={"X-Tenant-ID": str(uuid.uuid4()), "Idempotency-Key": "k3"},
     )
-    assert r_unregistered.status_code == 403
+    assert r_unregistered.status_code == 401
 
 
 async def test_oversized_payload_and_malformed_json_rejected(
