@@ -81,7 +81,7 @@ class CrossStoreRecoveryCoordinator:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         *,
-        expected_alembic_head: str = "stage11_001_e6",
+        expected_alembic_head: str = "stage11_2_002_identity_membership",
     ) -> None:
         self._session_factory = session_factory
         self._expected_alembic_head = expected_alembic_head
