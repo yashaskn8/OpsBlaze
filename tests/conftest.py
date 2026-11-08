@@ -12,12 +12,13 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Headers
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from backend.api.main import create_app
 from backend.config import Settings, get_settings
+from backend.domain.auth import ActorKind, mint_principal_token
 from backend.domain.incident import DegradedRecoveryGate
 from backend.observability.metrics import metrics
 from backend.persistence.db import make_engine, make_session_factory
@@ -190,12 +191,57 @@ async def second_isolated_tenant(
             await session.commit()
 
 
+class AuthenticatedTestClient(AsyncClient):
+    """Test client that signs a least-privilege test principal for tenant-scoped API tests.
+
+    Requests can opt out with X-Test-No-Auth: true. Explicit Authorization headers
+    always take precedence, so negative and role-specific security tests remain realistic.
+    """
+
+    def __init__(self, *args, test_secret: str, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._test_secret = test_secret
+
+    async def request(self, method: str, url, **kwargs):
+        headers = Headers(kwargs.pop("headers", None))
+        skip_auth = headers.get("X-Test-No-Auth", "").lower() == "true"
+        if "X-Test-No-Auth" in headers:
+            del headers["X-Test-No-Auth"]
+        tenant_raw = headers.get("X-Tenant-ID")
+        if not skip_auth and "Authorization" not in headers and tenant_raw:
+            try:
+                tenant_id = uuid.UUID(tenant_raw)
+            except ValueError:
+                tenant_id = None
+            if tenant_id is not None:
+                token = mint_principal_token(
+                    actor_id="pytest-human-principal",
+                    actor_kind=ActorKind.HUMAN,
+                    tenant_id=tenant_id,
+                    roles=[
+                        "operator",
+                        "incident_commander",
+                        "platform_engineer",
+                        "sre_lead",
+                        "evaluation_owner",
+                        "release_owner",
+                    ],
+                    secret_key=self._test_secret,
+                    ttl_seconds=300,
+                    auth_mechanism="pytest_test_client",
+                )
+                headers["Authorization"] = f"Bearer {token}"
+        kwargs["headers"] = headers
+        return await super().request(method, url, **kwargs)
+
+
 @pytest.fixture
 async def api_client(test_settings: Settings) -> AsyncIterator[AsyncClient]:
     app = create_app(test_settings)
-    async with AsyncClient(
+    async with AuthenticatedTestClient(
         transport=ASGITransport(app=app),
         base_url="http://testserver",
+        test_secret=test_settings.auth_secret_key or "",
     ) as client:
         try:
             yield client
