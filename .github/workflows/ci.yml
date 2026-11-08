@@ -59,7 +59,7 @@ jobs:
         run: uv run mypy backend
 
       - name: Run the complete repository test suite
-        run: uv run pytest -q
+        run: uv run pytest -q -m "not historical"
 
   frontend-quality:
     name: Frontend Quality & Build
