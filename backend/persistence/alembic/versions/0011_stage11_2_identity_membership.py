@@ -1,6 +1,6 @@
 """Stage 11.2 — authoritative external identity-to-tenant membership.
 
-Revision ID: stage11_2_002_identity_membership
+Revision ID: s11_2_002_identity
 Revises: stage11_2_001_guardrail_outbox
 Create Date: 2026-11-08
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "stage11_2_002_identity_membership"
+revision: str = "s11_2_002_identity"
 down_revision: str | None = "stage11_2_001_guardrail_outbox"
 branch_labels: tuple[str, ...] | None = None
 depends_on: str | None = None
