@@ -101,6 +101,16 @@ class PolicyRouterService:
                 incident.policy_release_id = rel_id
                 incident.canary_arm = arm.value
                 incident.assignment_hash_val = hash_val
+                if active_release is not None and active_release.state == ReleaseState.SHADOW.value:
+                    session.add(
+                        Outbox(
+                            incident_id=incident.id,
+                            kind="RELEASE_SHADOW_EVALUATION",
+                            dedupe_key=f"shadow:{active_release.id}:{incident.id}",
+                            attempt=0,
+                            available_at=datetime.now(UTC),
+                        )
+                    )
                 await session.commit()
 
             return (arm, bundle_id, rel_id, hash_val)
