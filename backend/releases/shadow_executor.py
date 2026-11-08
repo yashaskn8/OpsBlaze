@@ -28,7 +28,9 @@ def _matches(actual: Any, exists: bool, operator: str, expected: Any) -> bool:
     if operator == "equals":
         return actual == expected
     if operator == "contains":
-        return isinstance(actual, (str, list, dict)) and expected in actual
+        if not isinstance(actual, (str, list, dict)):
+            return False
+        return bool(expected in actual)
     if operator == "greater_than":
         return isinstance(actual, (int, float)) and isinstance(expected, (int, float)) and actual > expected
     if operator == "less_than":
