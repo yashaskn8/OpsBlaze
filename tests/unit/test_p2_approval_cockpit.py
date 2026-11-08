@@ -10,6 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.approvals.service import ApprovalService
+from backend.config import get_settings
+from backend.domain.auth import ActorKind, mint_principal_token
 from backend.domain.approval import (
     ApprovalCreateRequest,
     ApprovalDecisionRequest,
@@ -390,19 +392,46 @@ async def test_p2_approval_api_endpoints_via_async_client(
     assert get_resp.status_code == 200
     assert get_resp.json()["id"] == approval_id
 
-    # 3. Model role rejected with 422 or 403
+    # 3. A real MODEL principal must be denied; a body-only "model" label
+    # cannot impersonate an actor kind or change the verified caller identity.
+    model_token = mint_principal_token(
+        actor_id="llm-bot",
+        actor_kind=ActorKind.MODEL,
+        tenant_id=isolated_tenant,
+        roles=["release_owner"],
+        secret_key=get_settings().auth_secret_key or "",
+        ttl_seconds=300,
+        auth_mechanism="pytest_model_actor",
+    )
+    model_headers = {
+        "Authorization": f"Bearer {model_token}",
+        "X-Tenant-ID": str(isolated_tenant),
+    }
     bad_role_resp = await api_client.post(
         f"/v1/approvals/{approval_id}/approve",
         json={
             "reviewer_id": "llm-bot",
-            "reviewer_role": "model",
+            "reviewer_role": "incident_commander",
             "reason": "self approval",
         },
-        headers=headers,
+        headers=model_headers,
     )
     assert bad_role_resp.status_code in (422, 403)
 
     # 4. Valid human approve
+    commander_token = mint_principal_token(
+        actor_id="commander-bob",
+        actor_kind=ActorKind.HUMAN,
+        tenant_id=isolated_tenant,
+        roles=["incident_commander"],
+        secret_key=get_settings().auth_secret_key or "",
+        ttl_seconds=300,
+        auth_mechanism="pytest_human_actor",
+    )
+    commander_headers = {
+        "Authorization": f"Bearer {commander_token}",
+        "X-Tenant-ID": str(isolated_tenant),
+    }
     ok_approve = await api_client.post(
         f"/v1/approvals/{approval_id}/approve",
         json={
@@ -411,7 +440,7 @@ async def test_p2_approval_api_endpoints_via_async_client(
             "reason": "Approved for execution",
             "expected_incident_status_version": 1,
         },
-        headers=headers,
+        headers=commander_headers,
     )
     assert ok_approve.status_code == 200
     assert ok_approve.json()["state"] == "APPROVED"
@@ -425,7 +454,7 @@ async def test_p2_approval_api_endpoints_via_async_client(
             "reviewer_role": "incident_commander",
             "reason": "Revoking decision",
         },
-        headers=headers,
+        headers=commander_headers,
     )
     assert revoke_resp.status_code == 200
     assert revoke_resp.json()["state"] == "REVOKED"
