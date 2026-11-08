@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from backend.domain.incident import IncidentStatus
 from backend.domain.release import ReleaseState
