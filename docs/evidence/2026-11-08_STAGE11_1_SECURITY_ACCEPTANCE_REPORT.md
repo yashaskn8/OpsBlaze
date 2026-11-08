@@ -176,3 +176,30 @@ dist/assets/index-CexE36Al.js   327.71 kB │ gzip: 90.72 kB
 1. **Self-Authorization Prohibition:** AI models (`actor_kind == 'AGENT'`) are strictly forbidden from minting roles, approving plans, or promoting releases. Verified in `test_model_cannot_claim_human_authority` and `test_bot_cannot_approve_p2_plan`.
 2. **Fail-Closed Consequential Isolation:** Rolled-back releases cannot acquire B2 fences or dispatch consequential effects. Verified in `test_rolled_back_release_blocks_candidate_consequential_mutation`.
 3. **Database Integrity:** Local native PostgreSQL 17 databases (`opsblaze`, `opsblaze_test`) preserved intact without drops or schema truncation.
+
+
+## Latest GitHub Actions verification — 2026-11-08
+
+**Verified commit:** `9a26a8e380c183798daa2681b244d0ac3dedd76a`  
+**Workflow:** [CI run #42503583444](https://github.com/yashaskn8/OpsBlaze/actions/runs/42503583444)  
+**Result:** SUCCESS
+
+- PostgreSQL 17 service initialized and healthy.
+- `uv run alembic upgrade head` passed, including the new durable token-revocation migration.
+- Ruff passed.
+- Mypy passed.
+- The configured backend verification selection collected and passed **39 tests** (2.86 seconds).
+- Frontend lint passed.
+- Frontend TypeScript typecheck passed.
+- Frontend Vite production build passed.
+
+This is verification of the workflow's configured test selection, not proof that every test in the repository has run. It also does not establish multi-process/restart revocation behavior under a production deployment.
+
+**Remaining Stage 11.1 acceptance blockers:**
+1. Production login remains disabled until a trusted identity provider and authoritative user-to-tenant membership source exist.
+2. The development registry remains non-production-only and does not provide authoritative tenant membership.
+3. Shadow observation remains audit-only; candidate policy reasoning is not actually executed.
+4. Guardrail invocation remains best-effort after terminal-state persistence; no durable retryable outbox/Temporal guardrail job has been established.
+5. The full repository test suite and multi-worker/restart revocation behavior have not been verified.
+
+Overall status remains **NOT ACCEPTED**. Stage 12 / E7 must remain blocked.
