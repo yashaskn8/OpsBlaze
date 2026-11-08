@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -14,12 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.api.auth_deps import get_authenticated_principal, get_session_factory
 from backend.config import get_settings
 from backend.domain.auth import (
+    ActorKind,
     AuthenticationError,
     Principal,
     authenticate_user,
     mint_principal_token,
 )
-from backend.persistence.models import RevokedToken, Tenant
+from backend.domain.identity_provider import IdentityProviderError, introspect_access_token
+from backend.persistence.models import IdentityMembership, RevokedToken, Tenant
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
@@ -31,6 +34,13 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
     tenant_id: uuid.UUID
     ttl_seconds: int = Field(default=86400, ge=60, le=604800)
+
+
+class IdentityExchangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    access_token: str = Field(min_length=1, max_length=16384)
+    tenant_id: uuid.UUID
 
 
 class TokenRevokeRequest(BaseModel):
@@ -98,6 +108,99 @@ async def login(
         access_token=token,
         token_type="Bearer",
         expires_in=req.ttl_seconds,
+        principal=principal.to_dict(),
+    )
+
+
+
+
+@router.post("/exchange", response_model=TokenResponse)
+async def exchange_identity_token(
+    req: IdentityExchangeRequest,
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+) -> TokenResponse:
+    """Exchange a provider-introspected access token for tenant-scoped OpsBlaze authority."""
+    settings = get_settings()
+    required = (
+        settings.identity_issuer,
+        settings.identity_introspection_url,
+        settings.identity_client_id,
+        settings.identity_client_secret,
+        settings.identity_audience,
+    )
+    if any(not value for value in required):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Trusted identity provider is not configured. Production password login remains disabled.",
+        )
+
+    issuer = settings.identity_issuer.rstrip("/")  # type: ignore[union-attr]
+    try:
+        claims = await introspect_access_token(
+            req.access_token,
+            issuer=issuer,
+            introspection_url=settings.identity_introspection_url or "",
+            client_id=settings.identity_client_id or "",
+            client_secret=settings.identity_client_secret or "",
+            audience=settings.identity_audience or "",
+        )
+    except IdentityProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Upstream identity token could not be verified.",
+        ) from exc
+
+    async with session_factory() as session:
+        membership = (
+            await session.execute(
+                select(IdentityMembership).where(
+                    IdentityMembership.issuer == issuer,
+                    IdentityMembership.subject == claims["sub"],
+                    IdentityMembership.tenant_id == req.tenant_id,
+                    IdentityMembership.is_active.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if membership is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No active server-managed membership exists for this identity and tenant.",
+            )
+
+    try:
+        actor_kind = ActorKind(membership.actor_kind)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Server-managed identity membership has an invalid actor kind.",
+        ) from exc
+    if actor_kind != ActorKind.HUMAN and membership.roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Non-human identity memberships cannot be assigned human authority.",
+        )
+
+    principal = Principal(
+        actor_id=membership.actor_id,
+        actor_kind=actor_kind,
+        tenant_id=membership.tenant_id,
+        roles=frozenset(str(role).strip().lower() for role in membership.roles if str(role).strip()),
+        auth_mechanism="oauth2_token_introspection",
+    )
+    ttl_seconds = 900
+    token = mint_principal_token(
+        actor_id=principal.actor_id,
+        actor_kind=principal.actor_kind,
+        tenant_id=principal.tenant_id,
+        roles=principal.roles,
+        secret_key=settings.auth_secret_key or "",
+        ttl_seconds=ttl_seconds,
+        auth_mechanism=principal.auth_mechanism,
+    )
+    return TokenResponse(
+        access_token=token,
+        token_type="Bearer",
+        expires_in=ttl_seconds,
         principal=principal.to_dict(),
     )
 
