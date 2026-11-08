@@ -6,11 +6,14 @@ import uuid
 
 import pytest
 
+from backend.domain.incident import IncidentStatus
 from backend.domain.release import ReleaseState
-from backend.persistence.models import Incident, Tenant
+from backend.persistence.models import Incident, Outbox, Tenant
 from backend.releases.bundle_service import PolicyBundleService
 from backend.releases.guardrails import ReleaseGuardrailService
+from backend.releases.guardrail_dispatcher import ReleaseGuardrailDispatcher
 from backend.releases.release_service import PolicyReleaseService
+from backend.persistence.repositories import IncidentRepository
 
 
 @pytest.fixture
@@ -139,3 +142,56 @@ async def test_class_2_statistical_rate_breach_triggers_rollback(
 
     updated_release = await release_svc.get_release(tenant_id=tenant_id, release_id=release.id)
     assert updated_release.state == ReleaseState.ROLLED_BACK.value
+
+
+
+@pytest.mark.asyncio
+async def test_terminal_incident_transition_enqueues_retryable_guardrail_outbox(
+    session_factory, active_canary_release
+) -> None:
+    """The guardrail event is committed atomically and acknowledged by a separate dispatcher."""
+    tenant_id, release = active_canary_release
+    incident_id = uuid.uuid4()
+    async with session_factory() as session:
+        session.add(
+            Incident(
+                id=incident_id,
+                tenant_id=tenant_id,
+                client_key=f"guardrail-outbox-{incident_id}",
+                request_sha256="e" * 64,
+                target_id="target-guardrail",
+                status_projection=IncidentStatus.ACCEPTED.value,
+                status_version=1,
+                policy_release_id=release.id,
+                canary_arm="CANDIDATE",
+            )
+        )
+        await session.commit()
+
+    repo = IncidentRepository(session_factory)
+    await repo.transition_status(
+        tenant_id=tenant_id,
+        incident_id=incident_id,
+        target_status=IncidentStatus.CANCELLED,
+    )
+
+    async with session_factory() as session:
+        queued = (
+            await session.execute(
+                select(Outbox).where(
+                    Outbox.incident_id == incident_id,
+                    Outbox.kind == "RELEASE_GUARDRAIL",
+                )
+            )
+        ).scalar_one()
+        assert queued.delivered_at is None
+        assert queued.dedupe_key == f"guardrail:{incident_id}:2"
+
+    dispatcher = ReleaseGuardrailDispatcher(session_factory)
+    assert await dispatcher.dispatch_once()
+
+    async with session_factory() as session:
+        completed = await session.get(Outbox, queued.id)
+        assert completed is not None
+        assert completed.delivered_at is not None
+        assert completed.last_error is None
