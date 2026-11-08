@@ -89,6 +89,7 @@ class Outbox(Base):
             "id",
             postgresql_where=text("delivered_at IS NULL"),
         ),
+        UniqueConstraint("dedupe_key", name="uq_outbox_dedupe_key"),
     )
 
     id: Mapped[int] = mapped_column(
@@ -98,6 +99,8 @@ class Outbox(Base):
         Uuid(as_uuid=True), ForeignKey("incident.id", ondelete="CASCADE"), nullable=False
     )
     kind: Mapped[str] = mapped_column(String, nullable=False)
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
