@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     policy_signing_secret: str | None = None
     policy_signing_key_id: str = "opsblaze-signer-v1"
 
+    # Production identity is verified by the configured provider's OAuth2 introspection endpoint.
+    identity_issuer: str | None = None
+    identity_introspection_url: str | None = None
+    identity_client_id: str | None = None
+    identity_client_secret: str | None = None
+    identity_audience: str | None = None
+
     @model_validator(mode="after")
     def validate_secrets(self) -> Settings:
         env_norm = self.opsblaze_env.strip().lower()
