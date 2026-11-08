@@ -203,3 +203,16 @@ This is verification of the workflow's configured test selection, not proof that
 5. The full repository test suite and multi-worker/restart revocation behavior have not been verified.
 
 Overall status remains **NOT ACCEPTED**. Stage 12 / E7 must remain blocked.
+
+
+## Stage 11.2 remediation progress — 2026-11-08
+
+The following follow-up implementation has been committed to `main`:
+
+- **Durable guardrail event delivery:** terminal incident transitions now insert a deduplicated `RELEASE_GUARDRAIL` event in the same PostgreSQL transaction as the incident state change. The API lifespan starts a multi-worker-safe `FOR UPDATE SKIP LOCKED` dispatcher. Claimed work is leased using `available_at`, retried with bounded exponential backoff, and acknowledged only after evaluation. A process crash leaves the event pending for retry. The original B1 incident-start dispatcher is filtered to its own event kind.
+- **External identity boundary:** a provider-neutral RFC 7662 OAuth2 token-introspection adapter and `POST /v1/auth/exchange` route have been added. The provider must authenticate the upstream token and return matching issuer, audience, subject, active status, and expiry. OpsBlaze derives tenant and roles only from the server-managed `identity_membership` table. Production password-registry login remains disabled.
+- **Migration chain:** new additive migrations add deduplication/error fields to the existing outbox and the identity membership table.
+- **Test harness:** API tests now use cryptographically signed test principals for authenticated tenant-scoped calls; explicit unauthenticated cases opt out. Historical database snapshot assertions are marked separately and excluded from ordinary CI because a clean GitHub runner does not contain the user's pre-existing local data.
+- **CI:** changed to run the complete deterministic test suite with historical-snapshot-only checks excluded.
+
+**Not yet accepted:** the above changes are implementation progress, not final acceptance. The latest full-suite CI run must pass, and targeted tests must prove guardrail outbox retry/restart behavior, OIDC exchange/membership denial, and actual candidate shadow evaluation. Production identity still requires the user's chosen provider configuration and real provider integration test. The shadow evaluator has not yet been replaced with an executable candidate-policy sandbox. Stage 12 / E7 remains blocked.
