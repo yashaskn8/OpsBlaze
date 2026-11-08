@@ -27,7 +27,7 @@ async def test_stage7_schema_and_historical_data_integrity(
             "stage11_001_e6",
             "stage11_1_001_revoked_tokens",
             "stage11_2_001_guardrail_outbox",
-            "stage11_2_002_identity_membership",
+            "s11_2_002_identity",
         )
 
         # 2. Verify New Tables Exist
