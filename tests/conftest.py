@@ -191,19 +191,50 @@ async def second_isolated_tenant(
             await session.commit()
 
 
+def make_test_principal_headers(
+    *,
+    tenant_id: uuid.UUID,
+    secret_key: str,
+    actor_id: str = "pytest-human-principal",
+    actor_kind: ActorKind = ActorKind.HUMAN,
+    roles: list[str] | None = None,
+) -> dict[str, str]:
+    """Create a signed test-only principal header; never used by production authentication."""
+    token = mint_principal_token(
+        actor_id=actor_id,
+        actor_kind=actor_kind,
+        tenant_id=tenant_id,
+        roles=roles
+        if roles is not None
+        else [
+            "operator",
+            "incident_commander",
+            "platform_engineer",
+            "sre_lead",
+            "evaluation_owner",
+            "release_owner",
+        ],
+        secret_key=secret_key,
+        ttl_seconds=300,
+        auth_mechanism="pytest_test_client",
+    )
+    return {"Authorization": f"Bearer {token}", "X-Tenant-ID": str(tenant_id)}
+
+
 class AuthenticatedTestClient(AsyncClient):
     """Test client that signs a least-privilege test principal for tenant-scoped API tests.
 
     Requests can opt out with X-Test-No-Auth: true. Explicit Authorization headers
-    always take precedence, so negative and role-specific security tests remain realistic.
+    always take precedence. Authentication is applied in build_request so streaming
+    requests receive the same test principal as regular requests.
     """
 
     def __init__(self, *args, test_secret: str, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._test_secret = test_secret
 
-    async def request(self, method: str, url, **kwargs):
-        headers = Headers(kwargs.pop("headers", None))
+    def build_request(self, method: str, url, **kwargs):
+        headers = Headers(kwargs.get("headers"))
         skip_auth = headers.get("X-Test-No-Auth", "").lower() == "true"
         if "X-Test-No-Auth" in headers:
             del headers["X-Test-No-Auth"]
@@ -214,25 +245,14 @@ class AuthenticatedTestClient(AsyncClient):
             except ValueError:
                 tenant_id = None
             if tenant_id is not None:
-                token = mint_principal_token(
-                    actor_id="pytest-human-principal",
-                    actor_kind=ActorKind.HUMAN,
-                    tenant_id=tenant_id,
-                    roles=[
-                        "operator",
-                        "incident_commander",
-                        "platform_engineer",
-                        "sre_lead",
-                        "evaluation_owner",
-                        "release_owner",
-                    ],
-                    secret_key=self._test_secret,
-                    ttl_seconds=300,
-                    auth_mechanism="pytest_test_client",
+                headers.update(
+                    make_test_principal_headers(
+                        tenant_id=tenant_id,
+                        secret_key=self._test_secret,
+                    )
                 )
-                headers["Authorization"] = f"Bearer {token}"
         kwargs["headers"] = headers
-        return await super().request(method, url, **kwargs)
+        return super().build_request(method, url, **kwargs)
 
 
 @pytest.fixture
