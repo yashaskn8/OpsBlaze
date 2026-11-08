@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.config import get_settings
@@ -65,28 +66,36 @@ async def get_authenticated_principal(
         ) from e
 
     # Verify durable revocation and tenant existence in one authoritative DB session.
-    async with session_factory() as session:
-        if principal.jti:
-            revoked_jti = (
-                await session.execute(
-                    select(RevokedToken.jti).where(
-                        RevokedToken.jti == principal.jti,
-                        RevokedToken.expires_at > datetime.now(UTC),
+    # If the identity authority cannot be reached, fail closed with 503 rather than
+    # silently downgrading to a misleading 401 or continuing without revocation checks.
+    try:
+        async with session_factory() as session:
+            if principal.jti:
+                revoked_jti = (
+                    await session.execute(
+                        select(RevokedToken.jti).where(
+                            RevokedToken.jti == principal.jti,
+                            RevokedToken.expires_at > datetime.now(UTC),
+                        )
                     )
-                )
-            ).scalar_one_or_none()
-            if revoked_jti is not None:
+                ).scalar_one_or_none()
+                if revoked_jti is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Authentication token has been revoked.",
+                    )
+
+            tenant = await session.get(Tenant, principal.tenant_id)
+            if not tenant:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication token has been revoked.",
+                    detail="Authenticated tenant does not exist in authoritative store.",
                 )
-
-        tenant = await session.get(Tenant, principal.tenant_id)
-        if not tenant:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Authenticated tenant {principal.tenant_id} does not exist in authoritative store",
-            )
+    except (SQLAlchemyError, OSError, TimeoutError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication authority is temporarily unavailable.",
+        ) from exc
 
     # If X-Tenant-ID header is also provided, ensure strict match (prevent cross-tenant operations)
     if x_tenant_id and x_tenant_id.strip():
