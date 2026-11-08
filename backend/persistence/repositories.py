@@ -370,27 +370,28 @@ class IncidentRepository:
                     .values(delivered_at=now)
                 )
 
-            await session.commit()
+            # Persist the guardrail evaluation request in the same transaction as the
+            # terminal incident transition. The independent dispatcher retries after crashes.
+            if (
+                target_status in (
+                    IncidentStatus.VERIFIED,
+                    IncidentStatus.FAILED,
+                    IncidentStatus.NEEDS_REVIEW,
+                    IncidentStatus.CANCELLED,
+                )
+                and incident.policy_release_id is not None
+            ):
+                session.add(
+                    Outbox(
+                        incident_id=incident.id,
+                        kind="RELEASE_GUARDRAIL",
+                        dedupe_key=f"guardrail:{incident.id}:{incident.status_version}",
+                        attempt=0,
+                        available_at=datetime.now(UTC),
+                    )
+                )
 
-            # Stage 11.1 Gate E: Automated runtime guardrail check upon terminal incident progression
-            if target_status in (
-                IncidentStatus.VERIFIED,
-                IncidentStatus.FAILED,
-                IncidentStatus.NEEDS_REVIEW,
-                IncidentStatus.CANCELLED,
-            ) and incident.policy_release_id is not None:
-                try:
-                    from backend.releases.guardrails import ReleaseGuardrailService
-                    guardrail_svc = ReleaseGuardrailService(self._session_factory)
-                    await guardrail_svc.evaluate_and_enforce_guardrails(
-                        tenant_id=tenant_id,
-                        release_id=incident.policy_release_id,
-                    )
-                except (SQLAlchemyError, ValueError, RuntimeError, OSError) as guardrail_err:
-                    logger.warning(
-                        "Automated guardrail check on terminal incident progression failed gracefully: %s",
-                        guardrail_err,
-                    )
+            await session.commit()
 
             if target_status == IncidentStatus.CANCELLED:
                 metrics.inc("workflow_cancelled_total")
@@ -544,6 +545,7 @@ class OutboxRepository:
                 select(Outbox, Incident)
                 .join(Incident, Outbox.incident_id == Incident.id)
                 .where(
+                    Outbox.kind == OUTBOX_KIND_INCIDENT_START,
                     Outbox.delivered_at.is_(None),
                     Outbox.available_at <= claim_time,
                 )
