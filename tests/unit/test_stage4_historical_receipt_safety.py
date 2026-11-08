@@ -22,10 +22,9 @@ Verifies:
 from __future__ import annotations
 
 import uuid
-
-import pytest
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
