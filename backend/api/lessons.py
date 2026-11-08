@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -15,7 +15,7 @@ from backend.domain.approval import ApprovalRoleForbiddenError, validate_reviewe
 from backend.domain.lesson import LessonCitation, LessonType
 from backend.learning.lesson_registry import LessonRegistry
 from backend.learning.retrieval import LessonRetriever
-from backend.persistence.models import OperationalLesson, Tenant
+from backend.persistence.models import OperationalLesson
 
 router = APIRouter(tags=["lessons"])
 
@@ -30,34 +30,7 @@ def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
     return factory  # type: ignore[no-any-return]
 
 
-async def get_authenticated_tenant_id(
-    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
-    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
-) -> uuid.UUID:
-    """Derive and verify authenticated tenant identity from server-side headers."""
-    if not x_tenant_id or not x_tenant_id.strip():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing required X-Tenant-ID authentication header",
-        )
-    try:
-        tenant_uuid = uuid.UUID(x_tenant_id.strip())
-    except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Malformed X-Tenant-ID header: must be a valid UUID",
-        )
-
-    async with session_factory() as session:
-        tenant_exists = await session.get(Tenant, tenant_uuid)
-        if not tenant_exists:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Authenticated tenant {tenant_uuid} does not exist in authoritative store",
-            )
-
-    return tenant_uuid
-
+from backend.api.auth_deps import get_authenticated_tenant_id
 
 # ---------------------------------------------------------------------------
 # Request / Response Models

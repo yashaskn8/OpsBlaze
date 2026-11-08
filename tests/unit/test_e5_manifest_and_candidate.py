@@ -17,7 +17,6 @@ from backend.domain.evaluation import (
     EvaluationConcurrencyConflictError,
     HoldoutContaminationError,
     IncumbentBundle,
-    ManifestLifecycleError,
     ManifestLifecycleState,
     MetricSpec,
     PromptRefinementDiff,

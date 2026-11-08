@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+
 import pytest
 
 from backend.domain.release import CanaryArm
@@ -104,10 +105,11 @@ async def test_kill_switch_instantly_isolates_and_fences(
     assert "Kill switch active" in (err_after or "")
 
     # 4. New admissions are now routed 100% to INCUMBENT
-    arm, b_id, rel_id, _ = await router_svc.route_incident(
+    arm, b_id, _rel_id, _ = await router_svc.route_incident(
         tenant_id=tenant_id,
         incident_id=uuid.uuid4(),
         target_id="target-01",
+        target_component="investigator",
     )
     assert arm == CanaryArm.INCUMBENT
     assert b_id == incumbent.id

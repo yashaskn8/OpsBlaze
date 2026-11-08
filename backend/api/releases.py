@@ -6,11 +6,15 @@ import uuid
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.auth_deps import get_authenticated_principal
-from backend.domain.auth import AuthorizationForbiddenError, Principal
+from backend.domain.auth import (
+    RELEASE_ROLE_MATRIX,
+    AuthorizationForbiddenError,
+    Principal,
+)
 from backend.domain.release import (
     ActiveReleaseConflictError,
     BundleDigestMismatchError,
@@ -51,8 +55,41 @@ def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
     return cast(async_sessionmaker[AsyncSession], factory)
 
 
-def get_primary_role(principal: Principal) -> str:
-    return sorted(principal.roles)[0] if principal.roles else "operator"
+def check_release_action_role(principal: Principal, action_name: str) -> str:
+    """Verifies that principal is authorized for the given release transition action.
+
+    Fails closed if the principal has no matching role. Never silently defaults to operator.
+    """
+    allowed = RELEASE_ROLE_MATRIX.get(action_name)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unknown release action '{action_name}' in role matrix.",
+        )
+    # Rollout and governance actions require human principal
+    if action_name in {
+        "human_approval",
+        "shadow_activate",
+        "canary_activate",
+        "canary_percentage_update",
+        "promote_active",
+        "release_revoke",
+    }:
+        try:
+            principal.require_human()
+        except AuthorizationForbiddenError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    matching = [r for r in sorted(principal.roles) if r in allowed]
+    if not matching:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Principal '{principal.actor_id}' lacks authorized role for '{action_name}'. "
+                f"Required one of: {sorted(allowed)}; Principal roles: {sorted(principal.roles)}"
+            ),
+        )
+    return matching[0]
 
 
 # ==============================================================================
@@ -70,6 +107,7 @@ async def create_bundle(
     request: Request,
 ) -> Any:
     """Create a new draft policy bundle."""
+    check_release_action_role(principal, "bundle_create")
     session_factory = get_session_factory(request)
     bundle_svc = PolicyBundleService(session_factory)
     try:
@@ -104,7 +142,8 @@ async def seal_bundle(
     principal: Annotated[Principal, Depends(get_authenticated_principal)],
     request: Request,
 ) -> Any:
-    """Seal and cryptographically sign a policy bundle."""
+    """Cryptographically seal an immutable policy bundle with HMAC-SHA256 signature."""
+    check_release_action_role(principal, "bundle_seal")
     session_factory = get_session_factory(request)
     bundle_svc = PolicyBundleService(session_factory)
     try:
@@ -171,6 +210,7 @@ async def bootstrap_incumbent_bundle(
     request: Request,
 ) -> Any:
     """Ensure a sealed baseline incumbent bundle exists for component."""
+    check_release_action_role(principal, "bundle_create")
     session_factory = get_session_factory(request)
     bundle_svc = PolicyBundleService(session_factory)
     return await bundle_svc.ensure_bootstrap_incumbent(
@@ -181,7 +221,7 @@ async def bootstrap_incumbent_bundle(
 
 
 # ==============================================================================
-# Policy Release Endpoints
+# Policy Release State Transitions
 # ==============================================================================
 
 @router.post(
@@ -195,6 +235,7 @@ async def create_release(
     request: Request,
 ) -> Any:
     """Create a new policy release in DRAFT state."""
+    check_release_action_role(principal, "release_create")
     session_factory = get_session_factory(request)
     release_svc = PolicyReleaseService(session_factory)
     try:
@@ -206,25 +247,24 @@ async def create_release(
             drafter_id=principal.actor_id,
             rollout_salt=body.rollout_salt,
         )
-    except BundleNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    except BundleNotSealedError as exc:
+    except (BundleNotFoundError, BundleNotSealedError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except E5EligibilityInvalidatedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
 @router.post(
     "/v1/releases/{release_id}/submit",
     response_model=PolicyReleaseResponse,
 )
-async def submit_release_for_approval(
+async def submit_release(
     release_id: uuid.UUID,
     body: ReleaseTransitionRequest,
     principal: Annotated[Principal, Depends(get_authenticated_principal)],
     request: Request,
 ) -> Any:
     """Submit a draft release for human approval."""
+    role = check_release_action_role(principal, "submit_for_approval")
     session_factory = get_session_factory(request)
     release_svc = PolicyReleaseService(session_factory)
     try:
@@ -233,10 +273,12 @@ async def submit_release_for_approval(
             release_id=release_id,
             expected_version=body.expected_version,
             actor_id=principal.actor_id,
-            actor_role=get_primary_role(principal),
+            actor_role=role,
         )
     except ReleaseNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except E5EligibilityInvalidatedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except StaleVersionConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except InvalidReleaseTransitionError as exc:
@@ -254,13 +296,16 @@ async def review_release(
     request: Request,
 ) -> Any:
     """Review decision (APPROVED or REJECTED) on a release. Enforces separation of duties."""
-    try:
-        reviewer_role = principal.require_release_approver()
-    except AuthorizationForbiddenError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-
     session_factory = get_session_factory(request)
     release_svc = PolicyReleaseService(session_factory)
+    try:
+        rel = await release_svc.get_release(tenant_id=principal.tenant_id, release_id=release_id)
+        reviewer_role = principal.require_release_approver(drafter_id=rel.drafter_id)
+    except AuthorizationForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    except ReleaseNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
     try:
         return await release_svc.review_release(
             tenant_id=principal.tenant_id,
@@ -294,6 +339,7 @@ async def activate_shadow(
     request: Request,
 ) -> Any:
     """Activate shadow mode for an approved release."""
+    role = check_release_action_role(principal, "shadow_activate")
     session_factory = get_session_factory(request)
     release_svc = PolicyReleaseService(session_factory)
     try:
@@ -302,10 +348,12 @@ async def activate_shadow(
             release_id=release_id,
             expected_version=body.expected_version,
             actor_id=principal.actor_id,
-            actor_role=get_primary_role(principal),
+            actor_role=role,
         )
     except ReleaseNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except E5EligibilityInvalidatedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except ActiveReleaseConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except StaleVersionConflictError as exc:
@@ -325,6 +373,7 @@ async def activate_canary(
     request: Request,
 ) -> Any:
     """Activate canary mode with percentage allocation."""
+    role = check_release_action_role(principal, "canary_activate")
     pct = body.canary_percentage if body.canary_percentage is not None else 10
     session_factory = get_session_factory(request)
     release_svc = PolicyReleaseService(session_factory)
@@ -335,10 +384,12 @@ async def activate_canary(
             expected_version=body.expected_version,
             canary_percentage=pct,
             actor_id=principal.actor_id,
-            actor_role=get_primary_role(principal),
+            actor_role=role,
         )
     except ReleaseNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except E5EligibilityInvalidatedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except ActiveReleaseConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except RolloutPercentageOutOfBoundsError as exc:
@@ -360,6 +411,7 @@ async def update_canary_percentage(
     request: Request,
 ) -> Any:
     """Update canary percentage on an active canary release."""
+    role = check_release_action_role(principal, "canary_percentage_update")
     if body.canary_percentage is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="canary_percentage is required.")
     session_factory = get_session_factory(request)
@@ -371,10 +423,12 @@ async def update_canary_percentage(
             expected_version=body.expected_version,
             new_percentage=body.canary_percentage,
             actor_id=principal.actor_id,
-            actor_role=get_primary_role(principal),
+            actor_role=role,
         )
     except ReleaseNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except E5EligibilityInvalidatedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except RolloutPercentageOutOfBoundsError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except StaleVersionConflictError as exc:
@@ -394,6 +448,7 @@ async def promote_active(
     request: Request,
 ) -> Any:
     """Promote a successful canary release to 100% ACTIVE production traffic."""
+    role = check_release_action_role(principal, "promote_active")
     session_factory = get_session_factory(request)
     release_svc = PolicyReleaseService(session_factory)
     try:
@@ -402,10 +457,12 @@ async def promote_active(
             release_id=release_id,
             expected_version=body.expected_version,
             actor_id=principal.actor_id,
-            actor_role=get_primary_role(principal),
+            actor_role=role,
         )
     except ReleaseNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except E5EligibilityInvalidatedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except StaleVersionConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except InvalidReleaseTransitionError as exc:
@@ -423,6 +480,7 @@ async def trigger_rollback(
     request: Request,
 ) -> Any:
     """Trigger rollback from any active state to ROLLED_BACK."""
+    role = check_release_action_role(principal, "manual_rollback")
     session_factory = get_session_factory(request)
     release_svc = PolicyReleaseService(session_factory)
     try:
@@ -432,7 +490,7 @@ async def trigger_rollback(
             expected_version=body.expected_version,
             rollback_reason=body.rollback_reason,
             actor_id=principal.actor_id,
-            actor_role=get_primary_role(principal),
+            actor_role=role,
         )
     except ReleaseNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
@@ -453,18 +511,7 @@ async def trip_kill_switch(
     request: Request,
 ) -> Any:
     """Emergency Kill Switch: instantly terminates candidate traffic and rolls back."""
-    try:
-        principal.require_human()
-    except AuthorizationForbiddenError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-
-    allowed_roles = {"operator", "sre_lead", "release_owner", "incident_commander", "platform_engineer"}
-    if not (principal.roles & allowed_roles):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Principal roles {sorted(principal.roles)} not authorized to trip the emergency kill switch.",
-        )
-
+    role = check_release_action_role(principal, "kill_switch")
     session_factory = get_session_factory(request)
     release_svc = PolicyReleaseService(session_factory)
     try:
@@ -474,12 +521,43 @@ async def trip_kill_switch(
             expected_version=body.expected_version,
             justification=body.justification,
             actor_id=principal.actor_id,
-            actor_role=get_primary_role(principal),
+            actor_role=role,
         )
     except ReleaseNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except StaleVersionConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.post(
+    "/v1/releases/{release_id}/revoke",
+    response_model=PolicyReleaseResponse,
+)
+async def revoke_release(
+    release_id: uuid.UUID,
+    body: RollbackRequest,
+    principal: Annotated[Principal, Depends(get_authenticated_principal)],
+    request: Request,
+) -> Any:
+    """Revoke a release in pre-active or shadow states."""
+    role = check_release_action_role(principal, "release_revoke")
+    session_factory = get_session_factory(request)
+    release_svc = PolicyReleaseService(session_factory)
+    try:
+        return await release_svc.revoke_release(
+            tenant_id=principal.tenant_id,
+            release_id=release_id,
+            expected_version=body.expected_version,
+            revocation_reason=body.rollback_reason,
+            actor_id=principal.actor_id,
+            actor_role=role,
+        )
+    except ReleaseNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except StaleVersionConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except InvalidReleaseTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.get(
@@ -567,8 +645,7 @@ async def get_canary_metrics(
 
 
 class GuardrailCheckRequest(BaseModel):
-    simulated_invariant_breaches: int = 0
-    invariant_breach_detail: str = ""
+    model_config = ConfigDict(extra="forbid")
 
 
 @router.post(
@@ -580,15 +657,13 @@ async def run_guardrail_check(
     principal: Annotated[Principal, Depends(get_authenticated_principal)],
     request: Request,
 ) -> Any:
-    """Run guardrail check and execute automated rollback if safety rules are violated."""
+    """Run guardrail check and execute automated rollback if safety rules are violated. Uses server-side telemetry only."""
     session_factory = get_session_factory(request)
     guardrail_svc = ReleaseGuardrailService(session_factory)
     try:
         rolled_back, reason = await guardrail_svc.evaluate_and_enforce_guardrails(
             tenant_id=principal.tenant_id,
             release_id=release_id,
-            simulated_invariant_breaches=body.simulated_invariant_breaches,
-            invariant_breach_detail=body.invariant_breach_detail,
         )
         return {
             "release_id": str(release_id),
@@ -596,4 +671,6 @@ async def run_guardrail_check(
             "reason": reason,
         }
     except ReleaseNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))

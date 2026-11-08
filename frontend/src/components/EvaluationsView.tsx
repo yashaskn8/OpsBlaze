@@ -11,9 +11,20 @@ import { evaluationsApi, EvaluationsApiError } from '../services/evaluationsApi'
 interface EvaluationsViewProps {
   tenantId: string
   incidentId?: string
+  authToken?: string
+  authenticatedUser?: {
+    actor_id: string
+    actor_kind: string
+    roles: string[]
+  } | null
 }
 
-export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
+export function EvaluationsView({
+  tenantId,
+  incidentId: _incidentId,
+  authToken: propAuthToken,
+  authenticatedUser,
+}: EvaluationsViewProps) {
   const [manifests, setManifests] = useState<CandidateManifestResponse[]>([])
   const [selectedManifestId, setSelectedManifestId] = useState<string | null>(null)
   const [manifestDetail, setManifestDetail] = useState<ManifestDetailResponse | null>(null)
@@ -25,7 +36,7 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
   // Auth token state (for authenticated review actions)
-  const [authToken, setAuthToken] = useState<string>(() => localStorage.getItem('opsblaze.auth_token') || '')
+  const [authToken, setAuthToken] = useState<string>(() => propAuthToken || localStorage.getItem('opsblaze.auth_token') || '')
   const [principal, setPrincipal] = useState<{
     actor_id: string
     actor_kind: string
@@ -33,6 +44,28 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
     can_review_evaluation: boolean
     can_approve_release: boolean
   } | null>(null)
+
+  useEffect(() => {
+    if (propAuthToken) {
+      setAuthToken(propAuthToken)
+    }
+  }, [propAuthToken])
+
+  useEffect(() => {
+    if (authenticatedUser) {
+      setPrincipal({
+        actor_id: authenticatedUser.actor_id,
+        actor_kind: authenticatedUser.actor_kind,
+        roles: authenticatedUser.roles,
+        can_review_evaluation:
+          authenticatedUser.actor_kind === 'human' &&
+          authenticatedUser.roles.some(r => ['evaluation_owner', 'incident_commander'].includes(r)),
+        can_approve_release:
+          authenticatedUser.actor_kind === 'human' &&
+          authenticatedUser.roles.some(r => ['release_owner', 'incident_commander'].includes(r)),
+      })
+    }
+  }, [authenticatedUser])
 
   // Manifest Registration state
   const [showRegisterForm, setShowRegisterForm] = useState(false)

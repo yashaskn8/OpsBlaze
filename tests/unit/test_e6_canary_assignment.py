@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 from types import SimpleNamespace
 
-
 from backend.domain.release import CanaryArm, ReleaseState, assign_incident_cohort
 
 
@@ -64,7 +63,7 @@ def test_shadow_mode_routes_to_incumbent() -> None:
         kill_switch_active=False,
     )
 
-    arm, b_id, hash_val = assign_incident_cohort(
+    arm, b_id, _hash_val = assign_incident_cohort(
         tenant_id=tenant_id,
         incident_id=incident_id,
         target_id=target_id,
@@ -93,7 +92,7 @@ def test_active_mode_routes_to_candidate() -> None:
         kill_switch_active=False,
     )
 
-    arm, b_id, hash_val = assign_incident_cohort(
+    arm, b_id, _hash_val = assign_incident_cohort(
         tenant_id=tenant_id,
         incident_id=incident_id,
         target_id=target_id,
@@ -122,7 +121,7 @@ def test_kill_switch_forces_incumbent_routing() -> None:
         kill_switch_active=True,  # Kill switch tripped
     )
 
-    arm, b_id, hash_val = assign_incident_cohort(
+    arm, b_id, _hash_val = assign_incident_cohort(
         tenant_id=tenant_id,
         incident_id=incident_id,
         target_id=target_id,

@@ -270,6 +270,18 @@ class ResourceReservationManager:
             now=current_time,
         )
 
+        # Stage 11.1 Gate F: Policy release control verification
+        from backend.releases.router_service import PolicyRouterService
+        router_svc = PolicyRouterService(self._session_factory)
+        allowed, reason = await router_svc.verify_consequential_mutation_allowed(
+            tenant_id=approval.tenant_id,
+            incident_id=approval.incident_id,
+        )
+        if not allowed:
+            raise ApprovalRequiredError(
+                f"Consequential mutation blocked by policy release control: {reason}"
+            )
+
         # Verify E8 adapter conformance before touching target or DB reservation
         conformance = await self._capability_gate.verify_mutation_allowed(
             adapter, correlation_id=correlation_id, now=current_time

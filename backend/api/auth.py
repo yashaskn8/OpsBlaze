@@ -12,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.api.auth_deps import get_authenticated_principal, get_session_factory
 from backend.config import get_settings
 from backend.domain.auth import (
-    ActorKind,
-    FORBIDDEN_ACTOR_ROLES,
+    AuthenticationError,
     Principal,
+    TokenRevocationStore,
+    authenticate_user,
     mint_principal_token,
 )
 from backend.persistence.models import Tenant
@@ -22,14 +23,19 @@ from backend.persistence.models import Tenant
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
 
-class TokenMintRequest(BaseModel):
+class LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    actor_id: str = Field(min_length=1, max_length=128)
-    actor_kind: ActorKind = Field(default=ActorKind.HUMAN)
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=256)
     tenant_id: uuid.UUID
-    roles: list[str] = Field(min_length=1)
     ttl_seconds: int = Field(default=86400, ge=60, le=604800)
+
+
+class TokenRevokeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    jti: str | None = Field(default=None, description="Optional specific JTI to revoke. If omitted, current token is revoked.")
 
 
 class TokenResponse(BaseModel):
@@ -39,12 +45,12 @@ class TokenResponse(BaseModel):
     principal: dict[str, Any]
 
 
-@router.post("/token", response_model=TokenResponse)
-async def mint_token(
-    req: TokenMintRequest,
+@router.post("/login", response_model=TokenResponse)
+async def login(
+    req: LoginRequest,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> TokenResponse:
-    """Mints an authenticated, cryptographically signed Bearer token for a verified principal."""
+    """Authenticates against server-side identity registry; derives identity and roles strictly on server."""
     # Verify tenant exists
     async with session_factory() as session:
         tenant = await session.get(Tenant, req.tenant_id)
@@ -54,32 +60,27 @@ async def mint_token(
                 detail=f"Tenant {req.tenant_id} not found",
             )
 
-    # Validate roles: cannot be forbidden model/agent roles
-    clean_roles = []
-    for r in req.roles:
-        norm = r.strip().lower()
-        if norm in FORBIDDEN_ACTOR_ROLES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Role '{r}' is a non-human/model role and cannot be granted human authority",
-            )
-        clean_roles.append(norm)
+    try:
+        principal = authenticate_user(
+            username=req.username,
+            password=req.password,
+            tenant_id=req.tenant_id,
+        )
+    except AuthenticationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+        ) from exc
 
     settings = get_settings()
     token = mint_principal_token(
-        actor_id=req.actor_id,
-        actor_kind=req.actor_kind,
-        tenant_id=req.tenant_id,
-        roles=clean_roles,
-        secret_key=settings.auth_secret_key,
+        actor_id=principal.actor_id,
+        actor_kind=principal.actor_kind,
+        tenant_id=principal.tenant_id,
+        roles=principal.roles,
+        secret_key=settings.auth_secret_key or "",
         ttl_seconds=req.ttl_seconds,
-    )
-
-    principal = Principal(
-        actor_id=req.actor_id,
-        actor_kind=req.actor_kind,
-        tenant_id=req.tenant_id,
-        roles=frozenset(clean_roles),
+        auth_mechanism=principal.auth_mechanism,
     )
 
     return TokenResponse(
@@ -88,6 +89,31 @@ async def mint_token(
         expires_in=req.ttl_seconds,
         principal=principal.to_dict(),
     )
+
+
+@router.post("/token")
+async def legacy_token_endpoint_disabled() -> Any:
+    """Public arbitrary token minting is permanently removed to prevent privilege escalation."""
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Public arbitrary token minting is disabled. Use /v1/auth/login with verified server-side credentials.",
+    )
+
+
+@router.post("/revoke", status_code=status.HTTP_200_OK)
+async def revoke_token(
+    req: TokenRevokeRequest,
+    principal: Annotated[Principal, Depends(get_authenticated_principal)],
+) -> dict[str, Any]:
+    """Revokes a principal access token immediately."""
+    jti_to_revoke = req.jti or principal.jti
+    if not jti_to_revoke:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No JTI found in token or request to revoke.",
+        )
+    TokenRevocationStore.revoke(jti_to_revoke)
+    return {"status": "REVOKED", "jti": jti_to_revoke}
 
 
 @router.get("/me")

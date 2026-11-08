@@ -230,14 +230,19 @@ async def test_stage11_full_api_release_lifecycle(
     assert metrics_data["state"] == "CANARY"
     assert metrics_data["canary_percentage"] == 50
 
-    # 15. Run Guardrail Check with simulated Class 1 invariant breach -> triggers automated rollback
+    # 15. Record Class 1 invariant breach in authoritative telemetry -> triggers automated rollback
+    from backend.releases.guardrails import ReleaseGuardrailService
+    guardrail_svc = ReleaseGuardrailService(session_factory)
+    await guardrail_svc.record_invariant_breach(
+        tenant_id=isolated_tenant,
+        release_id=uuid.UUID(release_id),
+        breach_detail="Negative control violation during canary traffic.",
+    )
+
     res_guard = await api_client.post(
         f"/v1/releases/{release_id}/guardrail-check",
         headers=approver_headers,
-        json={
-            "simulated_invariant_breaches": 1,
-            "invariant_breach_detail": "Negative control violation during canary traffic.",
-        },
+        json={},
     )
     assert res_guard.status_code == 200
     guard_res = res_guard.json()
@@ -279,6 +284,13 @@ async def test_stage11_emergency_kill_switch_api(
     """Verifies that the emergency kill-switch halts candidate traffic and sets kill_switch_active."""
     settings = get_settings()
 
+    drafter_token = mint_principal_token(
+        actor_id="eng-alice",
+        actor_kind="HUMAN",
+        tenant_id=isolated_tenant,
+        roles=["platform_engineer"],
+        secret_key=settings.auth_secret_key,
+    )
     sre_token = mint_principal_token(
         actor_id="sre-lead",
         actor_kind="HUMAN",
@@ -294,6 +306,10 @@ async def test_stage11_emergency_kill_switch_api(
         secret_key=settings.auth_secret_key,
     )
 
+    drafter_headers = {
+        "X-Tenant-ID": str(isolated_tenant),
+        "Authorization": f"Bearer {drafter_token}",
+    }
     sre_headers = {
         "X-Tenant-ID": str(isolated_tenant),
         "Authorization": f"Bearer {sre_token}",
@@ -306,13 +322,14 @@ async def test_stage11_emergency_kill_switch_api(
     # Bootstrap & create bundle
     inc_res = await api_client.post(
         "/v1/bundles/bootstrap?target_component=planner",
-        headers=sre_headers,
+        headers=drafter_headers,
     )
+    assert inc_res.status_code == 200
     inc_id = inc_res.json()["id"]
 
     cand_res = await api_client.post(
         "/v1/bundles",
-        headers=sre_headers,
+        headers=drafter_headers,
         json={
             "bundle_name": "planner-cand",
             "base_policy_version": "v1.1",
@@ -324,17 +341,19 @@ async def test_stage11_emergency_kill_switch_api(
             "source_provenance_digest": "6" * 64,
         },
     )
+    assert cand_res.status_code == 201
     cand_id = cand_res.json()["id"]
-    await api_client.post(f"/v1/bundles/{cand_id}/seal", headers=sre_headers)
+    await api_client.post(f"/v1/bundles/{cand_id}/seal", headers=drafter_headers)
 
     # Release draft & approval
     rel_res = await api_client.post(
         "/v1/releases",
-        headers=sre_headers,
+        headers=drafter_headers,
         json={"target_component": "planner", "bundle_id": cand_id, "incumbent_bundle_id": inc_id},
     )
+    assert rel_res.status_code == 201
     rel_id = rel_res.json()["id"]
-    await api_client.post(f"/v1/releases/{rel_id}/submit", headers=sre_headers, json={"expected_version": 1, "target_state": "PENDING_APPROVAL"})
+    await api_client.post(f"/v1/releases/{rel_id}/submit", headers=drafter_headers, json={"expected_version": 1, "target_state": "PENDING_APPROVAL"})
     await api_client.post(f"/v1/releases/{rel_id}/review", headers=rel_headers, json={"expected_version": 2, "decision": "APPROVED"})
     await api_client.post(f"/v1/releases/{rel_id}/activate-canary", headers=rel_headers, json={"expected_version": 3, "target_state": "CANARY", "canary_percentage": 50})
 

@@ -296,17 +296,12 @@ export const releaseControlApi = {
   async runGuardrailCheck(
     tenantId: string,
     releaseId: string,
-    simulatedBreaches: number = 0,
-    detail: string = '',
     token?: string
   ): Promise<{ release_id: string; rolled_back: boolean; reason: string }> {
     const res = await fetch(`/v1/releases/${releaseId}/guardrail-check`, {
       method: 'POST',
       headers: getHeaders(tenantId, token),
-      body: JSON.stringify({
-        simulated_invariant_breaches: simulatedBreaches,
-        invariant_breach_detail: detail,
-      }),
+      body: JSON.stringify({}),
     })
     return handleResponse<{ release_id: string; rolled_back: boolean; reason: string }>(res)
   },

@@ -12,52 +12,39 @@ Adversarial Stress Scenarios:
 
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime, timedelta
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from httpx import AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.domain.approval import ApprovalRoleForbiddenError
 from backend.domain.evaluation import (
-    CandidateBundle,
     CandidateProvenanceType,
-    CandidateProvenanceValidationError,
     EvaluationConcurrencyConflictError,
     HoldoutContaminationError,
-    IncumbentBundle,
-    ManifestLifecycleError,
-    ManifestLifecycleState,
-    MetricSpec,
-    PromptRefinementDiff,
     ReportAlreadyReviewedError,
     ReportStatus,
     ReviewDecision,
-    SourceEligibilityInvalidatedError,
     TrialArm,
     TrialStatus,
-    TrialValidityState,
 )
 from backend.domain.failure import (
     DivergentStepCategory,
-    ProposalStatus,
     ProposalType,
-    ReviewDecision as ProposalReviewDecision,
     TargetComponent,
+)
+from backend.domain.failure import (
+    ReviewDecision as ProposalReviewDecision,
 )
 from backend.evaluations.manifest_service import CandidateManifestService
 from backend.evaluations.report_service import CandidateReportService
-from backend.evaluations.runner import CandidateEvaluationRunner, DiagnosticFixture
+from backend.evaluations.runner import CandidateEvaluationRunner
 from backend.learning.clusters import FailureClusterService
 from backend.learning.failure_taxonomy import FailureClassifier
 from backend.learning.proposal_service import ProposalService
 from backend.persistence.models import (
-    CandidateEvaluationManifest,
-    CandidateEvaluationReport,
     CandidateEvaluationTrial,
     ConsentEpoch,
     OutcomeRevision,
@@ -159,7 +146,7 @@ async def test_chaos_worker_crash_recovery_and_lease_expiry(
     isolated_tenant: uuid.UUID,
 ) -> None:
     """Simulates worker 1 crashing midway; worker 2 resumes expired leased trials (INV-E5-12)."""
-    inc_id, outcome_rev_id, proposal_id = await _create_test_proposal_and_incident(
+    _inc_id, outcome_rev_id, proposal_id = await _create_test_proposal_and_incident(
         session_factory, isolated_tenant
     )
     manifest_svc = CandidateManifestService(session_factory)
@@ -187,7 +174,6 @@ async def test_chaos_worker_crash_recovery_and_lease_expiry(
     # 1. Start execution with worker-1, but simulate a crash after claiming trials
     # First, let runner seed trial rows
     # We can seed trials by running with a mock strategy that simulates worker 1 dying
-    trials_seeded = False
     await runner.run_evaluation(
         tenant_id=isolated_tenant,
         manifest_id=manifest.id,
@@ -246,7 +232,7 @@ async def test_chaos_prompt_injection_negative_control_trips_safety_gate(
 
     GATE_SAFETY must trip (Zero Tolerance) and report verdict must be FAIL with promotion_eligible=False.
     """
-    inc_id, outcome_rev_id, proposal_id = await _create_test_proposal_and_incident(
+    _inc_id, outcome_rev_id, proposal_id = await _create_test_proposal_and_incident(
         session_factory, isolated_tenant
     )
     manifest_svc = CandidateManifestService(session_factory)
@@ -344,7 +330,7 @@ async def test_chaos_zero_candidate_verified_recoveries_trips_cost_gate(
     isolated_tenant: uuid.UUID,
 ) -> None:
     """Candidate recovers 0 incidents; cost per verified recovery is infinite, failing GATE_COST_BOUND."""
-    inc_id, outcome_rev_id, proposal_id = await _create_test_proposal_and_incident(
+    _inc_id, outcome_rev_id, proposal_id = await _create_test_proposal_and_incident(
         session_factory, isolated_tenant
     )
     manifest_svc = CandidateManifestService(session_factory)
@@ -397,7 +383,7 @@ async def test_chaos_review_cas_concurrency_conflict(
     isolated_tenant: uuid.UUID,
 ) -> None:
     """Two concurrent reviewers attempt to submit review decisions with version=1 (Zero Lost Updates)."""
-    inc_id, outcome_rev_id, proposal_id = await _create_test_proposal_and_incident(
+    _inc_id, outcome_rev_id, proposal_id = await _create_test_proposal_and_incident(
         session_factory, isolated_tenant
     )
     manifest_svc = CandidateManifestService(session_factory)
@@ -462,7 +448,7 @@ async def test_chaos_consent_revocation_dynamic_invalidation(
     isolated_tenant: uuid.UUID,
 ) -> None:
     """Tenant revokes consent; get_latest_report immediately marks report promotion_eligible=False."""
-    inc_id, outcome_rev_id, proposal_id = await _create_test_proposal_and_incident(
+    _inc_id, outcome_rev_id, proposal_id = await _create_test_proposal_and_incident(
         session_factory, isolated_tenant
     )
     manifest_svc = CandidateManifestService(session_factory)

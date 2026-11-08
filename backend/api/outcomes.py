@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.domain.approval import ApprovalRoleForbiddenError
@@ -21,7 +21,6 @@ from backend.domain.outcome import (
     SelfGradingForbiddenError,
 )
 from backend.outcomes.service import OutcomeService
-from backend.persistence.models import Tenant
 
 router = APIRouter(tags=["outcomes"])
 
@@ -36,32 +35,7 @@ def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
     return factory  # type: ignore[no-any-return]
 
 
-async def get_authenticated_tenant_id(
-    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
-    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
-) -> uuid.UUID:
-    """Derive and verify authenticated tenant identity from server-side headers."""
-    if not x_tenant_id or not x_tenant_id.strip():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing required X-Tenant-ID authentication header",
-        )
-    try:
-        tenant_uuid = uuid.UUID(x_tenant_id.strip())
-    except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Malformed X-Tenant-ID header: must be a valid UUID",
-        )
-
-    async with session_factory() as session:
-        tenant_exists = await session.get(Tenant, tenant_uuid)
-        if tenant_exists is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Tenant {tenant_uuid} is not registered or access is denied",
-            )
-    return tenant_uuid
+from backend.api.auth_deps import get_authenticated_tenant_id
 
 
 def get_outcome_service(

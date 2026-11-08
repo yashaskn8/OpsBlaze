@@ -6,12 +6,12 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.api.auth_deps import get_authenticated_principal
+from backend.api.auth_deps import get_authenticated_principal, get_authenticated_tenant_id
 from backend.domain.approval import ApprovalRoleForbiddenError
 from backend.domain.auth import AuthorizationForbiddenError, Principal
 from backend.domain.evaluation import (
@@ -37,7 +37,6 @@ from backend.persistence.models import (
     CandidateEvaluationManifest,
     CandidateEvaluationReport,
     CandidateEvaluationTrial,
-    Tenant,
 )
 
 router = APIRouter(tags=["evaluations"])
@@ -53,33 +52,7 @@ def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
     return factory  # type: ignore[no-any-return]
 
 
-async def get_authenticated_tenant_id(
-    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
-    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
-) -> uuid.UUID:
-    """Enforces tenant isolation by authenticating caller against tenant registry."""
-    if not x_tenant_id or not x_tenant_id.strip():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing required X-Tenant-ID authentication header",
-        )
-    try:
-        tenant_uuid = uuid.UUID(x_tenant_id.strip())
-    except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Malformed X-Tenant-ID header: must be a valid UUID",
-        )
 
-    async with session_factory() as session:
-        tenant_exists = await session.get(Tenant, tenant_uuid)
-        if not tenant_exists:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Authenticated tenant {tenant_uuid} does not exist in authoritative store",
-            )
-
-    return tenant_uuid
 
 
 # ---------------------------------------------------------------------------

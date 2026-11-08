@@ -19,17 +19,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.config import get_settings
 from backend.domain.auth import mint_principal_token
-from backend.domain.failure import (
-    DivergentStepCategory,
-    ProposalStatus,
-    ProposalType,
-    ReviewDecision as ProposalReviewDecision,
-    TargetComponent,
-)
 from backend.domain.evaluation import (
     CandidateProvenanceType,
     ManifestLifecycleState,
+)
+from backend.domain.evaluation import (
     ReviewDecision as EvalReviewDecision,
+)
+from backend.domain.failure import (
+    DivergentStepCategory,
+    ProposalType,
+    TargetComponent,
+)
+from backend.domain.failure import (
+    ReviewDecision as ProposalReviewDecision,
 )
 from backend.learning.clusters import FailureClusterService
 from backend.learning.failure_taxonomy import FailureClassifier
@@ -152,7 +155,7 @@ async def test_stage9_full_api_evaluation_lifecycle(
     api_client: AsyncClient,
 ) -> None:
     """Tests complete REST API lifecycle for candidate evaluation."""
-    inc_id, outcome_rev_id, proposal_id = await _setup_e3_proposal_hierarchy(
+    _inc_id, outcome_rev_id, proposal_id = await _setup_e3_proposal_hierarchy(
         session_factory, isolated_tenant
     )
     headers = {"X-Tenant-ID": str(isolated_tenant)}

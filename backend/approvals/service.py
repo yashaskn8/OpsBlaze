@@ -15,6 +15,7 @@ from backend.domain.approval import (
     ApprovalDigestMismatchError,
     ApprovalExpiredError,
     ApprovalNotFoundError,
+    ApprovalPolicyReleaseForbiddenError,
     ApprovalResponse,
     ApprovalRevokedError,
     ApprovalRevokeRequest,
@@ -308,6 +309,18 @@ class ApprovalService:
             # 4. Validate transition from PENDING
             validate_approval_transition(ApprovalState(row.state), ApprovalState.APPROVED)
 
+            # Stage 11.1 Gate F: Verify policy release control permits plan approval
+            from backend.releases.router_service import PolicyRouterService
+            router_svc = PolicyRouterService(self._session_factory)
+            allowed, reason = await router_svc.verify_consequential_mutation_allowed(
+                tenant_id=tenant_id,
+                incident_id=row.incident_id,
+            )
+            if not allowed:
+                raise ApprovalPolicyReleaseForbiddenError(
+                    reason or "Plan approval blocked by policy release control"
+                )
+
             # 5. Check incident status version optimistic concurrency guard if requested
             inc_row = (
                 await session.execute(
@@ -592,6 +605,19 @@ class ApprovalService:
                 raise ApprovalDigestMismatchError(row.canonical_plan_digest, plan_digest)
             if row.action_digest != action_digest:
                 raise ApprovalDigestMismatchError(row.action_digest, action_digest)
+
+            # Stage 11.1 Gate F: Verify policy release control permits consequential dispatch
+            from backend.releases.router_service import PolicyRouterService
+            router_svc = PolicyRouterService(self._session_factory)
+            allowed, reason = await router_svc.verify_consequential_mutation_allowed(
+                tenant_id=tenant_id,
+                incident_id=row.incident_id,
+            )
+            if not allowed:
+                raise ApprovalPolicyReleaseForbiddenError(
+                    reason or "Consequential dispatch blocked by policy release control"
+                )
+
             if row.expected_resource_version != target_version:
                 row.state = ApprovalState.INVALIDATED.value
                 row.updated_at = current_time

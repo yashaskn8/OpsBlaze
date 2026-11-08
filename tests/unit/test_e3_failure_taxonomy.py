@@ -21,7 +21,7 @@ from backend.domain.failure import (
 from backend.learning.clusters import FailureClusterService
 from backend.learning.failure_taxonomy import FailureClassifier
 from backend.learning.proposal_service import ProposalService
-from backend.persistence.models import Incident, OutcomeRevision
+from backend.persistence.models import OutcomeRevision
 from backend.persistence.repositories import IncidentRepository
 
 pytestmark = pytest.mark.postgres

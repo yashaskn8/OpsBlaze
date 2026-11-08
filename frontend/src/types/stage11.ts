@@ -92,6 +92,7 @@ export interface CanaryMetrics {
   relative_risk: number | null
   invariant_breach_count: number
   recommendation: string
+  last_breach_detail?: string | null
 }
 
 export interface PolicyReleaseCreateRequest {

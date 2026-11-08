@@ -44,43 +44,7 @@ def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
     return factory  # type: ignore[no-any-return]
 
 
-async def get_authenticated_tenant_id(
-    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
-    x_tenant_id: Annotated[str | None, Header(alias="X-Tenant-ID")] = None,
-) -> uuid.UUID:
-    """Derive and verify authenticated tenant identity from server-side headers.
-
-    Never trusts tenant_id inside request payloads. Rejects missing, malformed,
-    or unregistered tenant identifiers with 401/403.
-    """
-    if not x_tenant_id or not x_tenant_id.strip():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing required X-Tenant-ID authentication header",
-        )
-    try:
-        tenant_uuid = uuid.UUID(x_tenant_id.strip())
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid X-Tenant-ID format",
-        ) from exc
-
-    repo = IncidentRepository(session_factory)
-    try:
-        exists = await repo.tenant_exists(tenant_uuid)
-    except (OperationalError, SQLAlchemyError, OSError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database unavailable during tenant verification",
-        ) from exc
-
-    if not exists:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant is not registered or authorized",
-        )
-    return tenant_uuid
+from backend.api.auth_deps import get_authenticated_tenant_id
 
 
 def get_idempotency_key(

@@ -8,6 +8,7 @@ import { ExperienceView } from './components/ExperienceView'
 import { FailureAndLessonsView } from './components/FailureAndLessonsView'
 import { EvaluationsView } from './components/EvaluationsView'
 import { ReleaseControlView } from './components/ReleaseControlView'
+import { authApi, PRECONFIGURED_PRESETS, type AuthenticatedUser } from './services/authApi'
 import type { ApprovalResponse } from './types/stage6'
 
 export type IncidentStatus =
@@ -108,6 +109,48 @@ export function App() {
   const [loading, setLoading] = useState<boolean>(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
+  // Authentication & Principal State
+  const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null)
+  const [authToken, setAuthToken] = useState<string>(
+    () => window.sessionStorage.getItem('opsblaze.auth_token') || ''
+  )
+  const [selectedUserPreset, setSelectedUserPreset] = useState<string>('incident_commander')
+  const [authLoading, setAuthLoading] = useState<boolean>(false)
+  const [authError, setAuthError] = useState<string | null>(null)
+
+  const handleSwitchUser = useCallback(
+    async (username: string, activeTenantId?: string) => {
+      const preset = PRECONFIGURED_PRESETS.find((p) => p.username === username)
+      if (!preset) return
+      setAuthLoading(true)
+      setAuthError(null)
+      setSelectedUserPreset(username)
+      const targetTenant = (activeTenantId || tenantId).trim()
+      try {
+        const res = await authApi.login(username, preset.password, targetTenant)
+        const user: AuthenticatedUser = {
+          actor_id: res.actor_id,
+          actor_kind: res.actor_kind as 'human' | 'bot' | 'system',
+          roles: res.roles,
+          tenant_id: res.tenant_id,
+        }
+        setCurrentUser(user)
+        setAuthToken(res.access_token)
+        window.sessionStorage.setItem('opsblaze.auth_token', res.access_token)
+        window.localStorage.setItem('opsblaze.auth_token', res.access_token)
+      } catch (err) {
+        setAuthError(err instanceof Error ? err.message : 'Login failed')
+      } finally {
+        setAuthLoading(false)
+      }
+    },
+    [tenantId]
+  )
+
+  useEffect(() => {
+    void handleSwitchUser(selectedUserPreset)
+  }, [handleSwitchUser, selectedUserPreset])
+
   // Navigation Tabs & Lockout State
   const [activeTab, setActiveTab] = useState<
     'workbench' | 'approval' | 'trace' | 'experience' | 'failures-lessons' | 'evaluations' | 'releases' | 'admission'
@@ -140,12 +183,16 @@ export function App() {
       setLoading(true)
       setErrorMessage(null)
       try {
+        const headers: Record<string, string> = {
+          Accept: 'application/json',
+          'X-Tenant-ID': activeTenantId.trim(),
+        }
+        if (authToken) {
+          headers['Authorization'] = `Bearer ${authToken}`
+        }
         const res = await fetch(`/v1/incidents/${encodeURIComponent(trimmed)}`, {
           method: 'GET',
-          headers: {
-            Accept: 'application/json',
-            'X-Tenant-ID': activeTenantId.trim(),
-          },
+          headers,
         })
         if (!res.ok) {
           const errBody = (await res.json().catch(() => ({}))) as {
@@ -169,7 +216,7 @@ export function App() {
         setLoading(false)
       }
     },
-    [persistActiveContext]
+    [authToken, persistActiveContext]
   )
 
   // Recover authoritative backend snapshot after browser reload if an incident ID was active
@@ -213,14 +260,18 @@ export function App() {
     setLoading(true)
     setErrorMessage(null)
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Tenant-ID': tenantId.trim(),
+        'Idempotency-Key': idempotencyKey.trim(),
+      }
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`
+      }
       const res = await fetch('/v1/incidents', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          'X-Tenant-ID': tenantId.trim(),
-          'Idempotency-Key': idempotencyKey.trim(),
-        },
+        headers,
         body: JSON.stringify({
           target_id: targetId.trim(),
           severity,
@@ -260,15 +311,19 @@ export function App() {
     setLoading(true)
     setErrorMessage(null)
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Tenant-ID': tenantId.trim(),
+      }
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`
+      }
       const res = await fetch(
         `/v1/incidents/${encodeURIComponent(incident.id)}/cancel`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            'X-Tenant-ID': tenantId.trim(),
-          },
+          headers,
           body: JSON.stringify({
             expected_version: incident.status_version,
             reason: 'Operator cancelled from UI workbench',
@@ -317,16 +372,47 @@ export function App() {
               Operator Control Plane, Approval Cockpit &amp; Investigation Workbench
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <label style={{ fontSize: '11px', color: '#64748b' }}>Tenant:</label>
-            <input
-              type="text"
-              value={tenantId}
-              onChange={(e) => setTenantId(e.target.value)}
-              style={{ fontSize: '11px', padding: '4px 8px', width: '260px', fontFamily: 'monospace' }}
-            />
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <label style={{ fontSize: '11px', color: '#64748b' }}>User Identity:</label>
+              <select
+                value={selectedUserPreset}
+                onChange={(e) => void handleSwitchUser(e.target.value)}
+                disabled={authLoading}
+                style={{ fontSize: '11px', padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+              >
+                {PRECONFIGURED_PRESETS.map((p) => (
+                  <option key={p.username} value={p.username}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {currentUser && (
+              <span style={{ fontSize: '11px', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '3px 8px', borderRadius: '12px', fontWeight: 500 }}>
+                👤 {currentUser.actor_id} [{currentUser.roles.join(', ')}]
+              </span>
+            )}
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <label style={{ fontSize: '11px', color: '#64748b' }}>Tenant:</label>
+              <input
+                type="text"
+                value={tenantId}
+                onChange={(e) => {
+                  setTenantId(e.target.value)
+                  void handleSwitchUser(selectedUserPreset, e.target.value)
+                }}
+                style={{ fontSize: '11px', padding: '4px 8px', width: '220px', fontFamily: 'monospace' }}
+              />
+            </div>
           </div>
         </div>
+
+        {authError && (
+          <div style={{ marginTop: '8px', padding: '6px 12px', backgroundColor: '#fef2f2', border: '1px solid #f87171', borderRadius: '4px', color: '#991b1b', fontSize: '12px' }}>
+            Authentication Error: {authError}
+          </div>
+        )}
 
         {/* Global Incident Lookup Bar */}
         <div style={{ display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center' }}>
@@ -501,6 +587,7 @@ export function App() {
                 setIsLockedOut(locked)
                 setPingLagSeconds(lag)
               }}
+              authToken={authToken || undefined}
             />
           ) : (
             <p style={{ padding: '20px', color: '#64748b' }}>
@@ -516,12 +603,18 @@ export function App() {
             activeApproval={activeApproval}
             isLockedOut={isLockedOut}
             onRefresh={() => void fetchIncidentSnapshot(activeIncidentId, tenantId)}
+            authToken={authToken || undefined}
+            authenticatedUser={currentUser}
           />
         )}
 
         {activeTab === 'trace' && (
           activeIncidentId ? (
-            <TraceExplorerView incidentId={activeIncidentId} tenantId={tenantId} />
+            <TraceExplorerView
+              incidentId={activeIncidentId}
+              tenantId={tenantId}
+              authToken={authToken || undefined}
+            />
           ) : (
             <p style={{ padding: '20px', color: '#64748b' }}>
               No incident active. Load an incident UUID to view its causal DAG trace.
@@ -530,19 +623,36 @@ export function App() {
         )}
 
         {activeTab === 'experience' && (
-          <ExperienceView tenantId={tenantId} incidentId={activeIncidentId || undefined} />
+          <ExperienceView
+            tenantId={tenantId}
+            incidentId={activeIncidentId || undefined}
+            authToken={authToken || undefined}
+          />
         )}
 
         {activeTab === 'failures-lessons' && (
-          <FailureAndLessonsView tenantId={tenantId} incidentId={activeIncidentId || undefined} />
+          <FailureAndLessonsView
+            tenantId={tenantId}
+            incidentId={activeIncidentId || undefined}
+            authToken={authToken || undefined}
+          />
         )}
 
         {activeTab === 'evaluations' && (
-          <EvaluationsView tenantId={tenantId} incidentId={activeIncidentId || undefined} />
+          <EvaluationsView
+            tenantId={tenantId}
+            incidentId={activeIncidentId || undefined}
+            authToken={authToken || undefined}
+            authenticatedUser={currentUser}
+          />
         )}
 
         {activeTab === 'releases' && (
-          <ReleaseControlView tenantId={tenantId} />
+          <ReleaseControlView
+            tenantId={tenantId}
+            authToken={authToken || undefined}
+            authenticatedUser={currentUser}
+          />
         )}
 
         {activeTab === 'admission' && (

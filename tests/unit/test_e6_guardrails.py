@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+
 import pytest
 
 from backend.domain.release import ReleaseState
@@ -61,11 +62,15 @@ async def test_class_1_zero_tolerance_invariant_breach_triggers_immediate_rollba
     release_svc = PolicyReleaseService(session_factory)
     guardrail_svc = ReleaseGuardrailService(session_factory, release_svc)
 
+    await guardrail_svc.record_invariant_breach(
+        tenant_id=tenant_id,
+        release_id=release.id,
+        breach_detail="Unauthorized mutation attempt detected in read-only investigation.",
+    )
+
     rolled_back, reason = await guardrail_svc.evaluate_and_enforce_guardrails(
         tenant_id=tenant_id,
         release_id=release.id,
-        simulated_invariant_breaches=1,
-        invariant_breach_detail="Unauthorized mutation attempt detected in read-only investigation.",
     )
 
     assert rolled_back is True

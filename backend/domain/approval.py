@@ -122,6 +122,11 @@ class ApprovalRoleForbiddenError(ApprovalError):
         super().__init__(f"Caller role '{role}' is forbidden from approving incident actions")
 
 
+class ApprovalPolicyReleaseForbiddenError(ApprovalError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"Plan approval blocked by policy release control: {reason}")
+
+
 class ApprovalVersionMismatchError(ApprovalError):
     def __init__(self, expected: str, observed: str) -> None:
         super().__init__(f"Target version mismatch: expected '{expected}', found '{observed}'")
@@ -174,28 +179,18 @@ class ApprovalCreateRequest(BaseModel):
 class ApprovalDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    reviewer_id: str = Field(..., min_length=1, max_length=128)
-    reviewer_role: str = Field(..., min_length=1, max_length=64)
+    reviewer_id: str = Field(default="", max_length=128)
+    reviewer_role: str = Field(default="", max_length=64)
     reason: str = Field(default="", max_length=1000)
     expected_incident_status_version: int | None = Field(default=None)
-
-    def __init__(self, **data: Any) -> None:
-        if "reviewer_role" in data:
-            validate_reviewer_role(data["reviewer_role"])
-        super().__init__(**data)
 
 
 class ApprovalRevokeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    reviewer_id: str = Field(..., min_length=1, max_length=128)
-    reviewer_role: str = Field(..., min_length=1, max_length=64)
+    reviewer_id: str = Field(default="", max_length=128)
+    reviewer_role: str = Field(default="", max_length=64)
     reason: str = Field(default="", max_length=1000)
-
-    def __init__(self, **data: Any) -> None:
-        if "reviewer_role" in data:
-            validate_reviewer_role(data["reviewer_role"])
-        super().__init__(**data)
 
 
 class ApprovalResponse(BaseModel):

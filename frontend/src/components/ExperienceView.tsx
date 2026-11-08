@@ -8,9 +8,10 @@ import type {
 interface ExperienceViewProps {
   tenantId: string
   incidentId?: string
+  authToken?: string
 }
 
-export function ExperienceView({ tenantId, incidentId }: ExperienceViewProps) {
+export function ExperienceView({ tenantId, incidentId, authToken }: ExperienceViewProps) {
   const [capsules, setCapsules] = useState<ExperienceCapsuleResponse[]>([])
   const [outcomeSummary, setOutcomeSummary] = useState<OutcomeSummaryResponse | null>(null)
   const [consent, setConsent] = useState<ConsentStatusResponse | null>(null)
@@ -25,9 +26,12 @@ export function ExperienceView({ tenantId, incidentId }: ExperienceViewProps) {
     setLoading(true)
     setError(null)
     try {
-      const headers = {
+      const headers: Record<string, string> = {
         Accept: 'application/json',
         'X-Tenant-ID': tenantId,
+      }
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`
       }
 
       // Fetch consent
@@ -60,7 +64,7 @@ export function ExperienceView({ tenantId, incidentId }: ExperienceViewProps) {
     } finally {
       setLoading(false)
     }
-  }, [tenantId, incidentId])
+  }, [tenantId, incidentId, authToken])
 
   useEffect(() => {
     void fetchData()
@@ -69,12 +73,16 @@ export function ExperienceView({ tenantId, incidentId }: ExperienceViewProps) {
   const handleDispute = async () => {
     if (!incidentId || !outcomeSummary?.current_revision || !disputeReason.trim()) return
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Tenant-ID': tenantId,
+      }
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`
+      }
       const res = await fetch(`/v1/incidents/${encodeURIComponent(incidentId)}/outcome/feedback`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenantId,
-        },
+        headers,
         body: JSON.stringify({
           label: 'DISPUTED',
           reason: disputeReason,
@@ -97,12 +105,16 @@ export function ExperienceView({ tenantId, incidentId }: ExperienceViewProps) {
   const handleToggleConsent = async () => {
     if (!consent) return
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Tenant-ID': tenantId,
+      }
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`
+      }
       const res = await fetch('/v1/experience/consent', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenantId,
-        },
+        headers,
         body: JSON.stringify({
           reuse_allowed: !consent.reuse_allowed,
           reason: consent.reuse_allowed ? 'Operator privacy policy update' : 'Operator consent granted',

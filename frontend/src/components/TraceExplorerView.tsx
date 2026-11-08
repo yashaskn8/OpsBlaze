@@ -1,26 +1,31 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { TraceGraphResponse, TraceNode } from '../types/stage6'
 
 interface Props {
   incidentId: string
   tenantId: string
+  authToken?: string
 }
 
-export function TraceExplorerView({ incidentId, tenantId }: Props) {
+export function TraceExplorerView({ incidentId, tenantId, authToken }: Props) {
   const [graph, setGraph] = useState<TraceGraphResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedNode, setSelectedNode] = useState<TraceNode | null>(null)
 
-  const fetchTrace = async () => {
+  const fetchTrace = useCallback(async () => {
     if (!incidentId) return
     setLoading(true)
     setError(null)
     try {
+      const headers: Record<string, string> = {
+        'X-Tenant-ID': tenantId,
+      }
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`
+      }
       const res = await fetch(`/v1/incidents/${encodeURIComponent(incidentId)}/trace`, {
-        headers: {
-          'X-Tenant-ID': tenantId,
-        },
+        headers,
       })
       if (!res.ok) {
         throw new Error(`Failed to load trace graph: HTTP ${res.status}`)
@@ -32,11 +37,11 @@ export function TraceExplorerView({ incidentId, tenantId }: Props) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [incidentId, tenantId, authToken])
 
   useEffect(() => {
     void fetchTrace()
-  }, [incidentId, tenantId])
+  }, [fetchTrace])
 
   if (loading) {
     return <div style={{ padding: '20px' }}>Loading causal trace DAG...</div>

@@ -3,6 +3,7 @@
 Evaluates active CANARY and SHADOW releases against two tiers of safety guardrails:
 1. Class 1 (Zero-Tolerance Invariants):
    - N = 1 trigger on unauthorized mutations, negative-control breaches, or B2 fence violations.
+   - Sourced strictly from trusted server-side evidence and audit logs.
    - Triggers instantaneous automated rollback.
 2. Class 2 (Statistical Rate Metrics):
    - Evaluated after minimum sample size N_min >= 30.
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -22,7 +24,7 @@ from backend.domain.release import (
     CanaryMetricsResponse,
     ReleaseState,
 )
-from backend.persistence.models import Incident, PolicyRelease
+from backend.persistence.models import Incident, PolicyRelease, ReleaseEventAudit
 from backend.releases.release_service import PolicyReleaseService
 
 logger = logging.getLogger("opsblaze.releases.guardrails")
@@ -43,18 +45,71 @@ class ReleaseGuardrailService:
         self._session_factory = session_factory
         self._release_service = release_service or PolicyReleaseService(session_factory)
 
+    async def record_invariant_breach(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        release_id: uuid.UUID,
+        breach_detail: str,
+        actor_id: str = "system",
+        actor_role: str = "system",
+    ) -> ReleaseEventAudit:
+        """Records an authoritative Class 1 invariant breach event in the audit trail."""
+        async with self._session_factory() as session:
+            rel = await session.get(PolicyRelease, release_id)
+            current_state = rel.state if rel else "CANARY"
+            audit = ReleaseEventAudit(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                release_id=release_id,
+                event_type="INVARIANT_BREACH",
+                from_state=current_state,
+                to_state=current_state,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                metadata_redacted={"detail": breach_detail},
+                created_at=datetime.now(UTC),
+            )
+            session.add(audit)
+            await session.commit()
+            return audit
+
     async def compute_canary_metrics(
         self,
         *,
         tenant_id: uuid.UUID,
         release_id: uuid.UUID,
-        simulated_invariant_breaches: int = 0,
+        test_invariant_breaches: int = 0,
     ) -> CanaryMetricsResponse:
         """Calculates error rates, sample sizes, and relative risk for active canary."""
         async with self._session_factory() as session:
             release = await session.get(PolicyRelease, release_id)
             if release is None or release.tenant_id != tenant_id:
                 raise ValueError(f"Release {release_id} not found.")
+
+            # Count real server-side invariant breaches
+            stmt_breaches = (
+                select(func.count(ReleaseEventAudit.id))
+                .where(
+                    ReleaseEventAudit.tenant_id == tenant_id,
+                    ReleaseEventAudit.release_id == release_id,
+                    ReleaseEventAudit.event_type.in_(["INVARIANT_BREACH", "UNAUTHORIZED_MUTATION", "B2_FENCE_VIOLATION"]),
+                )
+            )
+            real_breaches = (await session.execute(stmt_breaches)).scalar_one_or_none() or 0
+            total_invariant_breaches = real_breaches + test_invariant_breaches
+
+            stmt_latest_breach = (
+                select(ReleaseEventAudit)
+                .where(
+                    ReleaseEventAudit.tenant_id == tenant_id,
+                    ReleaseEventAudit.release_id == release_id,
+                    ReleaseEventAudit.event_type.in_(["INVARIANT_BREACH", "UNAUTHORIZED_MUTATION", "B2_FENCE_VIOLATION"]),
+                )
+                .order_by(ReleaseEventAudit.created_at.desc())
+            )
+            latest_breach_audit = (await session.execute(stmt_latest_breach)).scalars().first()
+            audit_detail = (latest_breach_audit.metadata_redacted or {}).get("detail") if latest_breach_audit else None
 
             # Count total candidate incidents and failures
             stmt_cand = (
@@ -103,7 +158,7 @@ class ReleaseGuardrailService:
                 relative_risk = 1.0
 
             recommendation = "HEALTHY"
-            if simulated_invariant_breaches > 0:
+            if total_invariant_breaches > 0:
                 recommendation = "ROLLBACK_REQUIRED_INVARIANT_BREACH"
             elif (
                 cand_total >= self.MIN_CANARY_SAMPLE_SIZE
@@ -124,8 +179,9 @@ class ReleaseGuardrailService:
                 incumbent_error_rate=round(inc_error_rate, 4),
                 candidate_error_rate=round(cand_error_rate, 4),
                 relative_risk=relative_risk,
-                invariant_breach_count=simulated_invariant_breaches,
+                invariant_breach_count=total_invariant_breaches,
                 recommendation=recommendation,
+                last_breach_detail=audit_detail,
             )
 
     async def evaluate_and_enforce_guardrails(
@@ -133,7 +189,7 @@ class ReleaseGuardrailService:
         *,
         tenant_id: uuid.UUID,
         release_id: uuid.UUID,
-        simulated_invariant_breaches: int = 0,
+        test_invariant_breaches: int = 0,
         invariant_breach_detail: str = "",
     ) -> tuple[bool, str]:
         """Runs guardrail check and executes automated rollback if any safety rule is violated.
@@ -143,7 +199,7 @@ class ReleaseGuardrailService:
         metrics = await self.compute_canary_metrics(
             tenant_id=tenant_id,
             release_id=release_id,
-            simulated_invariant_breaches=simulated_invariant_breaches,
+            test_invariant_breaches=test_invariant_breaches,
         )
 
         release = await self._release_service.get_release(
@@ -155,7 +211,8 @@ class ReleaseGuardrailService:
 
         # 1. Class 1: Zero-Tolerance Invariant Breaches (N=1)
         if metrics.invariant_breach_count > 0:
-            reason = f"CLASS_1_INVARIANT_BREACH: {invariant_breach_detail or 'Unauthorized mutation or negative-control violation'}"
+            breach_msg = invariant_breach_detail or metrics.last_breach_detail or "Unauthorized mutation or negative-control violation"
+            reason = f"CLASS_1_INVARIANT_BREACH: {breach_msg}"
             logger.error("Tripping Class 1 guardrail rollback on release %s: %s", release_id, reason)
             await self._release_service.trigger_rollback(
                 tenant_id=tenant_id,

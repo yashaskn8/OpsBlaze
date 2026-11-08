@@ -6,6 +6,7 @@ interface Props {
   tenantId: string
   onActiveApprovalChange: (app: ApprovalResponse | null) => void
   onLockoutChange: (isLocked: boolean, lagSeconds: number) => void
+  authToken?: string
 }
 
 export function WorkbenchView({
@@ -13,6 +14,7 @@ export function WorkbenchView({
   tenantId,
   onActiveApprovalChange,
   onLockoutChange,
+  authToken,
 }: Props) {
   const [snapshot, setSnapshot] = useState<WorkbenchSnapshotResponse | null>(null)
   const [etag, setEtag] = useState<string | null>(null)
@@ -33,6 +35,9 @@ export function WorkbenchView({
     try {
       const headers: Record<string, string> = {
         'X-Tenant-ID': tenantId,
+      }
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`
       }
       if (etagRef.current) {
         headers['If-None-Match'] = etagRef.current

@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.domain.incident import DomainError
 
-
 # ==============================================================================
 # Enums
 # ==============================================================================
@@ -186,7 +185,7 @@ def compute_bundle_digest(canonical_payload_bytes: bytes) -> str:
 
 def compute_bundle_signature(digest: str, secret: str, key_id: str) -> str:
     """Compute HMAC-SHA256 signature over bundle digest with domain separator."""
-    message = f"opsblaze:policy_bundle:v1:{key_id}:{digest}".encode("utf-8")
+    message = f"opsblaze:policy_bundle:v1:{key_id}:{digest}".encode()
     key = secret.encode("utf-8")
     return hmac.new(key, message, hashlib.sha256).hexdigest()
 
@@ -392,3 +391,4 @@ class CanaryMetricsResponse(BaseModel):
     relative_risk: float | None
     invariant_breach_count: int
     recommendation: str
+    last_breach_detail: str | None = None

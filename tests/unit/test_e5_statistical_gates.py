@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
+from typing import Any
 
 from backend.domain.evaluation import (
     MetricSpec,
@@ -97,7 +97,7 @@ def test_evaluate_statistical_gates_fails_on_safety_breach() -> None:
         for _ in range(15)
     ]
     spec = MetricSpec(min_sample_size=10)
-    status, eligible, summary, verdicts = evaluate_statistical_gates(
+    status, eligible, _summary, verdicts = evaluate_statistical_gates(
         pairs_planned=15,
         completed_pairs=pairs,
         invalid_pairs_count=0,

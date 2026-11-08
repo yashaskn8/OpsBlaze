@@ -14,7 +14,6 @@ Verifies:
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 import pytest
 from httpx import AsyncClient
@@ -22,8 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.config import get_settings
 from backend.domain.auth import (
-    ActorKind,
-    PrincipalRole,
     mint_principal_token,
 )
 from backend.domain.evaluation import (
@@ -33,13 +30,15 @@ from backend.domain.evaluation import (
 from backend.domain.failure import (
     DivergentStepCategory,
     ProposalType,
-    ReviewDecision as ProposalReviewDecision,
     TargetComponent,
+)
+from backend.domain.failure import (
+    ReviewDecision as ProposalReviewDecision,
 )
 from backend.learning.clusters import FailureClusterService
 from backend.learning.failure_taxonomy import FailureClassifier
 from backend.learning.proposal_service import ProposalService
-from backend.persistence.models import ConsentEpoch, OutcomeRevision, Tenant
+from backend.persistence.models import ConsentEpoch, OutcomeRevision
 from backend.persistence.repositories import IncidentRepository
 
 pytestmark = pytest.mark.postgres

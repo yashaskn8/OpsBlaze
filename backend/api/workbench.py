@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.api.incidents import get_authenticated_tenant_id, get_session_factory
+from backend.api.auth_deps import get_authenticated_tenant_id, get_session_factory
 from backend.domain.incident import IncidentNotFoundError
 from backend.domain.workbench import WorkbenchSnapshotResponse
 from backend.persistence.repositories import IncidentRepository

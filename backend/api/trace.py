@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.api.incidents import get_authenticated_tenant_id, get_session_factory
+from backend.api.auth_deps import get_authenticated_tenant_id, get_session_factory
 from backend.domain.incident import IncidentNotFoundError
 from backend.domain.trace import TraceGraphResponse
 from backend.trace.service import TraceService

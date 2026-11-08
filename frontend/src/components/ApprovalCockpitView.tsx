@@ -7,6 +7,12 @@ interface Props {
   activeApproval: ApprovalResponse | null
   isLockedOut: boolean
   onRefresh: () => void
+  authToken?: string
+  authenticatedUser?: {
+    actor_id: string
+    actor_kind: string
+    roles: string[]
+  } | null
 }
 
 export function ApprovalCockpitView({
@@ -15,14 +21,33 @@ export function ApprovalCockpitView({
   activeApproval,
   isLockedOut,
   onRefresh,
+  authToken,
+  authenticatedUser,
 }: Props) {
-  const [reviewerId, setReviewerId] = useState('commander-alice')
-  const [reviewerRole, setReviewerRole] = useState('incident_commander')
+  const [reviewerId, setReviewerId] = useState(authenticatedUser?.actor_id || 'commander-alice')
+  const [reviewerRole, setReviewerRole] = useState(authenticatedUser?.roles[0] || 'incident_commander')
   const [reason, setReason] = useState('Reviewed diagnostic telemetry and verified safety')
   const [actionLoading, setActionLoading] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [timeLeftSec, setTimeLeftSec] = useState<number>(0)
+
+  useEffect(() => {
+    if (authenticatedUser) {
+      setReviewerId(authenticatedUser.actor_id)
+      if (authenticatedUser.roles.length > 0) {
+        setReviewerRole(authenticatedUser.roles[0])
+      }
+    }
+  }, [authenticatedUser])
+
+  const isHuman = authenticatedUser ? authenticatedUser.actor_kind === 'human' : true
+  const canApprove =
+    isHuman &&
+    (!authenticatedUser ||
+      authenticatedUser.roles.some((r) =>
+        ['incident_commander', 'operator', 'platform_engineer', 'sre_lead'].includes(r.toLowerCase())
+      ))
 
   // Countdown timer for expiration
   useEffect(() => {
@@ -56,12 +81,17 @@ export function ApprovalCockpitView({
         reason: reason.trim(),
       }
 
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Tenant-ID': tenantId,
+      }
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`
+      }
+
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenantId,
-        },
+        headers,
         body: JSON.stringify(body),
       })
 
@@ -191,18 +221,24 @@ export function ApprovalCockpitView({
           />
         </div>
 
+        {!canApprove && (
+          <div style={{ marginBottom: '12px', padding: '8px 12px', backgroundColor: '#fef2f2', border: '1px solid #f87171', borderRadius: '4px', color: '#991b1b', fontSize: '13px' }}>
+            ⚠️ Principal {authenticatedUser ? `'${authenticatedUser.actor_id}' (${authenticatedUser.actor_kind})` : ''} lacks human approval authority. Approval actions are disabled.
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: '10px' }}>
           <button
             type="button"
             onClick={() => void handleDecision('approve')}
-            disabled={!isPending || isLockedOut || actionLoading}
+            disabled={!isPending || isLockedOut || actionLoading || !canApprove}
             style={{
               padding: '8px 16px',
-              backgroundColor: isPending && !isLockedOut ? '#16a34a' : '#94a3b8',
+              backgroundColor: isPending && !isLockedOut && canApprove ? '#16a34a' : '#94a3b8',
               color: '#ffffff',
               border: 'none',
               borderRadius: '4px',
-              cursor: isPending && !isLockedOut ? 'pointer' : 'not-allowed',
+              cursor: isPending && !isLockedOut && canApprove ? 'pointer' : 'not-allowed',
               fontWeight: 600,
             }}
           >
@@ -212,14 +248,14 @@ export function ApprovalCockpitView({
           <button
             type="button"
             onClick={() => void handleDecision('reject')}
-            disabled={!isPending || isLockedOut || actionLoading}
+            disabled={!isPending || isLockedOut || actionLoading || !canApprove}
             style={{
               padding: '8px 16px',
-              backgroundColor: isPending && !isLockedOut ? '#dc2626' : '#94a3b8',
+              backgroundColor: isPending && !isLockedOut && canApprove ? '#dc2626' : '#94a3b8',
               color: '#ffffff',
               border: 'none',
               borderRadius: '4px',
-              cursor: isPending && !isLockedOut ? 'pointer' : 'not-allowed',
+              cursor: isPending && !isLockedOut && canApprove ? 'pointer' : 'not-allowed',
               fontWeight: 600,
             }}
           >
@@ -229,14 +265,14 @@ export function ApprovalCockpitView({
           <button
             type="button"
             onClick={() => void handleDecision('revoke')}
-            disabled={!isApproved || isLockedOut || actionLoading}
+            disabled={!isApproved || isLockedOut || actionLoading || !canApprove}
             style={{
               padding: '8px 16px',
-              backgroundColor: isApproved && !isLockedOut ? '#d97706' : '#94a3b8',
+              backgroundColor: isApproved && !isLockedOut && canApprove ? '#d97706' : '#94a3b8',
               color: '#ffffff',
               border: 'none',
               borderRadius: '4px',
-              cursor: isApproved && !isLockedOut ? 'pointer' : 'not-allowed',
+              cursor: isApproved && !isLockedOut && canApprove ? 'pointer' : 'not-allowed',
               fontWeight: 600,
             }}
           >

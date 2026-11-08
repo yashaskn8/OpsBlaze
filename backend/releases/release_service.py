@@ -17,7 +17,6 @@ import logging
 import secrets
 import uuid
 from datetime import UTC, datetime
-
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, select, update
@@ -59,6 +58,27 @@ class PolicyReleaseService:
         self._session_factory = session_factory
         self._bundle_service = bundle_service or PolicyBundleService(session_factory)
 
+    async def _assert_e5_eligibility(
+        self,
+        session: AsyncSession,
+        tenant_id: uuid.UUID,
+        bundle_id: uuid.UUID,
+    ) -> None:
+        """Verifies that candidate bundle's underlying E5 evaluation report remains valid (Stage 11.1 Gate H)."""
+        bundle = await session.get(PolicyBundle, bundle_id)
+        if bundle is None:
+            raise BundleNotFoundError(bundle_id)
+        if bundle.source_report_id is not None:
+            report = await session.get(CandidateEvaluationReport, bundle.source_report_id)
+            if report is None or report.report_status != "PASS" or not report.promotion_eligible:
+                raise E5EligibilityInvalidatedError(
+                    f"Underlying report {bundle.source_report_id} status is '{report.report_status if report else 'MISSING'}'"
+                )
+            if report.superseded_by_report_id is not None:
+                raise E5EligibilityInvalidatedError(
+                    f"Underlying report was superseded by {report.superseded_by_report_id}"
+                )
+
     async def create_release(
         self,
         *,
@@ -71,7 +91,7 @@ class PolicyReleaseService:
     ) -> PolicyRelease:
         """Create a new policy release in DRAFT state."""
         async with self._session_factory() as session:
-            # 1. Validate Candidate Bundle
+            # 1. Validate Candidate Bundle & E5 eligibility
             candidate = await session.get(PolicyBundle, bundle_id)
             if candidate is None or candidate.tenant_id != tenant_id:
                 raise BundleNotFoundError(bundle_id)
@@ -81,6 +101,7 @@ class PolicyReleaseService:
                 raise ValueError(
                     f"Candidate bundle component '{candidate.target_component}' does not match release component '{target_component}'."
                 )
+            await self._assert_e5_eligibility(session, tenant_id, bundle_id)
 
             # 2. Validate Incumbent Bundle
             incumbent = await session.get(PolicyBundle, incumbent_bundle_id)
@@ -169,6 +190,8 @@ class PolicyReleaseService:
             if current_state != ReleaseState.DRAFT:
                 raise InvalidReleaseTransitionError(current_state, ReleaseState.PENDING_APPROVAL)
 
+            await self._assert_e5_eligibility(session, tenant_id, release.bundle_id)
+
             now = datetime.now(UTC)
             stmt = (
                 update(PolicyRelease)
@@ -245,19 +268,9 @@ class PolicyReleaseService:
 
             target_state = ReleaseState.APPROVED if decision == "APPROVED" else ReleaseState.REVOKED
 
-            # If approving, re-check candidate E5 report eligibility
+            # If approving, re-check candidate E5 report eligibility (Stage 11.1 Gate H)
             if target_state == ReleaseState.APPROVED:
-                candidate = await session.get(PolicyBundle, release.bundle_id)
-                if candidate is not None and candidate.source_report_id is not None:
-                    report = await session.get(CandidateEvaluationReport, candidate.source_report_id)
-                    if report is None or report.report_status != "PASS" or not report.promotion_eligible:
-                        raise E5EligibilityInvalidatedError(
-                            f"Underlying report {candidate.source_report_id} is status='{report.report_status if report else 'MISSING'}'"
-                        )
-                    if report.superseded_by_report_id is not None:
-                        raise E5EligibilityInvalidatedError(
-                            f"Underlying report was superseded by {report.superseded_by_report_id}"
-                        )
+                await self._assert_e5_eligibility(session, tenant_id, release.bundle_id)
 
             now = datetime.now(UTC)
             stmt = (
@@ -326,6 +339,8 @@ class PolicyReleaseService:
             current_state = ReleaseState(release.state)
             if current_state != ReleaseState.APPROVED:
                 raise InvalidReleaseTransitionError(current_state, ReleaseState.SHADOW)
+
+            await self._assert_e5_eligibility(session, tenant_id, release.bundle_id)
 
             # Check for existing active release on target component
             active = await self._find_active_release(session, tenant_id, release.target_component)
@@ -397,6 +412,8 @@ class PolicyReleaseService:
             if current_state not in (ReleaseState.APPROVED, ReleaseState.SHADOW):
                 raise InvalidReleaseTransitionError(current_state, ReleaseState.CANARY)
 
+            await self._assert_e5_eligibility(session, tenant_id, release.bundle_id)
+
             # Check for existing active release on target component
             active = await self._find_active_release(session, tenant_id, release.target_component)
             if active is not None and active.id != release_id:
@@ -467,6 +484,8 @@ class PolicyReleaseService:
             if current_state != ReleaseState.CANARY:
                 raise InvalidReleaseTransitionError(current_state, ReleaseState.CANARY)
 
+            await self._assert_e5_eligibility(session, tenant_id, release.bundle_id)
+
             now = datetime.now(UTC)
             stmt = (
                 update(PolicyRelease)
@@ -528,6 +547,8 @@ class PolicyReleaseService:
             current_state = ReleaseState(release.state)
             if current_state != ReleaseState.CANARY:
                 raise InvalidReleaseTransitionError(current_state, ReleaseState.ACTIVE)
+
+            await self._assert_e5_eligibility(session, tenant_id, release.bundle_id)
 
             now = datetime.now(UTC)
             stmt = (
@@ -711,6 +732,68 @@ class PolicyReleaseService:
     ) -> PolicyRelease | None:
         async with self._session_factory() as session:
             return await self._find_active_release(session, tenant_id, target_component)
+
+    async def revoke_release(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        release_id: uuid.UUID,
+        expected_version: int,
+        revocation_reason: str,
+        actor_id: str,
+        actor_role: str,
+    ) -> PolicyRelease:
+        """Atomic CAS transition: (DRAFT, PENDING_APPROVAL, APPROVED, SHADOW) -> REVOKED."""
+        async with self._session_factory() as session:
+            release = await session.get(PolicyRelease, release_id)
+            if release is None or release.tenant_id != tenant_id:
+                raise ReleaseNotFoundError(release_id)
+
+            if release.version != expected_version:
+                raise StaleVersionConflictError(release_id, release.version, expected_version)
+
+            current_state = ReleaseState(release.state)
+            allowed_from = {ReleaseState.DRAFT, ReleaseState.PENDING_APPROVAL, ReleaseState.APPROVED, ReleaseState.SHADOW}
+            if current_state not in allowed_from:
+                raise InvalidReleaseTransitionError(current_state, ReleaseState.REVOKED)
+
+            now = datetime.now(UTC)
+            stmt = (
+                update(PolicyRelease)
+                .where(
+                    PolicyRelease.id == release_id,
+                    PolicyRelease.tenant_id == tenant_id,
+                    PolicyRelease.version == expected_version,
+                    PolicyRelease.state.in_([s.value for s in allowed_from]),
+                )
+                .values(
+                    state=ReleaseState.REVOKED.value,
+                    version=expected_version + 1,
+                    rollback_reason=revocation_reason,
+                    updated_at=now,
+                )
+            )
+            res = await session.execute(stmt)
+            cursor = cast(CursorResult[Any], res)
+            if cursor.rowcount == 0:
+                raise StaleVersionConflictError(release_id, release.version, expected_version)
+
+            audit = ReleaseEventAudit(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                release_id=release_id,
+                event_type="RELEASE_REVOKED",
+                from_state=current_state.value,
+                to_state=ReleaseState.REVOKED.value,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                metadata_redacted={"revocation_reason": revocation_reason},
+                created_at=now,
+            )
+            session.add(audit)
+            await session.commit()
+            await session.refresh(release)
+            return release
 
     async def get_release(
         self, *, tenant_id: uuid.UUID, release_id: uuid.UUID

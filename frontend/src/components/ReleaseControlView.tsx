@@ -53,6 +53,22 @@ export const ReleaseControlView: React.FC<Props> = ({
   const [selectedCandidateBundleId, setSelectedCandidateBundleId] = useState<string>('')
   const [selectedIncumbentBundleId, setSelectedIncumbentBundleId] = useState<string>('')
 
+  // Server-authorized release role permissions
+  const isHuman = authenticatedUser?.actor_kind === 'human'
+  const userRoles = authenticatedUser?.roles || []
+
+  const canBootstrap = !authenticatedUser || userRoles.some(r => ['platform_engineer', 'release_owner', 'evaluation_owner'].includes(r))
+  const canDraftRelease = !authenticatedUser || userRoles.some(r => ['platform_engineer', 'release_owner'].includes(r))
+  const canSubmitForApproval = !authenticatedUser || userRoles.some(r => ['platform_engineer', 'release_owner'].includes(r))
+  const canReview = !authenticatedUser || (isHuman && userRoles.some(r => ['release_owner', 'incident_commander'].includes(r)))
+  const canActivateShadow = !authenticatedUser || userRoles.some(r => ['platform_engineer', 'release_owner'].includes(r))
+  const canActivateCanary = !authenticatedUser || userRoles.some(r => ['release_owner', 'incident_commander'].includes(r))
+  const canUpdateCanary = !authenticatedUser || userRoles.some(r => ['release_owner', 'incident_commander'].includes(r))
+  const canPromoteActive = !authenticatedUser || userRoles.some(r => ['release_owner', 'incident_commander'].includes(r))
+  const canRollback = !authenticatedUser || userRoles.some(r => ['release_owner', 'incident_commander', 'sre_lead', 'operator'].includes(r))
+  const canKillSwitch = !authenticatedUser || userRoles.some(r => ['release_owner', 'incident_commander', 'sre_lead', 'operator'].includes(r))
+  const canRunGuardrails = !authenticatedUser || userRoles.some(r => ['release_owner', 'incident_commander', 'sre_lead', 'operator'].includes(r))
+
   const fetchReleasesAndBundles = useCallback(async () => {
     setIsLoading(true)
     setActionError(null)
@@ -386,8 +402,6 @@ export const ReleaseControlView: React.FC<Props> = ({
       const res = await releaseControlApi.runGuardrailCheck(
         tenantId,
         selectedRelease.id,
-        0,
-        '',
         authToken
       )
       if (res.rolled_back) {
@@ -453,9 +467,9 @@ export const ReleaseControlView: React.FC<Props> = ({
 
           <button
             onClick={handleBootstrapIncumbent}
-            disabled={isLoading}
+            disabled={isLoading || !canBootstrap}
             className="btn-secondary"
-            title="Bootstrap v1.0.0 baseline incumbent bundle if missing"
+            title={!canBootstrap ? "Requires platform_engineer, evaluation_owner, or release_owner" : "Bootstrap v1.0.0 baseline incumbent bundle if missing"}
           >
             Bootstrap Incumbent
           </button>
@@ -550,8 +564,9 @@ export const ReleaseControlView: React.FC<Props> = ({
                 {selectedRelease.state === 'DRAFT' && (
                   <button
                     onClick={handleSubmitForApproval}
-                    disabled={isLoading}
+                    disabled={isLoading || !canSubmitForApproval}
                     className="btn-primary"
+                    title={!canSubmitForApproval ? "Requires platform_engineer or release_owner" : ""}
                   >
                     Submit for Human Review
                   </button>
@@ -569,15 +584,17 @@ export const ReleaseControlView: React.FC<Props> = ({
                     <div className="button-group">
                       <button
                         onClick={() => handleReviewRelease('APPROVED')}
-                        disabled={isLoading}
+                        disabled={isLoading || !canReview}
                         className="btn-success"
+                        title={!canReview ? "Requires human release_owner or incident_commander" : ""}
                       >
                         Approve Release
                       </button>
                       <button
                         onClick={() => handleReviewRelease('REJECTED')}
-                        disabled={isLoading}
+                        disabled={isLoading || !canReview}
                         className="btn-danger"
+                        title={!canReview ? "Requires human release_owner or incident_commander" : ""}
                       >
                         Reject Release
                       </button>
@@ -589,15 +606,17 @@ export const ReleaseControlView: React.FC<Props> = ({
                   <div className="button-group">
                     <button
                       onClick={handleActivateShadow}
-                      disabled={isLoading}
+                      disabled={isLoading || !canActivateShadow}
                       className="btn-secondary"
+                      title={!canActivateShadow ? "Requires platform_engineer or release_owner" : ""}
                     >
                       Activate Shadow Mode (0%)
                     </button>
                     <button
                       onClick={handleActivateCanary}
-                      disabled={isLoading}
+                      disabled={isLoading || !canActivateCanary}
                       className="btn-primary"
+                      title={!canActivateCanary ? "Requires release_owner or incident_commander" : ""}
                     >
                       Activate Canary Mode ({canaryPercentage}%)
                     </button>
@@ -608,15 +627,17 @@ export const ReleaseControlView: React.FC<Props> = ({
                   <div className="button-group">
                     <button
                       onClick={handleActivateCanary}
-                      disabled={isLoading}
+                      disabled={isLoading || !canActivateCanary}
                       className="btn-primary"
+                      title={!canActivateCanary ? "Requires release_owner or incident_commander" : ""}
                     >
                       Promote from Shadow to Canary
                     </button>
                     <button
                       onClick={handleTriggerRollback}
-                      disabled={isLoading}
+                      disabled={isLoading || !canRollback}
                       className="btn-danger"
+                      title={!canRollback ? "Requires release_owner, incident_commander, sre_lead, or operator" : ""}
                     >
                       Terminate Shadow Mode
                     </button>
@@ -637,8 +658,9 @@ export const ReleaseControlView: React.FC<Props> = ({
                       />
                       <button
                         onClick={handleUpdateCanaryPercentage}
-                        disabled={isLoading}
+                        disabled={isLoading || !canUpdateCanary}
                         className="btn-secondary"
+                        title={!canUpdateCanary ? "Requires release_owner or incident_commander" : ""}
                       >
                         Update Allocation
                       </button>
@@ -647,8 +669,9 @@ export const ReleaseControlView: React.FC<Props> = ({
                     <div className="button-group">
                       <button
                         onClick={handlePromoteActive}
-                        disabled={isLoading}
+                        disabled={isLoading || !canPromoteActive}
                         className="btn-success"
+                        title={!canPromoteActive ? "Requires release_owner or incident_commander" : ""}
                       >
                         Promote to 100% Active Production
                       </button>
@@ -669,8 +692,9 @@ export const ReleaseControlView: React.FC<Props> = ({
                       />
                       <button
                         onClick={handleTriggerRollback}
-                        disabled={isLoading || !rollbackReason.trim()}
+                        disabled={isLoading || !rollbackReason.trim() || !canRollback}
                         className="btn-warning"
+                        title={!canRollback ? "Requires release_owner, incident_commander, sre_lead, or operator" : ""}
                       >
                         Trigger Rollback
                       </button>
@@ -678,8 +702,9 @@ export const ReleaseControlView: React.FC<Props> = ({
 
                     <button
                       onClick={() => setShowKillSwitchModal(true)}
-                      disabled={isLoading}
+                      disabled={isLoading || !canKillSwitch}
                       className="btn-kill-switch"
+                      title={!canKillSwitch ? "Requires release_owner, incident_commander, sre_lead, or operator" : ""}
                     >
                       🚨 EMERGENCY KILL SWITCH
                     </button>
@@ -698,8 +723,9 @@ export const ReleaseControlView: React.FC<Props> = ({
             <h3>Canary Safety Guardrails</h3>
             <button
               onClick={handleRunGuardrailCheck}
-              disabled={isLoading || !selectedRelease}
+              disabled={isLoading || !selectedRelease || !canRunGuardrails}
               className="btn-small"
+              title={!canRunGuardrails ? "Requires release_owner, incident_commander, sre_lead, or operator" : ""}
             >
               Evaluate Now
             </button>
@@ -800,7 +826,12 @@ export const ReleaseControlView: React.FC<Props> = ({
             </select>
           </div>
 
-          <button type="submit" disabled={isLoading} className="btn-primary">
+          <button
+            type="submit"
+            disabled={isLoading || !canDraftRelease}
+            className="btn-primary"
+            title={!canDraftRelease ? "Requires platform_engineer or release_owner" : ""}
+          >
             Create Draft Release
           </button>
         </form>
@@ -912,8 +943,9 @@ export const ReleaseControlView: React.FC<Props> = ({
               </button>
               <button
                 onClick={handleTripKillSwitch}
-                disabled={!killSwitchJustification.trim()}
+                disabled={!killSwitchJustification.trim() || !canKillSwitch}
                 className="btn-kill-switch"
+                title={!canKillSwitch ? "Requires release_owner, incident_commander, sre_lead, or operator" : ""}
               >
                 Trip Kill Switch Now
               </button>

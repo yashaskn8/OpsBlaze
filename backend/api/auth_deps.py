@@ -35,7 +35,7 @@ async def get_authenticated_principal(
 ) -> Principal:
     """Derives and cryptographically verifies the calling principal.
 
-    Fails closed if the authorization token is missing, expired, or tampered with.
+    Fails closed if the authorization token is missing, expired, revoked, or tampered with.
     Cross-checks tenant membership and guarantees tenant isolation.
     """
     settings = get_settings()
@@ -55,7 +55,7 @@ async def get_authenticated_principal(
 
     token_str = parts[1]
     try:
-        principal = verify_principal_token(token_str, settings.auth_secret_key)
+        principal = verify_principal_token(token_str, settings.auth_secret_key or "")
     except AuthenticationError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -89,6 +89,13 @@ async def get_authenticated_principal(
     return principal
 
 
+async def get_authenticated_tenant_id(
+    principal: Annotated[Principal, Depends(get_authenticated_principal)],
+) -> uuid.UUID:
+    """Derives verified tenant ID strictly from the cryptographically verified calling principal."""
+    return principal.tenant_id
+
+
 async def get_optional_principal(
     request: Request,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
@@ -98,4 +105,12 @@ async def get_optional_principal(
     """Returns verified principal if Authorization header is present, else None."""
     if not authorization or not authorization.strip():
         return None
-    return await get_authenticated_principal(request, session_factory, authorization, x_tenant_id)
+    try:
+        return await get_authenticated_principal(
+            request=request,
+            session_factory=session_factory,
+            authorization=authorization,
+            x_tenant_id=x_tenant_id,
+        )
+    except HTTPException:
+        return None

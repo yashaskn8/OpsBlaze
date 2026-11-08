@@ -11,9 +11,10 @@ import type {
 interface FailureAndLessonsViewProps {
   tenantId: string
   incidentId?: string
+  authToken?: string
 }
 
-export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLessonsViewProps) {
+export function FailureAndLessonsView({ tenantId, incidentId, authToken }: FailureAndLessonsViewProps) {
   const [activeSubTab, setActiveSubTab] = useState<'failures' | 'proposals' | 'lessons' | 'search'>('failures')
   const [failures, setFailures] = useState<FailureCaseResponse[]>([])
   const [selectedCluster, setSelectedCluster] = useState<FailureClusterResponse | null>(null)
@@ -23,6 +24,14 @@ export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLesson
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+
+  const getHeaders = useCallback((contentType?: string) => {
+    const h: Record<string, string> = { 'X-Tenant-ID': tenantId }
+    if (contentType) h['Content-Type'] = contentType
+    else h['Accept'] = 'application/json'
+    if (authToken) h['Authorization'] = `Bearer ${authToken}`
+    return h
+  }, [tenantId, authToken])
 
   // Cluster quarantine state
   const [quarantineClusterId, setQuarantineClusterId] = useState('')
@@ -48,7 +57,7 @@ export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLesson
         ? `/v1/failures?incident_id=${encodeURIComponent(incidentId)}`
         : '/v1/failures'
       const res = await fetch(url, {
-        headers: { Accept: 'application/json', 'X-Tenant-ID': tenantId },
+        headers: getHeaders(),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load failure cases`)
       const data = (await res.json()) as FailureCaseResponse[]
@@ -58,7 +67,7 @@ export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLesson
     } finally {
       setLoading(false)
     }
-  }, [tenantId, incidentId])
+  }, [tenantId, incidentId, getHeaders])
 
   const fetchLessons = useCallback(async () => {
     if (!tenantId) return
@@ -66,7 +75,7 @@ export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLesson
     setError(null)
     try {
       const res = await fetch('/v1/lessons', {
-        headers: { Accept: 'application/json', 'X-Tenant-ID': tenantId },
+        headers: getHeaders(),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load lessons`)
       const data = (await res.json()) as OperationalLessonResponse[]
@@ -76,7 +85,7 @@ export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLesson
     } finally {
       setLoading(false)
     }
-  }, [tenantId])
+  }, [tenantId, getHeaders])
 
   useEffect(() => {
     if (activeSubTab === 'failures') {
@@ -90,7 +99,7 @@ export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLesson
     setError(null)
     try {
       const res = await fetch(`/v1/failure-clusters/${encodeURIComponent(clusterId)}`, {
-        headers: { Accept: 'application/json', 'X-Tenant-ID': tenantId },
+        headers: getHeaders(),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch cluster`)
       const data = (await res.json()) as FailureClusterResponse
@@ -107,10 +116,7 @@ export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLesson
     try {
       const res = await fetch(`/v1/failure-clusters/${encodeURIComponent(quarantineClusterId)}/quarantine`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenantId,
-        },
+        headers: getHeaders('application/json'),
         body: JSON.stringify({ reason: quarantineReason }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to quarantine cluster`)
@@ -130,10 +136,7 @@ export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLesson
     try {
       const res = await fetch(`/v1/improvements/${encodeURIComponent(reviewProposalId)}/review`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenantId,
-        },
+        headers: getHeaders('application/json'),
         body: JSON.stringify({
           reviewer_id: reviewerId,
           reviewer_role: reviewerRole,
@@ -158,10 +161,7 @@ export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLesson
     try {
       const res = await fetch(`/v1/lessons/${encodeURIComponent(lessonId)}/validate`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenantId,
-        },
+        headers: getHeaders('application/json'),
         body: JSON.stringify({ validator: validatorName }),
       })
       if (!res.ok) {
@@ -182,10 +182,7 @@ export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLesson
     try {
       const res = await fetch(`/v1/lessons/${encodeURIComponent(lessonId)}/revoke`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenantId,
-        },
+        headers: getHeaders('application/json'),
         body: JSON.stringify({ reason: 'Operator revocation via UI' }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to revoke lesson`)
@@ -203,10 +200,7 @@ export function FailureAndLessonsView({ tenantId, incidentId }: FailureAndLesson
     try {
       const res = await fetch('/v1/lessons/search', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenantId,
-        },
+        headers: getHeaders('application/json'),
         body: JSON.stringify({
           query_text: searchQuery,
           limit: 10,
