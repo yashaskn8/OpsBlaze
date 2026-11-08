@@ -129,10 +129,10 @@ Do not mark a feature complete merely because a model, API route, UI page, schem
 
 ### 4.1 Approved baseline
 The blueprint's fixed stack is:
-- Backend: Python 3, FastAPI, Pydantic, SQLAlchemy async, Alembic, asyncio, pytest.
+- Backend: Python 3.14, FastAPI, Pydantic, SQLAlchemy async, Alembic, asyncio, pytest. All API routes return structured JSON; no server-side HTML rendering (`HTMLResponse`, `TemplateResponse`, or Jinja2) is permitted.
 - Authoritative domain database: PostgreSQL.
 - Durable workflow engine: Temporal. Keep workflow definitions deterministic; put external I/O, model calls, SQL, clocks, randomness, and network calls in activities or ordinary service boundaries, not deterministic workflow code.
-- Frontend: React and TypeScript.
+- Frontend: React 19 and TypeScript with Vite. All user interfaces must be authentic React TSX components; standalone HTML application pages, HTML dashboards, HTML templates, and HTML documentation are strictly forbidden. The sole permitted HTML exceptions are the minimal Vite bootstrap (`frontend/index.html`, strictly $\le 25$ lines with no application markup) and installed engineering tooling resources (`.agents/skills/brainstorming/scripts/frame-template.html`).
 - Delivery/verification: GitHub Actions, Docker Compose as a reproducibility reference, OpenTelemetry, and Locust.
 - Adapter and evaluation: versioned adapters, isolated simulator/targets, reproducible fixtures, fault injection, and isolated evaluation workers.
 

@@ -1,0 +1,9 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Truthful GitHub Linguist classifications
+# Exclude build output, generated knowledge graphs, and fixtures from repository language metrics
+frontend/dist/** linguist-generated
+graphify-out/** linguist-generated
+fixtures/workflow_histories/** linguist-generated
+.agents/skills/** linguist-vendored

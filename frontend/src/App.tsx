@@ -4,6 +4,9 @@ import { StaleLockoutBanner } from './components/StaleLockoutBanner'
 import { WorkbenchView } from './components/WorkbenchView'
 import { ApprovalCockpitView } from './components/ApprovalCockpitView'
 import { TraceExplorerView } from './components/TraceExplorerView'
+import { ExperienceView } from './components/ExperienceView'
+import { FailureAndLessonsView } from './components/FailureAndLessonsView'
+import { EvaluationsView } from './components/EvaluationsView'
 import type { ApprovalResponse } from './types/stage6'
 
 export type IncidentStatus =
@@ -104,8 +107,10 @@ export function App() {
   const [loading, setLoading] = useState<boolean>(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  // Stage 6 Tabs & Lockout State
-  const [activeTab, setActiveTab] = useState<'workbench' | 'approval' | 'trace' | 'admission'>('workbench')
+  // Navigation Tabs & Lockout State
+  const [activeTab, setActiveTab] = useState<
+    'workbench' | 'approval' | 'trace' | 'experience' | 'failures-lessons' | 'evaluations' | 'admission'
+  >('workbench')
   const [activeApproval, setActiveApproval] = useState<ApprovalResponse | null>(null)
   const [isLockedOut, setIsLockedOut] = useState<boolean>(false)
   const [pingLagSeconds, setPingLagSeconds] = useState<number>(0)
@@ -398,6 +403,51 @@ export function App() {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('experience')}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '6px',
+              border: activeTab === 'experience' ? '2px solid #2563eb' : '1px solid #cbd5e1',
+              backgroundColor: activeTab === 'experience' ? '#eff6ff' : '#ffffff',
+              color: activeTab === 'experience' ? '#1d4ed8' : '#334155',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            E1/E2 — Experience
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('failures-lessons')}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '6px',
+              border: activeTab === 'failures-lessons' ? '2px solid #2563eb' : '1px solid #cbd5e1',
+              backgroundColor: activeTab === 'failures-lessons' ? '#eff6ff' : '#ffffff',
+              color: activeTab === 'failures-lessons' ? '#1d4ed8' : '#334155',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            E3/E4 — Failures & Lessons
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('evaluations')}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '6px',
+              border: activeTab === 'evaluations' ? '2px solid #2563eb' : '1px solid #cbd5e1',
+              backgroundColor: activeTab === 'evaluations' ? '#eff6ff' : '#ffffff',
+              color: activeTab === 'evaluations' ? '#1d4ed8' : '#334155',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            S1/E5 — Regression Gate
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('admission')}
             style={{
               padding: '8px 16px',
@@ -461,6 +511,18 @@ export function App() {
               No incident active. Load an incident UUID to view its causal DAG trace.
             </p>
           )
+        )}
+
+        {activeTab === 'experience' && (
+          <ExperienceView tenantId={tenantId} incidentId={activeIncidentId || undefined} />
+        )}
+
+        {activeTab === 'failures-lessons' && (
+          <FailureAndLessonsView tenantId={tenantId} incidentId={activeIncidentId || undefined} />
+        )}
+
+        {activeTab === 'evaluations' && (
+          <EvaluationsView tenantId={tenantId} incidentId={activeIncidentId || undefined} />
         )}
 
         {activeTab === 'admission' && (
