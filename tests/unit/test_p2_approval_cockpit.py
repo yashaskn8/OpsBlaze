@@ -100,15 +100,19 @@ async def test_p2_reviewer_role_authorization_rejects_model(
         target_id="k8s:pod:auth-svc",
         expected_resource_version="v1",
     )
-    await service.create_approval_request(isolated_tenant, inc_id, create_req)
+    pending = await service.create_approval_request(isolated_tenant, inc_id, create_req)
 
-    # Models or agents attempting to approve must fail
+    # Models or agents attempting to approve must fail at the authoritative service boundary.
     for forbidden_role in ["model", "agent", "investigator", "llm", "system", "autonomous_agent"]:
         with pytest.raises(ApprovalRoleForbiddenError):
-            ApprovalDecisionRequest(
-                reviewer_id="claude-agent",
-                reviewer_role=forbidden_role,
-                reason="Self-approving my proposed plan",
+            await service.approve(
+                isolated_tenant,
+                pending.id,
+                ApprovalDecisionRequest(
+                    reviewer_id="claude-agent",
+                    reviewer_role=forbidden_role,
+                    reason="Self-approving my proposed plan",
+                ),
             )
 
 
