@@ -26,7 +26,7 @@ def _matches(actual: Any, exists: bool, operator: str, expected: Any) -> bool:
     if not exists:
         return False
     if operator == "equals":
-        return actual == expected
+        return bool(actual == expected)
     if operator == "contains":
         if not isinstance(actual, (str, list, dict)):
             return False
