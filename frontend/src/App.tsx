@@ -111,45 +111,32 @@ export function App() {
 
   // Authentication & Principal State
   const [currentUser, setCurrentUser] = useState<AuthenticatedUser | null>(null)
-  const [authToken, setAuthToken] = useState<string>(
-    () => window.sessionStorage.getItem('opsblaze.auth_token') || ''
-  )
+  const [authToken, setAuthToken] = useState<string>('')
   const [selectedUserPreset, setSelectedUserPreset] = useState<string>('incident_commander')
+  const [loginPassword, setLoginPassword] = useState<string>('')
   const [authLoading, setAuthLoading] = useState<boolean>(false)
   const [authError, setAuthError] = useState<string | null>(null)
 
-  const handleSwitchUser = useCallback(
-    async (username: string, activeTenantId?: string) => {
-      const preset = PRECONFIGURED_PRESETS.find((p) => p.username === username)
-      if (!preset) return
-      setAuthLoading(true)
-      setAuthError(null)
-      setSelectedUserPreset(username)
-      const targetTenant = (activeTenantId || tenantId).trim()
-      try {
-        const res = await authApi.login(username, preset.password, targetTenant)
-        const user: AuthenticatedUser = {
-          actor_id: res.actor_id,
-          actor_kind: res.actor_kind as 'human' | 'bot' | 'system',
-          roles: res.roles,
-          tenant_id: res.tenant_id,
-        }
-        setCurrentUser(user)
-        setAuthToken(res.access_token)
-        window.sessionStorage.setItem('opsblaze.auth_token', res.access_token)
-        window.localStorage.setItem('opsblaze.auth_token', res.access_token)
-      } catch (err) {
-        setAuthError(err instanceof Error ? err.message : 'Login failed')
-      } finally {
-        setAuthLoading(false)
-      }
-    },
-    [tenantId]
-  )
-
-  useEffect(() => {
-    void handleSwitchUser(selectedUserPreset)
-  }, [handleSwitchUser, selectedUserPreset])
+  const handleLogin = useCallback(async () => {
+    if (!loginPassword) {
+      setAuthError('Enter your account password to sign in.')
+      return
+    }
+    setAuthLoading(true)
+    setAuthError(null)
+    setCurrentUser(null)
+    setAuthToken('')
+    try {
+      const res = await authApi.login(selectedUserPreset, loginPassword, tenantId.trim())
+      setCurrentUser(res.principal)
+      setAuthToken(res.access_token)
+      setLoginPassword('')
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Login failed')
+    } finally {
+      setAuthLoading(false)
+    }
+  }, [loginPassword, selectedUserPreset, tenantId])
 
   // Navigation Tabs & Lockout State
   const [activeTab, setActiveTab] = useState<
@@ -377,7 +364,7 @@ export function App() {
               <label style={{ fontSize: '11px', color: '#64748b' }}>User Identity:</label>
               <select
                 value={selectedUserPreset}
-                onChange={(e) => void handleSwitchUser(e.target.value)}
+                onChange={(e) => setSelectedUserPreset(e.target.value)}
                 disabled={authLoading}
                 style={{ fontSize: '11px', padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
               >
@@ -388,6 +375,24 @@ export function App() {
                 ))}
               </select>
             </div>
+            <input
+              type="password"
+              aria-label="Account password"
+              autoComplete="current-password"
+              placeholder="Account password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              disabled={authLoading}
+              style={{ fontSize: '11px', padding: '4px 8px', width: '145px' }}
+            />
+            <button
+              type="button"
+              onClick={() => void handleLogin()}
+              disabled={authLoading || !loginPassword}
+              style={{ fontSize: '11px', padding: '4px 10px' }}
+            >
+              {authLoading ? 'Signing in…' : 'Sign in'}
+            </button>
             {currentUser && (
               <span style={{ fontSize: '11px', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '3px 8px', borderRadius: '12px', fontWeight: 500 }}>
                 👤 {currentUser.actor_id} [{currentUser.roles.join(', ')}]
@@ -398,10 +403,7 @@ export function App() {
               <input
                 type="text"
                 value={tenantId}
-                onChange={(e) => {
-                  setTenantId(e.target.value)
-                  void handleSwitchUser(selectedUserPreset, e.target.value)
-                }}
+                onChange={(e) => setTenantId(e.target.value)
                 style={{ fontSize: '11px', padding: '4px 8px', width: '220px', fontFamily: 'monospace' }}
               />
             </div>

@@ -1,3 +1,31 @@
+> **Corrective verification addendum — 2026-11-08**
+>
+> The earlier "10 / 10 gates passed" status is superseded. GitHub Actions run
+> [42496271141](https://github.com/yashaskn8/OpsBlaze/actions/runs/42496271141)
+> failed before pytest collection because CI did not provide the required
+> `POSTGRES_PASSWORD` setting. The frontend job passed; Ruff and Mypy passed.
+>
+> A source review also found that the earlier report overstated tenant membership,
+> token revocation durability, shadow execution, and runtime guardrail guarantees.
+> The follow-up commit adds a PostgreSQL-backed revocation table and migration,
+> restricts revocation to the caller's own current token, disables the built-in
+> password-registry login outside development/test, corrects the frontend response
+> contract, removes frontend-embedded passwords, and fixes CI's PostgreSQL
+> settings/migration setup.
+>
+> **Stage 11.1 remains NOT ACCEPTED** until the updated GitHub Actions run passes
+> and the remaining limitations below are closed:
+> - A production identity provider and authoritative user-to-tenant membership
+>   service are not integrated; production password-registry login fails closed.
+> - The current shadow observation path records metadata but does not execute
+>   candidate reasoning.
+> - Runtime guardrail invocation is best-effort after status commit, not a
+>   durable retryable outbox/Temporal workflow.
+> - The full repository test suite and multi-worker/restart revocation behavior
+>   still require CI/deployment verification.
+>
+> Do not start Stage 12 / E7 on the basis of this report.
+
 # OPSBLAZE TITAN-20 — STAGE 11.1
 ## SECURITY, AUTHORIZATION & RELEASE ASSURANCE ACCEPTANCE REPORT
 

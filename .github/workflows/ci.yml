@@ -26,7 +26,11 @@ jobs:
           --health-retries 5
     env:
       OPSBLAZE_ENV: development
-      DATABASE_URL: postgresql+asyncpg://opsblaze:opsblaze_dev_password@localhost:5432/opsblaze_test
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: opsblaze
+      POSTGRES_PASSWORD: opsblaze_dev_password
+      POSTGRES_DB: opsblaze_test
       AUTH_SECRET_KEY: opsblaze-dev-auth-secret-key-32bytes-hex-safe
       POLICY_SIGNING_SECRET: opsblaze-dev-policy-signing-secret-hex-safe
       POLICY_SIGNING_KEY_ID: key-1
@@ -44,6 +48,9 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
+
+      - name: Apply PostgreSQL migrations
+        run: uv run alembic upgrade head
 
       - name: Lint with Ruff
         run: uv run ruff check backend tests

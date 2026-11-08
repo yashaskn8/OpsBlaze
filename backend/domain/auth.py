@@ -167,7 +167,11 @@ RELEASE_ROLE_MATRIX: dict[str, frozenset[str]] = {
 # Token Revocation Store
 # ---------------------------------------------------------------------------
 class TokenRevocationStore:
-    """Thread-safe store for revoked token identifiers (JTI)."""
+    """Process-local compatibility helper for isolated unit tests only.
+
+    Runtime API revocation is persisted in PostgreSQL by the authentication layer.
+    This class is not a durable or multi-worker revocation mechanism.
+    """
 
     _revoked_jtis: ClassVar[set[str]] = set()
 
@@ -299,6 +303,7 @@ class Principal:
     roles: frozenset[str] = field(default_factory=frozenset)
     auth_mechanism: str = "bearer_token"
     jti: str | None = None
+    expires_at_epoch: int | None = None
 
     def is_human(self) -> bool:
         return self.actor_kind == ActorKind.HUMAN
@@ -501,4 +506,5 @@ def verify_principal_token(token_str: str, secret_key: str) -> Principal:
         roles=clean_roles,
         auth_mechanism=payload.get("mech", "bearer_token"),
         jti=str(jti) if jti else None,
+        expires_at_epoch=exp,
     )

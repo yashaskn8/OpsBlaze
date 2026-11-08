@@ -1,141 +1,70 @@
 # RUNBOOK: Authentication & Identity Operations
 
-## 1. Overview and Authority Model
+## 1. Current authentication boundary
 
-OpsBlaze enforces cryptographic bearer token authentication and server-derived identity across all API endpoints. In accordance with the TITAN-20 governance constitution:
+- Protected API routes require an HS256 bearer token verified by the backend.
+- `/v1/auth/token` is permanently disabled.
+- The built-in password registry is a development/test fixture only. The `/v1/auth/login` endpoint returns HTTP 503 outside `development` and `test`.
+- Production login is intentionally unavailable until a trusted identity provider and authoritative user-to-tenant membership store are integrated. Do not bypass this restriction by changing the environment label.
+- Development identity names shown in the React UI are labels only. Operators must enter credentials; no passwords are shipped in the frontend bundle.
+- Browser access tokens are held in React memory only. A page reload requires a new sign-in.
 
-- **AI models and automated agents are strictly non-human principals (`actor_kind: "AGENT"`).**
-- **Models may never mint credentials, grant themselves roles, or self-approve plans or releases.**
-- **All API requests must supply `Authorization: Bearer <token>` signed by the server's `auth_secret_key` using `HS256`.**
-- **The deprecated `/v1/auth/token` endpoint permanently returns HTTP 401 Unauthorized.**
+## 2. Database migration requirement
 
----
+Token revocation is persisted in PostgreSQL in the `revoked_token` table. Apply migrations before starting the API:
 
-## 2. Preconfigured Principals and Role Directory
-
-Authentication is performed via the `/v1/auth/login` endpoint using registered credentials from `backend/domain/auth.py`:
-
-| Username | Default Password | Actor ID | Actor Kind | Primary Roles | Permitted Actions |
-|---|---|---|---|---|---|
-| `admin` | `AdminSecurePass2026!` | `admin-001` | `HUMAN` | `incident_commander`, `release_owner`, `platform_engineer`, `sre_lead` | Full administrative control, all release transitions, emergency kill switch |
-| `release_lead` | `ReleaseLeadPass2026!` | `rel-lead-001` | `HUMAN` | `release_owner` | Approve releases, promote to shadow/canary/active, adjust canary percentages |
-| `commander` | `CommanderPass2026!` | `cmd-001` | `HUMAN` | `incident_commander` | P2 plan approvals, emergency rollback, release kill switch |
-| `sre_oncall` | `SRELeadPass2026!` | `sre-001` | `HUMAN` | `sre_lead` | Emergency release kill switch, emergency rollback |
-| `platform_dev` | `PlatformDevPass2026!` | `dev-001` | `HUMAN` | `platform_engineer` | Draft policy bundles, create release candidates, view telemetry |
-| `read_only` | `ReadOnlyPass2026!` | `audit-001` | `HUMAN` | `viewer` | Read-only telemetry, workbench, trace explorer, audit logs |
-| `bot_investigator` | `BotAgentPass2026!` | `agent-a1-001` | `AGENT` | `operator` | Autonomous observation, hypothesis generation; **blocked from approvals & consequential effects** |
-
----
-
-## 3. Standard Operating Procedures
-
-### 3.1 Issuing a Session Token
-
-To obtain a token for a human operator or automated service:
-
-```bash
-curl -X POST "http://localhost:8000/v1/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "release_lead",
-    "password": "ReleaseLeadPass2026!",
-    "tenant_id": "00000000-0000-0000-0000-000000000001"
-  }'
+```powershell
+uv run alembic upgrade head
 ```
 
-**Response:**
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer",
-  "expires_in": 3600,
-  "principal": {
-    "actor_id": "rel-lead-001",
-    "actor_kind": "HUMAN",
-    "roles": ["release_owner"],
-    "tenant_id": "00000000-0000-0000-0000-000000000001"
-  }
-}
+The migration is additive and creates the revocation table and expiry index. It does not drop or rewrite existing incident, approval, release, or tenant data.
+
+## 3. Development sign-in
+
+The development registry in `backend/domain/auth.py` exists solely for local and automated test environments. It is not an employee directory, tenant membership service, or production credential store.
+
+The development endpoint currently accepts a tenant identifier after verifying that the tenant exists. This is not adequate production tenant authorization; production login remains disabled until user-to-tenant membership is backed by an authoritative source.
+
+Never deploy the development registry or its shared fixture credentials as a staging or production identity mechanism.
+
+## 4. Token revocation
+
+A principal can revoke only the bearer token used for the current request:
+
+```powershell
+$headers = @{ Authorization = "Bearer <current-token>" }
+Invoke-RestMethod -Method Post -Uri "http://localhost:8000/v1/auth/revoke" -Headers $headers -ContentType "application/json" -Body "{}"
 ```
 
-### 3.2 Accessing Protected Endpoints
+The API stores the token JTI, actor, tenant, and signed expiry in PostgreSQL. All application workers consult the same database record. Revoked tokens are rejected with HTTP 401 until their expiry. A caller-supplied JTI that does not match the current token is rejected with HTTP 403.
 
-Pass the issued JWT in the HTTP Authorization header:
+Revocation depends on migration `stage11_1_001_revoked_tokens` being applied. The process-local `TokenRevocationStore` is retained only as a test compatibility helper and is not the runtime persistence mechanism.
 
-```bash
-curl -X GET "http://localhost:8000/v1/releases/" \
-  -H "Authorization: Bearer <token>"
-```
+## 5. Authorization and release governance
 
-If the `X-Tenant-ID` header is also provided, it must match the tenant ID encoded in the token claims. A mismatch results in `403 Forbidden`.
+- Tenant-scoped APIs derive tenant identity from the verified principal; `X-Tenant-ID` is only a consistency check.
+- P2 reviewer identity and role are derived from the verified principal at the API boundary.
+- Bots and models cannot receive human approval authority.
+- E6 mutating routes use the release role matrix.
+- B2 reservation and P2 approval/dispatch must verify the pinned release state before consequential operations.
+- Release states other than the explicit permitted states fail closed for candidate consequential activity.
 
-### 3.3 Revoking a Token
+## 6. Known limitations — do not represent these as accepted
 
-If a token is suspected of compromise or an operator session terminates:
+1. No production OIDC/OAuth identity provider is currently integrated.
+2. No authoritative production user-to-tenant membership directory is currently integrated.
+3. The shadow observation method currently records an audit observation; it does not execute candidate reasoning. It must not be described as full shadow evaluation.
+4. Runtime guardrail evaluation is currently triggered after terminal-state persistence and logs/swallow failures. It is not yet a durable retryable outbox workflow.
+5. The current development identity fixture is not suitable for shared or production use.
 
-```bash
-curl -X POST "http://localhost:8000/v1/auth/revoke" \
-  -H "Authorization: Bearer <token>"
-```
+## 7. Verification checklist
 
-The token's unique ID (`jti`) is added to the in-memory `TokenRevocationStore`. Any subsequent requests using that token will fail immediately with `401 Unauthorized: Token has been revoked`.
+Before any production deployment:
 
----
-
-## 4. Separation of Duties and Release Governance
-
-The `RELEASE_ROLE_MATRIX` strictly governs who can execute release actions:
-
-```
-+-----------------------------------------------------------------------------------+
-| Action               | Permitted Roles                                            |
-+----------------------+------------------------------------------------------------+
-| bundle_create        | platform_engineer, release_owner                           |
-| release_create       | platform_engineer, release_owner                           |
-| release_approve      | release_owner, incident_commander (drafter_id != actor_id) |
-| promote_shadow       | release_owner, platform_engineer                          |
-| promote_canary       | release_owner, platform_engineer                          |
-| adjust_canary        | release_owner, platform_engineer                          |
-| promote_active       | release_owner, platform_engineer                          |
-| rollback             | incident_commander, release_owner, platform_engineer, SRE  |
-| revoke               | incident_commander, release_owner, platform_engineer, SRE  |
-| kill_switch          | incident_commander, sre_lead, release_owner                |
-+-----------------------------------------------------------------------------------+
-```
-
-### Constraint: Drafter Cannot Approve
-When a release candidate is created by an engineer, the database enforces `drafter_id <> reviewer_id`. A release drafter attempting to approve their own release candidate is rejected with `400 Bad Request: Drafter cannot approve own release`.
-
----
-
-## 5. Emergency Incident Procedures
-
-### 5.1 Suspected Credential Compromise
-1. Identify the compromised principal's `actor_id`.
-2. Execute immediate revocation on active tokens via `/v1/auth/revoke`.
-3. If secrets themselves are compromised, rotate `OPSBLAZE_AUTH_SECRET_KEY` in environment configuration and restart backend processes. (All existing tokens will fail signature verification).
-
-### 5.2 Malfunctioning Agent Policy / Active Canary Breach
-1. Authenticate as `sre_oncall` or `commander`.
-2. Trip the emergency release kill switch:
-   ```bash
-   curl -X POST "http://localhost:8000/v1/releases/{release_id}/kill-switch" \
-     -H "Authorization: Bearer <sre_token>" \
-     -H "Content-Type: application/json" \
-     -d '{"reason": "Emergency trip: abnormal latency spike observed"}'
-   ```
-3. Verify routing has immediately reverted 100% of incident traffic to the incumbent baseline.
-4. Consequential B2 resource reservations and P2 plan approvals will automatically fail-close with HTTP 403.
-
----
-
-## 6. Troubleshooting
-
-| Error Code | Error Detail | Root Cause & Resolution |
-|---|---|---|
-| `401 Unauthorized` | `Token has been revoked` | Token JTI is marked revoked. Operator must re-authenticate via `/v1/auth/login`. |
-| `401 Unauthorized` | `Invalid authentication credentials` | Invalid signature, expired token, or non-HS256 algorithm. Re-issue token. |
-| `401 Unauthorized` | `Client-asserted token issuance is permanently disabled` | Caller hit deprecated `/v1/auth/token`. Use `/v1/auth/login` with registered credentials. |
-| `403 Forbidden` | `Role 'operator' lacks authority for 'promote_active'` | Principal lacks required role in `RELEASE_ROLE_MATRIX`. Use credentials with `release_owner` role. |
-| `403 Forbidden` | `Tenant header mismatch` | The `X-Tenant-ID` header does not match the token's `tenant_id` claim. Remove the header or supply matching tenant ID. |
-| `403 Forbidden` | `Autonomous agents may not review or approve plans` | Agent principal attempted to approve a P2 plan. Human reviewer must sign approval. |
+- Configure a real identity provider and validate issuer, audience, signature, expiry, and user identity.
+- Resolve tenant membership from an authoritative source, never from the login request alone.
+- Remove the development identity registry from production configuration.
+- Apply PostgreSQL migrations through the approved deployment pipeline.
+- Verify token revocation across process restarts and multiple workers.
+- Complete durable guardrail scheduling and real isolated shadow execution.
+- Review the updated Stage 11.1 acceptance report and current GitHub Actions results.

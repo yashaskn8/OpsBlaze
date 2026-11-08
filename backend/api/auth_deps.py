@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.config import get_settings
@@ -14,7 +16,7 @@ from backend.domain.auth import (
     Principal,
     verify_principal_token,
 )
-from backend.persistence.models import Tenant
+from backend.persistence.models import RevokedToken, Tenant
 
 
 def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -62,8 +64,23 @@ async def get_authenticated_principal(
             detail=f"Authentication failed: {e}",
         ) from e
 
-    # Verify tenant exists in database
+    # Verify durable revocation and tenant existence in one authoritative DB session.
     async with session_factory() as session:
+        if principal.jti:
+            revoked_jti = (
+                await session.execute(
+                    select(RevokedToken.jti).where(
+                        RevokedToken.jti == principal.jti,
+                        RevokedToken.expires_at > datetime.now(UTC),
+                    )
+                )
+            ).scalar_one_or_none()
+            if revoked_jti is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication token has been revoked.",
+                )
+
         tenant = await session.get(Tenant, principal.tenant_id)
         if not tenant:
             raise HTTPException(

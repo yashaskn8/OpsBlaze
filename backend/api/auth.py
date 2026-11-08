@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.auth_deps import get_authenticated_principal, get_session_factory
@@ -14,11 +16,10 @@ from backend.config import get_settings
 from backend.domain.auth import (
     AuthenticationError,
     Principal,
-    TokenRevocationStore,
     authenticate_user,
     mint_principal_token,
 )
-from backend.persistence.models import Tenant
+from backend.persistence.models import RevokedToken, Tenant
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
@@ -50,7 +51,18 @@ async def login(
     req: LoginRequest,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> TokenResponse:
-    """Authenticates against server-side identity registry; derives identity and roles strictly on server."""
+    """Development-only login until a trusted production identity provider is configured."""
+    settings = get_settings()
+    if settings.opsblaze_env.strip().lower() not in {"development", "test"}:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Password-registry login is disabled outside development/test. "
+                "Configure a trusted identity provider and authoritative tenant-membership store."
+            ),
+        )
+
+    # The current development registry is not a production identity provider.
     # Verify tenant exists
     async with session_factory() as session:
         tenant = await session.get(Tenant, req.tenant_id)
@@ -72,7 +84,6 @@ async def login(
             detail=str(exc),
         ) from exc
 
-    settings = get_settings()
     token = mint_principal_token(
         actor_id=principal.actor_id,
         actor_kind=principal.actor_kind,
@@ -104,16 +115,45 @@ async def legacy_token_endpoint_disabled() -> Any:
 async def revoke_token(
     req: TokenRevokeRequest,
     principal: Annotated[Principal, Depends(get_authenticated_principal)],
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> dict[str, Any]:
-    """Revokes a principal access token immediately."""
-    jti_to_revoke = req.jti or principal.jti
-    if not jti_to_revoke:
+    """Persistently revokes only the caller's current token."""
+    if req.jti is not None and req.jti != principal.jti:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A principal may only revoke its own current token.",
+        )
+    if not principal.jti or principal.expires_at_epoch is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No JTI found in token or request to revoke.",
+            detail="The authenticated token is missing its JTI or expiry claim.",
         )
-    TokenRevocationStore.revoke(jti_to_revoke)
-    return {"status": "REVOKED", "jti": jti_to_revoke}
+
+    expires_at = datetime.fromtimestamp(principal.expires_at_epoch, tz=UTC)
+    if expires_at <= datetime.now(UTC):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The authenticated token has already expired.",
+        )
+
+    async with session_factory() as session:
+        statement = pg_insert(RevokedToken).values(
+            jti=principal.jti,
+            actor_id=principal.actor_id,
+            tenant_id=principal.tenant_id,
+            expires_at=expires_at,
+        ).on_conflict_do_update(
+            index_elements=[RevokedToken.jti],
+            set_={
+                "actor_id": principal.actor_id,
+                "tenant_id": principal.tenant_id,
+                "expires_at": expires_at,
+            },
+        )
+        await session.execute(statement)
+        await session.commit()
+
+    return {"status": "REVOKED", "jti": principal.jti}
 
 
 @router.get("/me")

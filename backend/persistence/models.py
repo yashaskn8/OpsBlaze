@@ -1524,3 +1524,20 @@ class ReleaseEventAudit(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
+
+
+class RevokedToken(Base):
+    """Durable, cross-worker revocation record for signed access tokens."""
+
+    __tablename__ = "revoked_token"
+    __table_args__ = (Index("ix_revoked_token_expiry", "expires_at"),)
+
+    jti: Mapped[str] = mapped_column(String(128), primary_key=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenant.id", ondelete="CASCADE"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
