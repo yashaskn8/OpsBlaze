@@ -58,19 +58,8 @@ jobs:
       - name: Typecheck with Mypy
         run: uv run mypy backend
 
-      - name: Run Schema, Release & Security Test Suite
-        run: >
-          uv run pytest
-          tests/unit/test_no_unauthorized_html.py
-          tests/unit/test_e6_bundle_integrity.py
-          tests/unit/test_e6_canary_assignment.py
-          tests/unit/test_e6_guardrails.py
-          tests/unit/test_e6_kill_switch_and_fencing.py
-          tests/unit/test_e6_release_lifecycle.py
-          tests/security/test_stage11_1_auth_hardening.py
-          tests/security/test_stage11_1_release_assurance_adversarial.py
-          tests/integration/test_stage11_e6_lifecycle.py
-          -v
+      - name: Run the complete repository test suite
+        run: uv run pytest -q
 
   frontend-quality:
     name: Frontend Quality & Build
