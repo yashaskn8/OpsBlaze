@@ -13,9 +13,33 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.main import create_app
 from backend.config import Settings
+from backend.domain.auth import mint_principal_token
 from backend.persistence.models import Incident, Outbox
 
 pytestmark = pytest.mark.postgres
+
+
+def _signed_tenant_headers(
+    settings: Settings,
+    tenant_id: uuid.UUID,
+    *,
+    idempotency_key: str | None = None,
+) -> dict[str, str]:
+    token = mint_principal_token(
+        actor_id="idempotency-test-user",
+        tenant_id=tenant_id,
+        roles=["operator", "incident_commander", "release_owner", "platform_engineer"],
+        secret_key=settings.auth_secret_key or "",
+        ttl_seconds=300,
+        auth_mechanism="pytest_idempotency_test",
+    )
+    headers = {
+        "X-Tenant-ID": str(tenant_id),
+        "Authorization": f"Bearer {token}",
+    }
+    if idempotency_key is not None:
+        headers["Idempotency-Key"] = idempotency_key
+    return headers
 
 
 async def _count_incidents_and_outbox(
@@ -77,7 +101,7 @@ async def test_2_same_key_same_payload_concurrently_barrier(
 ) -> None:
     """Barrier-synchronized race: 12 concurrent requests with identical tenant, key, and payload."""
     key = f"conc-same-{uuid.uuid4()}"
-    headers = {"X-Tenant-ID": str(isolated_tenant), "Idempotency-Key": key}
+    headers = _signed_tenant_headers(test_settings, isolated_tenant, idempotency_key=key)
     payload = {"target_id": "sim-db-primary", "title": "Concurrent race", "severity": "SEV1"}
 
     app = create_app(test_settings)
@@ -148,7 +172,7 @@ async def test_4_same_key_different_payload_concurrently(
 ) -> None:
     """Barrier-synchronized race: 10 concurrent requests with the same key but 2 distinct payloads."""
     key = f"conc-diff-{uuid.uuid4()}"
-    headers = {"X-Tenant-ID": str(isolated_tenant), "Idempotency-Key": key}
+    headers = _signed_tenant_headers(test_settings, isolated_tenant, idempotency_key=key)
     payload_a = {"target_id": "sim-target-a", "severity": "SEV1"}
     payload_b = {"target_id": "sim-target-b", "severity": "SEV3"}
 
@@ -286,7 +310,7 @@ async def test_9_empty_and_malformed_idempotency_keys_rejected_with_422(
     r_missing = await api_client.post(
         "/v1/incidents",
         json=payload,
-        headers={"X-Tenant-ID": str(isolated_tenant)},
+        headers=cancel_headers,
     )
     assert r_missing.status_code == 422
 
@@ -308,7 +332,7 @@ async def test_10_duplicate_requests_following_api_process_restart(
     isolated_tenant: uuid.UUID,
 ) -> None:
     key = f"restart-key-{uuid.uuid4()}"
-    headers = {"X-Tenant-ID": str(isolated_tenant), "Idempotency-Key": key}
+    headers = _signed_tenant_headers(test_settings, isolated_tenant, idempotency_key=key)
     payload = {"target_id": "sim-restart-node", "title": "Before restart", "severity": "SEV2"}
 
     # Process instance 1
@@ -329,7 +353,7 @@ async def test_10_duplicate_requests_following_api_process_restart(
         # Fetch via GET after restart
         r_get = await c2.get(
             f"/v1/incidents/{inc_id}",
-            headers={"X-Tenant-ID": str(isolated_tenant)},
+            headers=_signed_tenant_headers(test_settings, isolated_tenant),
         )
         assert r_get.status_code == 200
         assert r_get.json()["id"] == inc_id
@@ -350,7 +374,8 @@ async def test_11_api_cancellation_stale_expected_version_and_concurrent_race(
 
     repo = IncidentRepository(session_factory)
     key = f"cancel-race-key-{uuid.uuid4()}"
-    headers = {"X-Tenant-ID": str(isolated_tenant), "Idempotency-Key": key}
+    headers = _signed_tenant_headers(test_settings, isolated_tenant, idempotency_key=key)
+    cancel_headers = _signed_tenant_headers(test_settings, isolated_tenant)
     payload = {"target_id": "sim-cancel-race", "title": "Cancel race test", "severity": "SEV1"}
 
     app = create_app(test_settings)
@@ -376,7 +401,7 @@ async def test_11_api_cancellation_stale_expected_version_and_concurrent_race(
             r_stale = await client.post(
                 f"/v1/incidents/{inc_id}/cancel",
                 json={"expected_version": 1, "reason": "stale_cancel"},
-                headers={"X-Tenant-ID": str(isolated_tenant)},
+                headers=cancel_headers,
             )
             assert r_stale.status_code == 409
 
@@ -388,7 +413,7 @@ async def test_11_api_cancellation_stale_expected_version_and_concurrent_race(
                 return await client.post(
                     f"/v1/incidents/{inc_id}/cancel",
                     json={"reason": f"concurrent_cancel_{idx}"},
-                    headers={"X-Tenant-ID": str(isolated_tenant)},
+                    headers=cancel_headers,
                 )
 
             async def transition_worker() -> object:
@@ -417,7 +442,7 @@ async def test_11_api_cancellation_stale_expected_version_and_concurrent_race(
             # Final authoritative PostgreSQL state must be CANCELLED and immutable
             r_final = await client.get(
                 f"/v1/incidents/{inc_id}",
-                headers={"X-Tenant-ID": str(isolated_tenant)},
+                headers=cancel_headers,
             )
             assert r_final.status_code == 200
             assert r_final.json()["status"] == "CANCELLED"
