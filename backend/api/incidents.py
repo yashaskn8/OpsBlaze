@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated
 
@@ -28,8 +29,10 @@ from backend.domain.incident import (
 from backend.investigator.fake import FakeInvestigator
 from backend.observability.metrics import get_correlation_id
 from backend.persistence.repositories import IncidentRepository
+from backend.releases.router_service import PolicyRouterService
 
 router = APIRouter(prefix="/v1/incidents", tags=["incidents"])
+logger = logging.getLogger("opsblaze.api.incidents")
 
 _fake_investigator = FakeInvestigator()
 
@@ -122,6 +125,25 @@ async def create_incident(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database unavailable during incident admission",
         ) from exc
+
+    if outcome.created:
+        # Route only newly admitted incidents. Shadow assignments stay on the incumbent arm;
+        # a durable shadow outbox event is created by PolicyRouterService in the same DB commit.
+        try:
+            await PolicyRouterService(session_factory).route_incident(
+                tenant_id=tenant_id,
+                incident_id=outcome.response.id,
+                target_id=outcome.response.target_id,
+                target_component="investigator_planner",
+            )
+        except (RuntimeError, ValueError, SQLAlchemyError) as routing_error:
+            # No active release/incumbent bundle is a valid no-rollout state. Incident admission
+            # remains authoritative and must not be rolled back by optional release routing.
+            logger.warning(
+                "Policy routing skipped for incident %s: %s",
+                outcome.response.id,
+                type(routing_error).__name__,
+            )
 
     return _attach_investigation_if_applicable(outcome.response)
 
