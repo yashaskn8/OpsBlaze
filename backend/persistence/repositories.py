@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger('opsblaze.persistence.repositories')
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
