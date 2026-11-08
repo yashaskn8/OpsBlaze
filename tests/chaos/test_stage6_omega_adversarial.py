@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.approvals.service import ApprovalService
 from backend.config import get_settings
-from backend.domain.auth import ActorKind, mint_principal_token
 from backend.domain.approval import (
     ApprovalCreateRequest,
     ApprovalDecisionRequest,
@@ -28,6 +27,7 @@ from backend.domain.approval import (
     ApprovalState,
     ApprovalVersionMismatchError,
 )
+from backend.domain.auth import ActorKind, mint_principal_token
 from backend.experiments.oracle import HiddenLabel, IndependentOracle
 from backend.experiments.s1_replay import DiagnosticFixture, StrategyExecutor
 from backend.persistence.repositories import IncidentRepository
