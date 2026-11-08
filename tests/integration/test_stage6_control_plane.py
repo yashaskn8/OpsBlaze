@@ -17,7 +17,9 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.approvals.service import ApprovalService
+from backend.config import get_settings
 from backend.domain.approval import ApprovalState
+from backend.domain.auth import mint_principal_token
 from backend.persistence.models import (
     CapabilityGrant,
     EffectReceipt,
@@ -34,7 +36,18 @@ async def test_stage6_full_operator_control_plane_lifecycle(
     isolated_tenant: uuid.UUID,
     api_client: AsyncClient,
 ) -> None:
-    headers = {"X-Tenant-ID": str(isolated_tenant)}
+    token = mint_principal_token(
+        actor_id="commander-sarah",
+        tenant_id=isolated_tenant,
+        roles=["incident_commander", "operator"],
+        secret_key=get_settings().auth_secret_key or "",
+        ttl_seconds=300,
+        auth_mechanism="pytest_stage6_control_plane",
+    )
+    headers = {
+        "X-Tenant-ID": str(isolated_tenant),
+        "Authorization": f"Bearer {token}",
+    }
     approval_service = ApprovalService(session_factory)
 
     target_id = f"k8s:pod:payment-processor-{uuid.uuid4().hex[:6]}"
