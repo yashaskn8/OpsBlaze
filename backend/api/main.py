@@ -37,6 +37,7 @@ from backend.observability.metrics import (
 from backend.persistence.db import make_engine, make_session_factory
 from backend.persistence.repositories import IncidentRepository
 from backend.releases.guardrail_dispatcher import ReleaseGuardrailDispatcher
+from backend.releases.shadow_dispatcher import ShadowEvaluationDispatcher
 
 # Default local lab tenant for interactive React development (registered on startup if DB is up)
 DEFAULT_LAB_TENANT_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
@@ -65,20 +66,26 @@ async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
     except (SQLAlchemyError, OSError):
         # Allow app startup even if DB is temporarily unreachable; /readyz reports readiness
         pass
-    stop_guardrails = asyncio.Event()
+    stop_background_workers = asyncio.Event()
     guardrail_task = asyncio.create_task(
-        ReleaseGuardrailDispatcher(app_instance.state.session_factory).run_forever(stop_guardrails),
+        ReleaseGuardrailDispatcher(app_instance.state.session_factory).run_forever(stop_background_workers),
         name="opsblaze-release-guardrail-dispatcher",
+    )
+    shadow_task = asyncio.create_task(
+        ShadowEvaluationDispatcher(app_instance.state.session_factory).run_forever(stop_background_workers),
+        name="opsblaze-shadow-evaluation-dispatcher",
     )
     try:
         yield
     finally:
-        stop_guardrails.set()
+        stop_background_workers.set()
+        tasks = (guardrail_task, shadow_task)
         try:
-            await asyncio.wait_for(guardrail_task, timeout=5.0)
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=5.0)
         except TimeoutError:
-            guardrail_task.cancel()
-            await asyncio.gather(guardrail_task, return_exceptions=True)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         if getattr(app_instance.state, "engine", None) is not None:
             await engine.dispose()
             app_instance.state.engine = None
