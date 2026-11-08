@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.approvals.service import ApprovalService
 from backend.config import get_settings
-from backend.domain.auth import ActorKind, mint_principal_token
 from backend.domain.approval import (
     ApprovalCreateRequest,
     ApprovalDecisionRequest,
@@ -23,6 +22,7 @@ from backend.domain.approval import (
     InvalidApprovalTransitionError,
     StaleContextError,
 )
+from backend.domain.auth import ActorKind, mint_principal_token
 from backend.persistence.models import ApprovalAudit
 from backend.persistence.repositories import IncidentRepository
 
