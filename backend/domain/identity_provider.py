@@ -29,7 +29,7 @@ def _introspect_sync(
     if not introspection_url.startswith("https://") or not issuer.startswith("https://"):
         raise IdentityProviderError("Identity issuer and introspection URL must use HTTPS.")
 
-    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode("ascii")
     body = urllib.parse.urlencode(
         {"token": access_token, "token_type_hint": "access_token"}
     ).encode("ascii")
