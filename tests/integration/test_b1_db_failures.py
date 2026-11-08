@@ -23,7 +23,9 @@ from backend.persistence.repositories import IncidentRepository
 pytestmark = pytest.mark.postgres
 
 
-def _signed_signed_headers(broken_settings, db_down_tenant, "db-down-key")(settings: Settings, tenant_id: uuid.UUID, idempotency_key: str) -> dict[str, str]:
+def _signed_headers(
+    settings: Settings, tenant_id: uuid.UUID, idempotency_key: str
+) -> dict[str, str]:
     token = mint_principal_token(
         actor_id="db-failure-test-user",
         tenant_id=tenant_id,
@@ -242,7 +244,7 @@ async def test_7_database_connection_loss_returns_explicit_503_on_api_and_readyz
             r_admit = await client.post(
                 "/v1/incidents",
                 json={"target_id": "sim-db-1"},
-                _headers
+                headers=_signed_headers(broken_settings, db_down_tenant, "db-down-key"),
             )
             assert r_admit.status_code == 503
     finally:
