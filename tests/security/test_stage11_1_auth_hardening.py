@@ -11,8 +11,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
-from backend.config import Settings
 from backend.api.main import create_app
+from backend.config import Settings
 from backend.domain.auth import (
     ActorKind,
     AuthenticationError,
