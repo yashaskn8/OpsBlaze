@@ -310,7 +310,7 @@ async def test_9_empty_and_malformed_idempotency_keys_rejected_with_422(
     r_missing = await api_client.post(
         "/v1/incidents",
         json=payload,
-        headers=cancel_headers,
+        headers={"X-Tenant-ID": str(isolated_tenant)},
     )
     assert r_missing.status_code == 422
 
