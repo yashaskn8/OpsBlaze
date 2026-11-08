@@ -78,6 +78,28 @@ export interface MetricSpec {
   max_invalid_pairs_ratio?: number
 }
 
+export interface CandidateEvaluationCreateRequest {
+  title: string
+  incumbent_bundle: IncumbentBundle
+  candidate_bundle: CandidateBundle
+  candidate_provenance_type: CandidateProvenanceType
+  source_proposal_id?: string | null
+  source_lesson_ids?: string[] | null
+  source_outcome_revision_ids?: string[]
+  model_id?: string
+  model_version?: string
+  tool_catalog_version?: string
+  a2_grant_version?: string
+  fixture_family?: string
+  fixture_set_digest: string
+  holdout_set_digest: string
+  sample_size_plan?: number
+  random_seed?: number
+  budget_ceiling_micros?: number
+  max_tokens_ceiling?: number
+  auto_freeze?: boolean
+}
+
 export interface GateVerdict {
   gate_name: string
   status: 'PASS' | 'FAIL' | 'INCONCLUSIVE' | 'SKIPPED'

@@ -83,6 +83,8 @@ ALLOWED_APPROVAL_ROLES: frozenset[str] = frozenset(
         "sre_lead",
         "operator",
         "oncall_engineer",
+        "evaluation_owner",
+        "release_owner",
     }
 )
 

@@ -11,7 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from backend.api.auth_deps import get_authenticated_principal
 from backend.domain.approval import ApprovalRoleForbiddenError
+from backend.domain.auth import AuthorizationForbiddenError, Principal
 from backend.domain.evaluation import (
     CandidateBundle,
     CandidateProvenanceType,
@@ -132,8 +134,8 @@ class EvaluationRunRequest(BaseModel):
 
 class EvaluationReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    reviewer_id: str = Field(min_length=1, max_length=128)
-    reviewer_role: str = Field(min_length=1, max_length=64)
+    reviewer_id: str | None = Field(default=None, max_length=128)
+    reviewer_role: str | None = Field(default=None, max_length=64)
     decision: ReviewDecision
     comments: str = Field(default="", max_length=2000)
     expected_version: int = Field(default=1, ge=1)
@@ -708,10 +710,36 @@ async def dispatch_run(
 async def review_evaluation(
     id: uuid.UUID,
     req: EvaluationReviewRequest,
-    tenant_id: Annotated[uuid.UUID, Depends(get_authenticated_tenant_id)],
+    principal: Annotated[Principal, Depends(get_authenticated_principal)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> CandidateReportResponse:
-    """Submits human evaluation reviewer decision with CAS optimistic concurrency."""
+    """Submits human evaluation reviewer decision with CAS optimistic concurrency.
+
+    Reviewer identity and role are derived directly from the authenticated principal.
+    Client-asserted reviewer_id or reviewer_role cannot override or expand authority.
+    """
+    tenant_id = principal.tenant_id
+    principal.require_human()
+    verified_role = principal.require_evaluation_reviewer()
+
+    if req.reviewer_role:
+        norm_req_role = req.reviewer_role.strip().lower()
+        if not principal.has_role(norm_req_role):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Caller lacks asserted role '{req.reviewer_role}'",
+            )
+        verified_role = norm_req_role
+
+    if req.reviewer_id and req.reviewer_id.strip() != principal.actor_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Cannot assert reviewer identity '{req.reviewer_id}' (authenticated as '{principal.actor_id}')",
+        )
+
+    effective_reviewer_id = principal.actor_id
+    effective_reviewer_role = verified_role
+
     report_svc = CandidateReportService(session_factory)
 
     # First find the report for this manifest
@@ -733,13 +761,15 @@ async def review_evaluation(
         reviewed_report = await report_svc.submit_review(
             tenant_id=tenant_id,
             report_id=report_id,
-            reviewer_id=req.reviewer_id,
-            reviewer_role=req.reviewer_role,
+            reviewer_id=effective_reviewer_id,
+            reviewer_role=effective_reviewer_role,
             decision=req.decision,
             comments=req.comments,
             expected_version=req.expected_version,
         )
     except ApprovalRoleForbiddenError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except AuthorizationForbiddenError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except ReportNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e

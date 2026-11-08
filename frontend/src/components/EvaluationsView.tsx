@@ -3,9 +3,10 @@ import type {
   CandidateManifestResponse,
   ManifestDetailResponse,
   CandidateTrialResponse,
-  CandidateReportResponse,
   ReviewDecision,
+  CandidateProvenanceType,
 } from '../types/stage9'
+import { evaluationsApi, EvaluationsApiError } from '../services/evaluationsApi'
 
 interface EvaluationsViewProps {
   tenantId: string
@@ -20,61 +21,79 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
   const [loading, setLoading] = useState(false)
   const [runningEval, setRunningEval] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [conflictError, setConflictError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
+  // Auth token state (for authenticated review actions)
+  const [authToken, setAuthToken] = useState<string>(() => localStorage.getItem('opsblaze.auth_token') || '')
+  const [principal, setPrincipal] = useState<{
+    actor_id: string
+    actor_kind: string
+    roles: string[]
+    can_review_evaluation: boolean
+    can_approve_release: boolean
+  } | null>(null)
+
+  // Manifest Registration state
+  const [showRegisterForm, setShowRegisterForm] = useState(false)
+  const [regTitle, setRegTitle] = useState('')
+  const [regProvenance, setRegProvenance] = useState<CandidateProvenanceType>('E3_PROPOSAL')
+  const [regProposalId, setRegProposalId] = useState('')
+  const [regLessonIds, setRegLessonIds] = useState('')
+  const [regTargetComponent, setRegTargetComponent] = useState('investigator_a1_prompt')
+  const [regOriginalText, setRegOriginalText] = useState('')
+  const [regProposedText, setRegProposedText] = useState('')
+  const [regSampleSize, setRegSampleSize] = useState(10)
+
   // Review state
-  const [reviewerId, setReviewerId] = useState('eval-reviewer-carol')
-  const [reviewerRole, setReviewerRole] = useState<'EVALUATION_OWNER' | 'PLATFORM_ENGINEER' | 'INCIDENT_COMMANDER'>('EVALUATION_OWNER')
   const [reviewDecision, setReviewDecision] = useState<ReviewDecision>('ACCEPTED')
   const [reviewComments, setReviewComments] = useState('')
+
+  const fetchPrincipal = useCallback(async () => {
+    if (!authToken) {
+      setPrincipal(null)
+      return
+    }
+    const p = await evaluationsApi.getAuthenticatedPrincipal(tenantId, authToken)
+    setPrincipal(p)
+  }, [tenantId, authToken])
 
   const fetchManifests = useCallback(async () => {
     if (!tenantId) return
     setLoading(true)
     setError(null)
+    setConflictError(null)
     try {
-      const res = await fetch('/v1/evaluations', {
-        headers: { Accept: 'application/json', 'X-Tenant-ID': tenantId },
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load candidate manifests`)
-      const data = (await res.json()) as CandidateManifestResponse[]
+      const data = await evaluationsApi.listManifests(tenantId, authToken)
       setManifests(data ?? [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error loading candidate manifests')
     } finally {
       setLoading(false)
     }
-  }, [tenantId])
+  }, [tenantId, authToken])
 
   const fetchManifestDetail = useCallback(async (id: string) => {
     setLoading(true)
     setError(null)
+    setConflictError(null)
     try {
-      const res = await fetch(`/v1/evaluations/${encodeURIComponent(id)}`, {
-        headers: { Accept: 'application/json', 'X-Tenant-ID': tenantId },
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to load manifest details`)
-      const data = (await res.json()) as ManifestDetailResponse
+      const data = await evaluationsApi.getManifestDetail(id, tenantId, authToken)
       setManifestDetail(data)
 
-      // Also fetch trials
-      const trialsRes = await fetch(`/v1/evaluations/${encodeURIComponent(id)}/trials`, {
-        headers: { Accept: 'application/json', 'X-Tenant-ID': tenantId },
-      })
-      if (trialsRes.ok) {
-        const trialsData = (await trialsRes.json()) as CandidateTrialResponse[]
-        setTrials(trialsData ?? [])
-      }
+      const trialsData = await evaluationsApi.getTrials(id, tenantId, authToken)
+      setTrials(trialsData ?? [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error loading manifest details')
     } finally {
       setLoading(false)
     }
-  }, [tenantId])
+  }, [tenantId, authToken])
 
   useEffect(() => {
     void fetchManifests()
-  }, [fetchManifests])
+    void fetchPrincipal()
+  }, [fetchManifests, fetchPrincipal])
 
   useEffect(() => {
     if (selectedManifestId) {
@@ -85,73 +104,112 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
     }
   }, [selectedManifestId, fetchManifestDetail])
 
-  const handleFreezeManifest = async (id: string) => {
+  const handleRegisterManifest = async () => {
+    if (!regTitle.trim()) return
     setError(null)
+    setConflictError(null)
     setSuccessMsg(null)
     try {
-      const res = await fetch(`/v1/evaluations/${encodeURIComponent(id)}/freeze`, {
-        method: 'POST',
-        headers: { 'X-Tenant-ID': tenantId },
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to freeze manifest`)
-      setSuccessMsg(`Manifest ${id} frozen successfully (immutable)`)
+      const reqPayload = {
+        title: regTitle.trim(),
+        incumbent_bundle: {
+          policy_version: 'v1.0',
+          tool_catalog_version: 'v1',
+        },
+        candidate_bundle: {
+          base_policy_version: 'v1.0',
+          target_component: regTargetComponent,
+          proposal_diff: {
+            template_name: 'prompt_v1',
+            section_name: 'rules',
+            original_text: regOriginalText,
+            proposed_text: regProposedText,
+          },
+          active_lesson_ids: regLessonIds ? regLessonIds.split(',').map((s) => s.trim()) : undefined,
+        },
+        candidate_provenance_type: regProvenance,
+        source_proposal_id: regProposalId.trim() || undefined,
+        source_lesson_ids: regLessonIds ? regLessonIds.split(',').map((s) => s.trim()) : undefined,
+        fixture_set_digest: 'e'.repeat(64),
+        holdout_set_digest: 'f'.repeat(64),
+        sample_size_plan: regSampleSize,
+        auto_freeze: false,
+      }
+      const created = await evaluationsApi.createManifest(reqPayload, tenantId, authToken)
+      setSuccessMsg(`Evaluation manifest '${created.title}' successfully registered (ID: ${created.id})`)
+      setShowRegisterForm(false)
+      setRegTitle('')
+      setRegProposalId('')
+      setRegLessonIds('')
       void fetchManifests()
-      if (selectedManifestId === id) void fetchManifestDetail(id)
+      setSelectedManifestId(created.id)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error freezing manifest')
+      if (err instanceof EvaluationsApiError && err.status === 409) {
+        setConflictError(`Registration Conflict: ${err.message}`)
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to register evaluation manifest')
+      }
+    }
+  }
+
+  const handleFreezeManifest = async (manifest: CandidateManifestResponse) => {
+    setError(null)
+    setConflictError(null)
+    setSuccessMsg(null)
+    try {
+      await evaluationsApi.freezeManifest(manifest.id, manifest.version, tenantId, authToken)
+      setSuccessMsg(`Manifest ${manifest.id} frozen successfully (version v${manifest.version + 1})`)
+      void fetchManifests()
+      if (selectedManifestId === manifest.id) void fetchManifestDetail(manifest.id)
+    } catch (err) {
+      if (err instanceof EvaluationsApiError && err.status === 409) {
+        setConflictError(`Version Conflict: Manifest state or version has changed. Please refresh and retry. (${err.message})`)
+      } else {
+        setError(err instanceof Error ? err.message : 'Error freezing manifest')
+      }
     }
   }
 
   const handleRunEvaluation = async (id: string) => {
     setRunningEval(true)
     setError(null)
+    setConflictError(null)
     setSuccessMsg(null)
     try {
-      const res = await fetch(`/v1/evaluations/${encodeURIComponent(id)}/run`, {
-        method: 'POST',
-        headers: { 'X-Tenant-ID': tenantId },
-      })
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { detail?: string }
-        throw new Error(body.detail || `HTTP ${res.status}: Evaluation run failed`)
-      }
-      const report = (await res.json()) as CandidateReportResponse
-      setSuccessMsg(`Evaluation completed with verdict: ${report.report_status}`)
+      const report = await evaluationsApi.runEvaluation(id, 'eval-runner-ui', 120, tenantId, authToken)
+      setSuccessMsg(`Evaluation run completed. Gate Verdict: ${report.report_status}`)
       void fetchManifests()
       void fetchManifestDetail(id)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error running evaluation')
+      if (err instanceof EvaluationsApiError && err.status === 409) {
+        setConflictError(`Execution Conflict: ${err.message}`)
+      } else {
+        setError(err instanceof Error ? err.message : 'Error executing evaluation run')
+      }
     } finally {
       setRunningEval(false)
     }
   }
 
-  const handleSignOffReview = async (id: string) => {
+  const handleSignOffReview = async (manifestId: string, expectedVersion: number) => {
     setError(null)
+    setConflictError(null)
     setSuccessMsg(null)
     try {
-      const res = await fetch(`/v1/evaluations/${encodeURIComponent(id)}/review`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-ID': tenantId,
-        },
-        body: JSON.stringify({
-          reviewer_id: reviewerId,
-          reviewer_role: reviewerRole,
-          decision: reviewDecision,
-          comments: reviewComments,
-        }),
-      })
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { detail?: string }
-        throw new Error(body.detail || `HTTP ${res.status}: Review submission failed`)
-      }
+      await evaluationsApi.submitReview(manifestId, expectedVersion, reviewDecision, reviewComments, tenantId, authToken)
       setSuccessMsg(`Evaluation review signed off with decision: ${reviewDecision}`)
       setReviewComments('')
-      void fetchManifestDetail(id)
+      void fetchManifestDetail(manifestId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error submitting review sign-off')
+      if (err instanceof EvaluationsApiError && err.status === 409) {
+        setConflictError(`Review Conflict (409): ${err.message}. Source evidence may be invalidated or report version changed.`)
+      } else if (err instanceof EvaluationsApiError && err.status === 403) {
+        setError(`Authorization Denied (403): ${err.message}. Authenticated principal lacks evaluation reviewer authority.`)
+      } else if (err instanceof EvaluationsApiError && err.status === 401) {
+        setError(`Authentication Required (401): Please configure a valid Bearer token for a human reviewer.`)
+      } else {
+        setError(err instanceof Error ? err.message : 'Error submitting review sign-off')
+      }
     }
   }
 
@@ -191,19 +249,195 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
             Statistically rigorous paired evaluation gate testing candidate policy/lessons against pinned incumbent baselines.
           </p>
         </div>
-        <button type="button" className="b1-btn-secondary" onClick={() => void fetchManifests()} disabled={loading}>
-          {loading ? 'Refreshing...' : 'Refresh Manifests'}
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            type="button"
+            className={showRegisterForm ? 'b1-btn-secondary' : 'b1-btn-primary'}
+            onClick={() => setShowRegisterForm(!showRegisterForm)}
+          >
+            {showRegisterForm ? 'Cancel Registration' : '+ Register Candidate'}
+          </button>
+          <button type="button" className="b1-btn-secondary" onClick={() => void fetchManifests()} disabled={loading}>
+            {loading ? 'Refreshing...' : 'Refresh Manifests'}
+          </button>
+        </div>
+      </div>
+
+      {/* Authenticated Actor Bar */}
+      <div style={{ marginTop: '10px', padding: '8px 12px', backgroundColor: '#f1f5f9', borderRadius: '6px', fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <span>Authenticated Principal: </span>
+          {principal ? (
+            <strong>
+              {principal.actor_id} ({principal.roles.join(', ') || 'No Roles'}) —{' '}
+              <span style={{ color: principal.can_review_evaluation ? '#16a34a' : '#dc2626' }}>
+                {principal.can_review_evaluation ? 'Authorized for E5 Review' : 'Unauthorized for Review'}
+              </span>
+            </strong>
+          ) : (
+            <span style={{ color: '#d97706' }}>No active Bearer session (read-only mode)</span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <input
+            type="password"
+            placeholder="Set Bearer token..."
+            value={authToken}
+            onChange={(e) => {
+              setAuthToken(e.target.value)
+              localStorage.setItem('opsblaze.auth_token', e.target.value)
+            }}
+            style={{ fontSize: '11px', padding: '2px 6px', width: '180px' }}
+          />
+          {authToken && (
+            <button
+              type="button"
+              className="b1-btn-secondary"
+              style={{ fontSize: '11px', padding: '2px 6px' }}
+              onClick={() => {
+                setAuthToken('')
+                localStorage.removeItem('opsblaze.auth_token')
+                setPrincipal(null)
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
         <div className="b1-alert b1-alert-error" style={{ marginTop: '12px' }}>
-          <strong>Error:</strong> {error}
+          <strong>API Error:</strong> {error}
+        </div>
+      )}
+      {conflictError && (
+        <div className="b1-alert b1-alert-error" style={{ marginTop: '12px', backgroundColor: '#fff1f2', borderColor: '#fecdd3', color: '#9f1239' }}>
+          <strong>State Conflict (HTTP 409):</strong> {conflictError}
         </div>
       )}
       {successMsg && (
         <div className="b1-alert b1-alert-success" style={{ marginTop: '12px', backgroundColor: '#dcfce7', color: '#166534', border: '1px solid #86efac' }}>
           <strong>Success:</strong> {successMsg}
+        </div>
+      )}
+
+      {/* REGISTRATION FORM */}
+      {showRegisterForm && (
+        <div style={{ marginTop: '16px', padding: '16px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+          <h3 style={{ margin: '0 0 12px 0', fontSize: '1.05rem', color: '#0f172a' }}>
+            Register New Evaluation Candidate Manifest
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', fontSize: '0.85rem' }}>
+            <label>
+              Title:
+              <input
+                type="text"
+                placeholder="e.g. Prompt Refinement for Readback Fence"
+                value={regTitle}
+                onChange={(e) => setRegTitle(e.target.value)}
+                style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+              />
+            </label>
+            <label>
+              Provenance Type:
+              <select
+                value={regProvenance}
+                onChange={(e) => setRegProvenance(e.target.value as CandidateProvenanceType)}
+                style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+              >
+                <option value="E3_PROPOSAL">E3_PROPOSAL (Approved Proposal)</option>
+                <option value="E4_LESSON_SET">E4_LESSON_SET (Validated Lessons)</option>
+                <option value="COMBINED_OFFLINE_STUDY">COMBINED_OFFLINE_STUDY</option>
+              </select>
+            </label>
+            {regProvenance === 'E3_PROPOSAL' && (
+              <label>
+                Source Proposal UUID:
+                <input
+                  type="text"
+                  placeholder="UUID of approved proposal"
+                  value={regProposalId}
+                  onChange={(e) => setRegProposalId(e.target.value)}
+                  style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+                />
+              </label>
+            )}
+            {regProvenance === 'E4_LESSON_SET' && (
+              <label>
+                Source Lesson IDs (comma-separated):
+                <input
+                  type="text"
+                  placeholder="UUID1, UUID2"
+                  value={regLessonIds}
+                  onChange={(e) => setRegLessonIds(e.target.value)}
+                  style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+                />
+              </label>
+            )}
+            <label>
+              Target Component:
+              <select
+                value={regTargetComponent}
+                onChange={(e) => setRegTargetComponent(e.target.value)}
+                style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+              >
+                <option value="investigator_a1_prompt">investigator_a1_prompt</option>
+                <option value="context_window_budget">context_window_budget</option>
+                <option value="tool_description">tool_description</option>
+              </select>
+            </label>
+            <label>
+              Planned Pairs:
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={regSampleSize}
+                onChange={(e) => setRegSampleSize(parseInt(e.target.value, 10) || 10)}
+                style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+              />
+            </label>
+          </div>
+          <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.85rem' }}>
+            <label>
+              Original Text:
+              <textarea
+                rows={2}
+                value={regOriginalText}
+                onChange={(e) => setRegOriginalText(e.target.value)}
+                placeholder="Incumbent text to be replaced..."
+                style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+              />
+            </label>
+            <label>
+              Proposed Text:
+              <textarea
+                rows={2}
+                value={regProposedText}
+                onChange={(e) => setRegProposedText(e.target.value)}
+                placeholder="Candidate replacement text..."
+                style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1', marginTop: '4px' }}
+              />
+            </label>
+          </div>
+          <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              className="b1-btn-primary"
+              onClick={() => void handleRegisterManifest()}
+              disabled={!regTitle.trim()}
+            >
+              Submit Candidate Registration
+            </button>
+            <button
+              type="button"
+              className="b1-btn-secondary"
+              onClick={() => setShowRegisterForm(false)}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
@@ -224,7 +458,7 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
                   <th>Provenance</th>
                   <th>Model / Subsystem</th>
                   <th>Planned Pairs</th>
-                  <th>State</th>
+                  <th>State (v)</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -236,7 +470,10 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
                     <td>{m.candidate_provenance_type}</td>
                     <td>{m.model_id}</td>
                     <td>{m.sample_size_plan}</td>
-                    <td>{renderLifecycleBadge(m.lifecycle_state)}</td>
+                    <td>
+                      {renderLifecycleBadge(m.lifecycle_state)}{' '}
+                      <span style={{ fontSize: '10px', color: '#64748b' }}>v{m.version}</span>
+                    </td>
                     <td>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         <button
@@ -252,9 +489,9 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
                             type="button"
                             className="b1-btn-primary"
                             style={{ padding: '2px 8px', fontSize: '11px' }}
-                            onClick={() => void handleFreezeManifest(m.id)}
+                            onClick={() => void handleFreezeManifest(m)}
                           >
-                            Freeze
+                            Freeze (v{m.version})
                           </button>
                         )}
                         {m.lifecycle_state === 'FROZEN' && (
@@ -287,7 +524,7 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
                 Manifest Details: {manifestDetail.manifest.title}
               </h3>
               <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '4px' }}>
-                ID: <code>{manifestDetail.manifest.id}</code> | SHA-256: <code>{manifestDetail.manifest.manifest_sha256}</code>
+                ID: <code>{manifestDetail.manifest.id}</code> | SHA-256: <code>{manifestDetail.manifest.manifest_sha256}</code> | Version: v{manifestDetail.manifest.version}
               </div>
             </div>
             {manifestDetail.latest_report && renderReportBadge(manifestDetail.latest_report.report_status)}
@@ -296,9 +533,21 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
           {/* STATISTICAL REPORT SUMMARY */}
           {manifestDetail.latest_report && (
             <div style={{ marginTop: '16px', padding: '14px', backgroundColor: '#ffffff', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-              <h4 style={{ margin: '0 0 10px 0', fontSize: '0.95rem', color: '#1e293b' }}>
-                Statistical Gate Metrics (Paired Oracle Evaluation)
-              </h4>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h4 style={{ margin: '0 0 10px 0', fontSize: '0.95rem', color: '#1e293b' }}>
+                  Statistical Gate Metrics (Paired Oracle Evaluation Report v{manifestDetail.latest_report.version})
+                </h4>
+                <div>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: manifestDetail.latest_report.promotion_eligible ? '#16a34a' : '#dc2626' }}>
+                    Promotion Eligible: {manifestDetail.latest_report.promotion_eligible ? 'YES' : 'NO'}
+                  </span>
+                  {manifestDetail.latest_report.invalidation_reason && (
+                    <div style={{ fontSize: '0.75rem', color: '#dc2626' }}>
+                      Invalidation: {manifestDetail.latest_report.invalidation_reason}
+                    </div>
+                  )}
+                </div>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', fontSize: '0.85rem' }}>
                 <div>
                   <div style={{ color: '#64748b' }}>Recovery Rate (Incumbent)</div>
@@ -371,7 +620,7 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
               {/* REVIEW SIGN-OFF SECTION */}
               <div style={{ marginTop: '16px', borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>
                 <h5 style={{ margin: '0 0 8px 0', color: '#0f172a' }}>
-                  Human Review & Promotion Sign-Off
+                  Human Review & Promotion Sign-Off (CAS Version v{manifestDetail.latest_report.version})
                 </h5>
                 {manifestDetail.latest_report.review_decision ? (
                   <div style={{ fontSize: '0.85rem' }}>
@@ -384,36 +633,15 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
                     )}
                   </div>
                 ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px', fontSize: '0.85rem' }}>
-                    <label>
-                      Reviewer ID:
-                      <input
-                        type="text"
-                        value={reviewerId}
-                        onChange={(e) => setReviewerId(e.target.value)}
-                        style={{ width: '100%', padding: '4px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                      />
-                    </label>
-                    <label>
-                      Authorized Role:
-                      <select
-                        value={reviewerRole}
-                        onChange={(e) => setReviewerRole(e.target.value as typeof reviewerRole)}
-                        style={{ width: '100%', padding: '4px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                      >
-                        <option value="EVALUATION_OWNER">EVALUATION_OWNER</option>
-                        <option value="PLATFORM_ENGINEER">PLATFORM_ENGINEER</option>
-                        <option value="INCIDENT_COMMANDER">INCIDENT_COMMANDER</option>
-                      </select>
-                    </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '8px', fontSize: '0.85rem' }}>
                     <label>
                       Decision:
                       <select
                         value={reviewDecision}
                         onChange={(e) => setReviewDecision(e.target.value as ReviewDecision)}
-                        style={{ width: '100%', padding: '4px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                        style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
                       >
-                        <option value="ACCEPTED">ACCEPTED</option>
+                        <option value="ACCEPTED">ACCEPTED (Eligible for Release)</option>
                         <option value="REJECTED">REJECTED</option>
                         <option value="INCONCLUSIVE_ACKNOWLEDGED">INCONCLUSIVE_ACKNOWLEDGED</option>
                       </select>
@@ -432,9 +660,10 @@ export function EvaluationsView({ tenantId }: EvaluationsViewProps) {
                         type="button"
                         className="b1-btn-primary"
                         style={{ marginTop: '4px' }}
-                        onClick={() => void handleSignOffReview(manifestDetail.manifest.id)}
+                        onClick={() => void handleSignOffReview(manifestDetail.manifest.id, manifestDetail.latest_report!.version)}
+                        disabled={!principal?.can_review_evaluation}
                       >
-                        Sign Off Review
+                        {principal?.can_review_evaluation ? 'Sign Off Review' : 'Review Authority Required'}
                       </button>
                     </div>
                   </div>

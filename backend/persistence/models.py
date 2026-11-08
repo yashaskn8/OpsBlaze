@@ -42,8 +42,6 @@ class Tenant(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-
-
 class Incident(Base):
     __tablename__ = "incident"
     __table_args__ = (
@@ -52,6 +50,7 @@ class Incident(Base):
         Index("ix_incident_target_status", "tenant_id", "target_id", "status_projection"),
         Index("ix_incident_tenant_history", "tenant_id", text("created_at DESC"), "id"),
         Index("ix_incident_tenant_id", "tenant_id"),
+        Index("idx_incident_pinned_bundle", "tenant_id", "pinned_policy_bundle_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -66,6 +65,14 @@ class Incident(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    pinned_policy_bundle_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("policy_bundle.id", ondelete="RESTRICT"), nullable=True
+    )
+    policy_release_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("policy_release.id", ondelete="RESTRICT"), nullable=True
+    )
+    canary_arm: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    assignment_hash_val: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 outbox_id_seq = Sequence("outbox_id_seq")
@@ -167,8 +174,6 @@ class ResourceReservation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-
-
 class EffectReceipt(Base):
     """Durable external effect receipt and reconciliation table for Feature B3."""
 
@@ -289,8 +294,6 @@ class ToolCatalog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-
-
 class CapabilityGrant(Base):
     """A2 Tenant and Target-Scoped Tool Capability Grant."""
 
@@ -362,8 +365,6 @@ class ToolCall(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-
-
 class EvidenceLedger(Base):
     """A3 Versioned, Immutable, Attributable Evidence Record."""
 
@@ -442,8 +443,6 @@ class InvestigationStep(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-
-
 class BudgetLedger(Base):
     """B4 Durable Budget & Capacity Reservation Ledger."""
 
@@ -825,8 +824,6 @@ class OutcomeObservation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-
-
 class OutcomeRevision(Base):
     """E2 Immutable Outcome Adjudication Revision."""
 
@@ -877,8 +874,6 @@ class OutcomeRevision(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-
-
 class FailureCluster(Base):
     """E3 Grouping of recurring failure cases sharing a deterministic signature."""
 
@@ -1388,4 +1383,144 @@ class CandidateEvaluationReport(Base):
         Uuid(as_uuid=True), ForeignKey("candidate_evaluation_report.id", ondelete="SET NULL"), nullable=True
     )
 
+
+class PolicyBundle(Base):
+    """E6 Immutable Signed Policy Bundle."""
+
+    __tablename__ = "policy_bundle"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_policy_bundle_tenant"),
+        UniqueConstraint("tenant_id", "bundle_sha256", name="uq_policy_bundle_digest"),
+        CheckConstraint("status IN ('DRAFT', 'SEALED', 'ARCHIVED')", name="chk_policy_bundle_status"),
+        Index("idx_policy_bundle_target", "tenant_id", "target_component", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenant.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    bundle_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    bundle_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    signature: Mapped[str] = mapped_column(String(128), nullable=False)
+    signature_key_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    base_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_component: Mapped[str] = mapped_column(String(64), nullable=False)
+    proposal_diff: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    prompt_templates: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    active_lesson_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    model_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    tool_catalog_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    a2_grant_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_manifest_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("candidate_evaluation_manifest.id", ondelete="RESTRICT"), nullable=True
+    )
+    source_report_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("candidate_evaluation_report.id", ondelete="RESTRICT"), nullable=True
+    )
+    source_provenance_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'DRAFT'"))
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    sealed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PolicyRelease(Base):
+    """E6 Governed Policy Release with atomic CAS transitions."""
+
+    __tablename__ = "policy_release"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_policy_release_tenant"),
+        ForeignKeyConstraint(
+            ["tenant_id", "bundle_id"],
+            ["policy_bundle.tenant_id", "policy_bundle.id"],
+            name="fk_policy_release_bundle",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "incumbent_bundle_id"],
+            ["policy_bundle.tenant_id", "policy_bundle.id"],
+            name="fk_policy_release_incumbent",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "canary_percentage >= 0 AND canary_percentage <= 100",
+            name="chk_release_canary_percentage",
+        ),
+        CheckConstraint(
+            "reviewer_id IS NULL OR drafter_id <> reviewer_id",
+            name="chk_release_separation_of_duties",
+        ),
+        CheckConstraint(
+            "state IN ('DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'SHADOW', 'CANARY', 'ACTIVE', 'ROLLED_BACK', 'REVOKED')",
+            name="chk_policy_release_state",
+        ),
+        Index(
+            "uq_active_release_per_target",
+            "tenant_id",
+            "target_component",
+            unique=True,
+            postgresql_where=text("state IN ('SHADOW', 'CANARY', 'ACTIVE')"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenant.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    target_component: Mapped[str] = mapped_column(String(64), nullable=False)
+    bundle_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    incumbent_bundle_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'DRAFT'"))
+    canary_percentage: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    rollout_salt: Mapped[str] = mapped_column(String(64), nullable=False)
+    drafter_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    reviewer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reviewer_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    decision_comments: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    kill_switch_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    kill_switch_triggered_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    kill_switch_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rollback_reason: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rolled_back_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ReleaseEventAudit(Base):
+    """E6 Append-only audit trail for policy releases."""
+
+    __tablename__ = "release_event_audit"
+    __table_args__ = (
+        Index("idx_release_audit_release", "tenant_id", "release_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenant.id", ondelete="CASCADE"), nullable=False
+    )
+    release_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("policy_release.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    from_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_role: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_redacted: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, server_default=text("'{}'::json")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 

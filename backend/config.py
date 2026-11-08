@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     temporal_namespace: str = "default"
     temporal_db_file: str = ".local/temporal.db"
 
+    # Stage 11: Server-side Authentication & Policy Signing
+    auth_secret_key: str = "opsblaze-secret-auth-signing-key-2026-production"
+    policy_signing_secret: str = "opsblaze-immutable-bundle-hmac-sha256-signer-key-2026"
+    policy_signing_key_id: str = "opsblaze-signer-v1"
+
     @property
     def database_url(self) -> URL:
         # URL.create escapes special characters in the password (e.g. '@').

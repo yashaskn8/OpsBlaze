@@ -7,6 +7,7 @@ import { TraceExplorerView } from './components/TraceExplorerView'
 import { ExperienceView } from './components/ExperienceView'
 import { FailureAndLessonsView } from './components/FailureAndLessonsView'
 import { EvaluationsView } from './components/EvaluationsView'
+import { ReleaseControlView } from './components/ReleaseControlView'
 import type { ApprovalResponse } from './types/stage6'
 
 export type IncidentStatus =
@@ -109,7 +110,7 @@ export function App() {
 
   // Navigation Tabs & Lockout State
   const [activeTab, setActiveTab] = useState<
-    'workbench' | 'approval' | 'trace' | 'experience' | 'failures-lessons' | 'evaluations' | 'admission'
+    'workbench' | 'approval' | 'trace' | 'experience' | 'failures-lessons' | 'evaluations' | 'releases' | 'admission'
   >('workbench')
   const [activeApproval, setActiveApproval] = useState<ApprovalResponse | null>(null)
   const [isLockedOut, setIsLockedOut] = useState<boolean>(false)
@@ -448,6 +449,21 @@ export function App() {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('releases')}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '6px',
+              border: activeTab === 'releases' ? '2px solid #2563eb' : '1px solid #cbd5e1',
+              backgroundColor: activeTab === 'releases' ? '#eff6ff' : '#ffffff',
+              color: activeTab === 'releases' ? '#1d4ed8' : '#334155',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            E6 — Release Control
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('admission')}
             style={{
               padding: '8px 16px',
@@ -523,6 +539,10 @@ export function App() {
 
         {activeTab === 'evaluations' && (
           <EvaluationsView tenantId={tenantId} incidentId={activeIncidentId || undefined} />
+        )}
+
+        {activeTab === 'releases' && (
+          <ReleaseControlView tenantId={tenantId} />
         )}
 
         {activeTab === 'admission' && (

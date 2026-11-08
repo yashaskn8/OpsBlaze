@@ -20,7 +20,7 @@ async def test_stage7_schema_and_historical_data_integrity(
                 text("SELECT version_num FROM public.alembic_version LIMIT 1")
             )
         ).scalar_one()
-        assert rev in ("stage7_001_e1_e2", "stage8_001_e3_e4", "stage9_001_e5")
+        assert rev in ("stage7_001_e1_e2", "stage8_001_e3_e4", "stage9_001_e5", "stage11_001_e6")
 
         # 2. Verify New Tables Exist
         rows = (

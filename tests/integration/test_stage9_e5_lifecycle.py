@@ -17,6 +17,8 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from backend.config import get_settings
+from backend.domain.auth import mint_principal_token
 from backend.domain.failure import (
     DivergentStepCategory,
     ProposalStatus,
@@ -253,7 +255,14 @@ async def test_stage9_full_api_evaluation_lifecycle(
     assert detail["latest_report"]["id"] == report_data["id"]
 
     # 7. Submit Review: RBAC validation
-    # Unauthorized role
+    settings = get_settings()
+    guest_token = mint_principal_token(
+        actor_id="guest-user",
+        tenant_id=isolated_tenant,
+        roles=["guest_observer"],
+        secret_key=settings.auth_secret_key,
+    )
+    # Unauthorized role token
     unauth_review = await api_client.post(
         f"/v1/evaluations/{manifest_id}/review",
         json={
@@ -263,10 +272,16 @@ async def test_stage9_full_api_evaluation_lifecycle(
             "comments": "Looks fine to me.",
             "expected_version": 1,
         },
-        headers=headers,
+        headers={**headers, "Authorization": f"Bearer {guest_token}"},
     )
     assert unauth_review.status_code == 403
 
+    lead_token = mint_principal_token(
+        actor_id="lead-evaluator",
+        tenant_id=isolated_tenant,
+        roles=["incident_commander"],
+        secret_key=settings.auth_secret_key,
+    )
     # Authorized role with valid expected_version
     auth_review = await api_client.post(
         f"/v1/evaluations/{manifest_id}/review",
@@ -277,7 +292,7 @@ async def test_stage9_full_api_evaluation_lifecycle(
             "comments": "Statistically verified superior recovery with zero safety violations.",
             "expected_version": 1,
         },
-        headers=headers,
+        headers={**headers, "Authorization": f"Bearer {lead_token}"},
     )
     assert auth_review.status_code == 200
     reviewed_data = auth_review.json()
@@ -289,13 +304,13 @@ async def test_stage9_full_api_evaluation_lifecycle(
     repeat_review = await api_client.post(
         f"/v1/evaluations/{manifest_id}/review",
         json={
-            "reviewer_id": "lead-evaluator-2",
+            "reviewer_id": "lead-evaluator",
             "reviewer_role": "incident_commander",
             "decision": EvalReviewDecision.REJECTED.value,
             "comments": "Duplicate review attempt.",
             "expected_version": 2,
         },
-        headers=headers,
+        headers={**headers, "Authorization": f"Bearer {lead_token}"},
     )
     assert repeat_review.status_code == 400
 
@@ -380,6 +395,13 @@ async def test_stage9_dynamic_query_time_invalidation(
     assert "superseded" in latest_report["invalidation_reason"].lower()
 
     # Attempt to review report on invalidated source returns HTTP 409 Conflict
+    settings = get_settings()
+    sre_token = mint_principal_token(
+        actor_id="sre-ops",
+        tenant_id=isolated_tenant,
+        roles=["sre_lead"],
+        secret_key=settings.auth_secret_key,
+    )
     review_resp = await api_client.post(
         f"/v1/evaluations/{manifest_id}/review",
         json={
@@ -389,7 +411,7 @@ async def test_stage9_dynamic_query_time_invalidation(
             "comments": "Should fail due to invalid source.",
             "expected_version": 1,
         },
-        headers=headers,
+        headers={**headers, "Authorization": f"Bearer {sre_token}"},
     )
     assert review_resp.status_code == 409
     assert "invalidated" in review_resp.text.lower() or "superseded" in review_resp.text.lower()

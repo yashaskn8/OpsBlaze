@@ -88,6 +88,10 @@ class IncidentRepository:
         target_id: str,
         request_sha256: str,
         correlation_id: str = "",
+        pinned_policy_bundle_id: uuid.UUID | None = None,
+        policy_release_id: uuid.UUID | None = None,
+        canary_arm: str | None = None,
+        assignment_hash_val: int | None = None,
     ) -> AdmissionOutcome:
         """Atomically admit a tenant-scoped incident and its outbox start intent.
 
@@ -119,6 +123,10 @@ class IncidentRepository:
                 status_projection=IncidentStatus.ACCEPTED.value,
                 status_version=1,
                 created_at=now,
+                pinned_policy_bundle_id=pinned_policy_bundle_id,
+                policy_release_id=policy_release_id,
+                canary_arm=canary_arm,
+                assignment_hash_val=assignment_hash_val,
             )
             outbox = Outbox(
                 incident_id=incident_id,

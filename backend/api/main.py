@@ -15,16 +15,19 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from backend.api.approvals import router as approvals_router
+from backend.api.auth import router as auth_router
 from backend.api.evaluations import router as evaluations_router
 from backend.api.experience import router as experience_router
 from backend.api.improvements import router as improvements_router
 from backend.api.incidents import router as incidents_router
 from backend.api.lessons import router as lessons_router
 from backend.api.outcomes import router as outcomes_router
+from backend.api.releases import router as releases_router
 from backend.api.trace import router as trace_router
 from backend.api.workbench import router as workbench_router
 from backend.config import Settings, get_settings
 from backend.domain.approval import ApprovalRoleForbiddenError
+from backend.domain.auth import AuthenticationError, AuthorizationForbiddenError
 from backend.observability.metrics import (
     correlation_id_ctx,
     metrics,
@@ -142,6 +145,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"X-Correlation-ID": cid},
         )
 
+    @app_instance.exception_handler(AuthorizationForbiddenError)
+    async def authorization_forbidden_handler(
+        request: Request, exc: AuthorizationForbiddenError
+    ) -> JSONResponse:
+        cid = correlation_id_ctx.get() or str(uuid.uuid4())
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": str(exc), "correlation_id": cid},
+            headers={"X-Correlation-ID": cid},
+        )
+
+    @app_instance.exception_handler(AuthenticationError)
+    async def authentication_error_handler(
+        request: Request, exc: AuthenticationError
+    ) -> JSONResponse:
+        cid = correlation_id_ctx.get() or str(uuid.uuid4())
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": str(exc), "correlation_id": cid},
+            headers={"X-Correlation-ID": cid},
+        )
+
     @app_instance.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         cid = correlation_id_ctx.get() or str(uuid.uuid4())
@@ -176,6 +201,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return metrics.snapshot()
 
     app_instance.include_router(incidents_router)
+    app_instance.include_router(auth_router)
     app_instance.include_router(approvals_router)
     app_instance.include_router(workbench_router)
     app_instance.include_router(trace_router)
@@ -184,6 +210,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_instance.include_router(improvements_router, prefix="/v1")
     app_instance.include_router(lessons_router, prefix="/v1")
     app_instance.include_router(evaluations_router, prefix="/v1")
+    app_instance.include_router(releases_router)
     return app_instance
 
 

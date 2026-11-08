@@ -110,6 +110,7 @@ async def test_1_isolated_schema_alembic_full_upgrade_downgrade_reupgrade_cycle(
                 "stage7_001_e1_e2",
                 "stage8_001_e3_e4",
                 "stage9_001_e5",
+                "stage11_001_e6",
             )
             assert t_base == {"alembic_version"}
             assert t_rehead == t_head
