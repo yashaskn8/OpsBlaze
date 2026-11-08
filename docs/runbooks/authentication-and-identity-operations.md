@@ -68,3 +68,40 @@ Before any production deployment:
 - Verify token revocation across process restarts and multiple workers.
 - Complete durable guardrail scheduling and real isolated shadow execution.
 - Review the updated Stage 11.1 acceptance report and current GitHub Actions results.
+
+
+## 8. Production identity-provider integration (OAuth2 token introspection)
+
+OpsBlaze supports a provider-neutral RFC 7662 token-introspection boundary. Production does not trust a client-supplied subject, tenant, actor kind, or role. The configured identity provider authenticates the upstream access token; OpsBlaze then resolves the exact issuer + subject + requested tenant against the server-managed `identity_membership` table.
+
+Configure these environment variables through the deployment secret manager:
+
+- `IDENTITY_ISSUER`: exact HTTPS issuer identifier returned by the provider.
+- `IDENTITY_INTROSPECTION_URL`: provider's HTTPS RFC 7662 introspection endpoint.
+- `IDENTITY_CLIENT_ID`: confidential OpsBlaze API client identifier.
+- `IDENTITY_CLIENT_SECRET`: confidential client secret; never commit or log it.
+- `IDENTITY_AUDIENCE`: expected resource-server audience in the introspection response.
+
+The API exchanges the provider access token at `POST /v1/auth/exchange` with JSON fields `access_token` and `tenant_id`. The requested tenant is accepted only when an active server-managed membership exists for the verified issuer, subject, and tenant. The returned OpsBlaze bearer token has a 15-minute lifetime and its revocation is persisted in PostgreSQL.
+
+### Provisioning tenant membership
+
+Only a trusted deployment administrator may provision or revoke identity memberships. Roles are server-owned data, not claims accepted from the browser. Example SQL (replace values with verified provider claims and a real tenant UUID):
+
+```sql
+INSERT INTO identity_membership
+    (id, issuer, subject, tenant_id, actor_id, actor_kind, roles, is_active)
+VALUES
+    (gen_random_uuid(),
+     'https://issuer.example/',
+     'provider-stable-subject',
+     '00000000-0000-4000-8000-000000000000',
+     'ops-user-123',
+     'HUMAN',
+     '["operator"]'::json,
+     TRUE);
+```
+
+Grant release or evaluation roles only after the organization's identity governance process approves the assignment. Use the provider's immutable subject identifier, not an email address that can change. For a user with access to multiple tenants, create one row per authorized tenant.
+
+The provider-neutral exchange is implemented, but production identity is not operational until the organization selects and configures its provider, registers the confidential client, verifies introspection behavior and issuer/audience claims, provisions membership rows, and performs an end-to-end test. Password-registry login remains disabled outside development/test.
