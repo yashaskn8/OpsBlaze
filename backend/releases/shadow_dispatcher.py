@@ -90,7 +90,7 @@ class ShadowEvaluationDispatcher:
                 shadow_status=result["shadow_status"],
             )
             return True
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             backoff = min(self._max_backoff, 2 ** min(attempt, 8))
             async with self._session_factory() as session:
                 pending = await session.get(Outbox, outbox_id)
