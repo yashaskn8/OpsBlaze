@@ -403,7 +403,7 @@ export function App() {
               <input
                 type="text"
                 value={tenantId}
-                onChange={(e) => setTenantId(e.target.value)
+                onChange={(e) => setTenantId(e.target.value)}
                 style={{ fontSize: '11px', padding: '4px 8px', width: '220px', fontFamily: 'monospace' }}
               />
             </div>
