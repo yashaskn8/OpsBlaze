@@ -665,9 +665,26 @@ class OutboxRepository:
         tenant_id: uuid.UUID,
         now: datetime | None = None,
     ) -> bool:
-        """Mark an outbox row delivered and advance ACCEPTED -> DISPATCH_PENDING atomically."""
+        """Mark an outbox row delivered and advance ACCEPTED -> DISPATCH_PENDING atomically.
+
+        Monotonic Lock Ordering:
+        Acquires row lock on Incident first, then Outbox, enforcing a strictly monotonic global
+        acquisition hierarchy (Incident -> Outbox) to eliminate deadlock hazards (SQLSTATE 40P01)
+        with concurrent IncidentRepository.transition_status (e.g. concurrent cancellation).
+        """
         delivered_time = now or datetime.now(UTC)
         async with self._session_factory() as session:
+            incident = (
+                await session.execute(
+                    select(Incident)
+                    .where(
+                        Incident.tenant_id == tenant_id,
+                        Incident.id == incident_id,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+
             outbox = (
                 await session.execute(
                     select(Outbox).where(Outbox.id == outbox_id).with_for_update()
@@ -679,17 +696,6 @@ class OutboxRepository:
             already_delivered = outbox.delivered_at is not None
             if not already_delivered:
                 outbox.delivered_at = delivered_time
-
-            incident = (
-                await session.execute(
-                    select(Incident)
-                    .where(
-                        Incident.tenant_id == tenant_id,
-                        Incident.id == incident_id,
-                    )
-                    .with_for_update()
-                )
-            ).scalar_one_or_none()
 
             if incident is not None and incident.status_projection == IncidentStatus.ACCEPTED.value:
                 incident.status_projection = IncidentStatus.DISPATCH_PENDING.value

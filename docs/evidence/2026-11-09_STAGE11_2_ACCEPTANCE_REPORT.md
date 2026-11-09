@@ -36,35 +36,45 @@ In Stage 11.2, all three subsystems have been re-engineered with PostgreSQL 17 d
 | **Gate E** | **Security & Authority Isolation** | STRIDE threat modeling addressed: Spoofing blocked via cryptographic introspection + HMAC bundle signing; Tampering blocked via RFC 8785 canonicalization + CAS version fencing; Repudiation blocked via immutable outbox and `release_event_audit` logs; Information Disclosure blocked via secret masking in logs and sanitization; Denial of Service blocked via `SKIP LOCKED` lock-free polling and exponential backoff; Elevation of Privilege blocked via server-derived roles and 0 consequential authority in shadow. | `tests/security/test_stage11_2_identity_exchange.py`, `tests/security/test_stage11_1_release_assurance_adversarial.py` | **PASSED** |
 | **Gate F** | **Observability & Readiness** | Outbox claiming metrics (`claimed_count`, `delivered_count`, `retry_count`, `dead_letter_count`); shadow execution latency and agreement tracking (`shadow_agreement_rate`); structured runbooks authored: `identity-membership-provisioning.md`, `durable-guardrail-operations.md`, `shadow-evaluation-operations.md`. | Verified via runbooks and dispatcher logging instrumentation | **PASSED** |
 | **Gate G** | **Database Integrity & Migrations** | Linear DAG reconciled across migrations `0009` through `0013`: `0009_stage11_1_revoked_tokens.py`, `0010_stage11_2_guardrail_outbox.py`, `0011_stage11_2_identity_membership.py`, `0012_stage11_2_outbox_identity.py`, and `0013_stage11_2_reconcile_outbox_identity.py`. Applied to both `opsblaze` and `opsblaze_test` with zero data loss; symmetric safe downgrades verified without `UndefinedObjectError`. | Alembic revision verified at `stage11_2_003_reconcile (head)` | **PASSED** |
-| **Gate H** | **Deterministic Regression & CI** | Full regression suite: 302 automated tests passed (`pytest -q -m 'not historical'`), 2 historical receipt safety tests passed (304 total passing); zero HTML application code; Ruff linter clean (0 errors); Mypy typechecker clean (0 errors across 105 files); Frontend TSX clean (0 type errors, 0 build errors, 0 lint errors); `.github/workflows/ci.yml` verified. | 304/304 tests passed; Ruff/Mypy/Vite 100% clean | **PASSED** |
+| **Gate H** | **Deterministic Regression & CI** | Full regression suite: 302 automated tests passed (`pytest -q -m 'not historical'`), 2 historical receipt safety tests passed (304 total passing); zero HTML application code; Ruff linter clean (0 errors); Mypy typechecker clean (0 errors across 105 files); Frontend TSX clean (0 type errors, 0 build errors, 0 lint errors); `.github/workflows/ci.yml` verified. | 304 passing verification baseline (302 non-historical + 2 historical receipt safety; 306 total collected across 59 files); Ruff/Mypy/Vite 100% clean | **PASSED** |
 | **Gate I** | **Architecture Documentation** | Architecture Decision Record ADR-0013 published detailing all design decisions, trade-offs, and invariants; three operational runbooks authored; acceptance report published. | `docs/adr/0013-stage11.2-production-identity-durable-guardrails-shadow-execution.md` | **PASSED** |
 
 ---
 
 ## 3. Database Schema & Migration Evidence
 
-### 3.1 Migration Revision: `0009_stage11_2_outbox_identity.py`
-* **Revision ID:** `stage11_2_001_outbox_identity`
-* **Down Revision:** `stage11_001_e6_release`
+### 3.1 Reconciled Linear Migration DAG (0009 – 0013)
+The post-reconciliation linear migration chain is fully applied to both PostgreSQL 17 databases:
+
+| Revision File | Revision ID | Down Revision | Core Responsibilities |
+|---|---|---|---|
+| `0009_stage11_1_revoked_tokens.py` | `stage11_1_001_revoked_tokens` | `stage11_001_e6` | Creates `revoked_token` table for persistent JTI revocation tracking |
+| `0010_stage11_2_guardrail_outbox.py` | `stage11_2_001_guardrail_outbox` | `stage11_1_001_revoked_tokens` | Expands `outbox` table with `kind`, `dedupe_key`, `payload`, `last_error`, `lease_owner`; partial indexes |
+| `0011_stage11_2_identity.py` | `s11_2_002_identity` | `stage11_2_001_guardrail_outbox` | Creates singular `identity_membership` table with `(tenant_id, idp_issuer, idp_subject)` unique constraint |
+| `0012_stage11_2_outbox_identity.py` | `stage11_2_001_outbox_identity` | `s11_2_002_identity` | Harmonizes historical index aliases and ensures backward compatibility |
+| `0013_stage11_2_reconcile_outbox_identity.py` | `stage11_2_003_reconcile` (head) | `stage11_2_001_outbox_identity` | Final reconciliation boundary; enforces idempotent linear DAG |
 
 ```sql
--- Identity Memberships Table
-CREATE TABLE identity_memberships (
+-- Singular Identity Membership Table (SQLAlchemy: IdentityMembership)
+CREATE TABLE identity_membership (
     id UUID PRIMARY KEY,
-    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    idp_issuer VARCHAR(255) NOT NULL,
-    idp_subject VARCHAR(255) NOT NULL,
-    email VARCHAR(255),
-    display_name VARCHAR(255),
-    roles JSONB NOT NULL DEFAULT '[]'::jsonb,
+    tenant_id UUID NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
+    idp_issuer VARCHAR(256) NOT NULL,
+    idp_subject VARCHAR(256) NOT NULL,
+    actor_id VARCHAR(128) NOT NULL,
+    actor_kind VARCHAR(32) NOT NULL DEFAULT 'HUMAN',
+    roles JSON NOT NULL DEFAULT '[]'::json,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
-    CONSTRAINT uq_idp_subject_tenant UNIQUE (idp_issuer, idp_subject, tenant_id)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deactivated_at TIMESTAMPTZ NULL,
+    deactivated_by VARCHAR(128) NULL,
+    deactivation_reason VARCHAR(512) NULL,
+    CONSTRAINT uq_idp_subject_tenant UNIQUE (tenant_id, idp_issuer, idp_subject)
 );
-CREATE INDEX ix_identity_memberships_lookup ON identity_memberships (idp_issuer, idp_subject, tenant_id, is_active);
+CREATE INDEX ix_identity_membership_lookup ON identity_membership (tenant_id, idp_issuer, idp_subject, is_active);
 
--- Outbox Model Expansion
+-- Outbox Model Expansion & Partitioned Partial Indexes
 ALTER TABLE outbox ADD COLUMN kind VARCHAR(64) NOT NULL DEFAULT 'INCIDENT_START';
 ALTER TABLE outbox ADD COLUMN dedupe_key VARCHAR(128);
 ALTER TABLE outbox ADD COLUMN payload JSONB;
@@ -73,13 +83,14 @@ ALTER TABLE outbox ADD COLUMN lease_owner VARCHAR(128);
 ALTER TABLE outbox ALTER COLUMN incident_id DROP NOT NULL;
 
 CREATE UNIQUE INDEX uq_outbox_dedupe_in_flight ON outbox (dedupe_key) 
-    WHERE delivered = FALSE AND dedupe_key IS NOT NULL;
-CREATE INDEX ix_outbox_kind_pending ON outbox (kind, delivered, next_attempt_at);
+    WHERE delivered_at IS NULL AND dedupe_key IS NOT NULL;
+CREATE INDEX ix_outbox_kind_pending ON outbox (kind, delivered_at, available_at);
 ```
 
-### 3.2 Migration Verification
-* **Database `opsblaze`:** Current revision = `stage11_2_001_outbox_identity (head)`
-* **Database `opsblaze_test`:** Current revision = `stage11_2_001_outbox_identity (head)`
+### 3.2 Database Verification State
+* **Database `opsblaze`:** Current revision = `stage11_2_003_reconcile (head)`
+* **Database `opsblaze_test`:** Current revision = `stage11_2_003_reconcile (head)`
+* **Linear DAG status:** Verified without branching or multiple heads.
 
 ---
 
@@ -112,7 +123,7 @@ configfile: pyproject.toml
 plugins: anyio-4.16.0, asyncio-1.4.1.post1
 asyncio: mode=Mode.AUTO, debug=False
 
-collected 61 items
+collected 68 items
 
 tests/unit/test_no_unauthorized_html.py::test_tracked_files_no_unauthorized_html PASSED [  1%]
 tests/unit/test_no_unauthorized_html.py::test_no_html_in_backend_docs_or_scripts PASSED [  3%]
@@ -220,7 +231,7 @@ tests/unit/test_e5_auth_and_contract_closure.py::test_gate0_successful_evaluatio
 ## 6. Architecture Drift Verification
 
 An EGM spec-to-code audit was performed comparing the implementation against ADR-0013 and `AGENTS.md`:
-* **Zero Client-Asserted Roles:** Validated that neither `/v1/auth/exchange` nor `/v1/auth/login` accepts role assertions. All roles are fetched directly from PostgreSQL `identity_memberships`.
+* **Zero Client-Asserted Roles:** Validated that neither `/v1/auth/exchange` nor `/v1/auth/login` accepts role assertions. All roles are fetched directly from PostgreSQL `identity_membership`.
 * **Zero Consequential Authority in Shadow Mode:** The candidate policy executor receives zero mutation permissions, cannot mint fences (`B2`), cannot issue receipts (`B3`), cannot request approvals (`P2`), and cannot execute tools outside observation mode.
 * **Dual Cryptographic Verification:** Both incumbent and candidate bundles are verified with RFC 8785 canonical JSON formatting and HMAC-SHA256 signatures before execution. Tampered bundles immediately fail closed and record an invariant breach.
 * **Worker Lease & Dead-Letter Safety:** Outbox worker claims use `FOR UPDATE SKIP LOCKED` with explicit 15s/30s lease expirations and exponential backoff, preventing stuck outbox items or split-brain multi-worker processing.

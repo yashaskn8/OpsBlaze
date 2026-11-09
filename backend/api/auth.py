@@ -149,15 +149,13 @@ async def exchange_token(
     async with session_factory() as session:
         stmt = select(IdentityMembership).where(
             IdentityMembership.tenant_id == req.tenant_id,
-            (IdentityMembership.idp_subject == sub) | (IdentityMembership.subject == sub),
+            IdentityMembership.idp_subject == sub,
         )
         if claims.get("iss"):
             token_iss = claims["iss"].rstrip("/")
             stmt = stmt.where(
                 (IdentityMembership.idp_issuer == token_iss)
                 | (IdentityMembership.idp_issuer == claims["iss"])
-                | (IdentityMembership.issuer == token_iss)
-                | (IdentityMembership.issuer == claims["iss"])
             )
 
         membership = (await session.execute(stmt)).scalars().first()

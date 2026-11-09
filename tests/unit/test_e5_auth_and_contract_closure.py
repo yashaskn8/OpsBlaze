@@ -17,6 +17,7 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.config import get_settings
@@ -39,8 +40,8 @@ from backend.domain.failure import (
 from backend.learning.clusters import FailureClusterService
 from backend.learning.failure_taxonomy import FailureClassifier
 from backend.learning.proposal_service import ProposalService
-from backend.persistence.models import ConsentEpoch, OutcomeRevision
-from backend.persistence.repositories import IncidentRepository
+from backend.persistence.models import ConsentEpoch, Outbox, OutcomeRevision
+from backend.persistence.repositories import IncidentRepository, OutboxRepository
 
 pytestmark = pytest.mark.postgres
 
@@ -91,6 +92,15 @@ async def _setup_e5_test_manifest(
         request_sha256="7" * 64,
     )
     inc_id = admit.response.id
+
+    # Mark test outbox entry delivered to prevent test isolation pollution
+    outbox_repo = OutboxRepository(session_factory)
+    async with session_factory() as session:
+        ob_id = (await session.execute(
+            select(Outbox.id).where(Outbox.incident_id == inc_id, Outbox.delivered_at.is_(None))
+        )).scalar_one_or_none()
+    if ob_id is not None:
+        await outbox_repo.mark_outbox_delivered(outbox_id=ob_id)
 
     outcome_id = uuid.uuid4()
     async with session_factory() as session:

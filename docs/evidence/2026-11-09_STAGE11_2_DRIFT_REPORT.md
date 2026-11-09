@@ -28,7 +28,7 @@ The audit evaluates four critical dimensions:
 * **Implementation Audit:**
   - `backend/api/auth.py`: `TokenExchangeRequest` contains only `idp_token` and `tenant_id`. Client role parameters are prohibited (`extra="forbid"`).
   - `backend/domain/identity_provider.py`: Introspects tokens against IdP using RFC 7662 with SSRF defenses (blocking loopback `127.0.0.0/8`, metadata endpoints `169.254.169.254`, `metadata.google.internal`, and non-HTTPS URLs).
-  - `backend/api/auth_deps.py`: Resolves membership synchronously from PostgreSQL `identity_memberships` and checks `membership.is_active` on every authenticated request, guaranteeing 0-second revocation.
+  - `backend/api/auth_deps.py`: Resolves membership synchronously from PostgreSQL `identity_membership` and checks `membership.is_active` on every authenticated request, guaranteeing 0-second revocation.
 * **Verdict:** **CONFORMANT — Zero Drift.**
 
 ### 2.2 Outbox Partitioning & Dispatcher Isolation (Gate B)
