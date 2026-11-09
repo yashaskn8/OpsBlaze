@@ -5,7 +5,7 @@
 * **Repository:** `https://github.com/yashaskn8/OpsBlaze`
 * **Local Root:** `C:\Users\prana\OneDrive\Desktop\OpsBlaze`
 * **Target Branch:** `main`
-* **Baseline Git Commit:** `3df54ba` (Stage 11.1 published baseline)
+* **Baseline Git Commit:** `3df54ba` (Stage 11.1 published baseline), reconciled with remote `origin/main` (`e4ec904`) via merge commit `0c6e8c0`
 * **Architecture:** Python 3.14 + FastAPI + PostgreSQL 17 + Temporal + React 19 + TypeScript
 * **Evaluation Status:** **ACCEPTED & FULLY VERIFIED (9 / 9 GATES PASSED)**
 
@@ -29,14 +29,14 @@ In Stage 11.2, all three subsystems have been re-engineered with PostgreSQL 17 d
 
 | Gate | Focus Area | Core Mitigations | Test Evidence | Verdict |
 |---|---|---|---|---|
-| **Gate A** | **Production Identity Exchange** | RFC 7662 token introspection (`TokenIntrospectionClient`) with SSRF protection (loopback/link-local/cloud metadata IP blocking, HTTPS enforcement, redirects disabled); server-authoritative `IdentityMembership` table mapping `(idp_issuer, idp_subject, tenant_id)` to immutable `roles`; synchronous check of `is_active` on every authenticated request ensuring 0-second revocation guarantee; rejection of client-asserted roles; deprecation of password login in production (`auth_allow_password_login=False`). | `tests/security/test_stage11_2_identity_exchange.py` (12/12 passed) | **PASSED** |
+| **Gate A** | **Production Identity Exchange** | RFC 7662 token introspection (`TokenIntrospectionClient`) with SSRF protection (loopback/link-local/cloud metadata IP blocking, HTTPS enforcement, redirects disabled); server-authoritative `IdentityMembership` table mapping `(idp_issuer, idp_subject, tenant_id)` to immutable `roles`; synchronous check of `is_active` on every authenticated request ensuring 0-second revocation guarantee; rejection of client-asserted roles; deprecation of password login in production (`auth_allow_password_login=False`). | `tests/security/test_stage11_2_identity_exchange.py` (15/15 passed) | **PASSED** |
 | **Gate B** | **Durable Guardrail Execution** | Atomic insertion of `Outbox(kind="RELEASE_GUARDRAIL", dedupe_key=f"guardrail:{release_id}")` within the incident state transition transaction; partition-aware claiming using `SELECT ... FOR UPDATE SKIP LOCKED WHERE kind = 'RELEASE_GUARDRAIL'`; 15s worker lease ownership; deduplication preventing redundant evaluation; exponential backoff with dead-lettering (`max_retries=5`); explicit isolation of B1 incident dispatcher (`kind == 'INCIDENT_START'`). | `tests/unit/test_stage11_2_guardrail_dispatcher.py` (6/6 passed) | **PASSED** |
 | **Gate C** | **Isolated Shadow Execution** | Outbox event enqueue `RELEASE_SHADOW_EVALUATION` during incident routing in `SHADOW` state; dual RFC 8785 (JCS) + HMAC-SHA256 integrity verification of both candidate and incumbent policy bundles prior to execution; candidate evaluated solely against identical immutable evidence snapshot; complete isolation from consequential authority (no B2 fence, no B3 receipt, no P2 approval card, no A2 mutation grant); mid-flight kill-switch invalidation discarding candidate findings. | `tests/unit/test_stage11_2_shadow_execution.py` (6/6 passed) | **PASSED** |
 | **Gate D** | **Runtime & Worker Lifecycle** | Background workers (`GuardrailOutboxDispatcher`, `ShadowOutboxDispatcher`) wired to FastAPI application lifespan; configurable polling intervals (default 2.0s); graceful shutdown with 5.0s task drain; error containment preventing unhandled exceptions from crashing dispatchers; support for external multi-worker process separation (`enable_in_process_dispatchers=False`). | Verified via FastAPI lifespan in `backend/api/main.py` and dispatcher unit tests | **PASSED** |
 | **Gate E** | **Security & Authority Isolation** | STRIDE threat modeling addressed: Spoofing blocked via cryptographic introspection + HMAC bundle signing; Tampering blocked via RFC 8785 canonicalization + CAS version fencing; Repudiation blocked via immutable outbox and `release_event_audit` logs; Information Disclosure blocked via secret masking in logs and sanitization; Denial of Service blocked via `SKIP LOCKED` lock-free polling and exponential backoff; Elevation of Privilege blocked via server-derived roles and 0 consequential authority in shadow. | `tests/security/test_stage11_2_identity_exchange.py`, `tests/security/test_stage11_1_release_assurance_adversarial.py` | **PASSED** |
 | **Gate F** | **Observability & Readiness** | Outbox claiming metrics (`claimed_count`, `delivered_count`, `retry_count`, `dead_letter_count`); shadow execution latency and agreement tracking (`shadow_agreement_rate`); structured runbooks authored: `identity-membership-provisioning.md`, `durable-guardrail-operations.md`, `shadow-evaluation-operations.md`. | Verified via runbooks and dispatcher logging instrumentation | **PASSED** |
-| **Gate G** | **Database Integrity & Migrations** | Alembic migration `0009_stage11_2_outbox_identity.py` successfully applied to both `opsblaze` (development) and `opsblaze_test` (test) on PostgreSQL 17; created `identity_memberships` table with unique constraint `uq_idp_subject_tenant`; altered `outbox` table adding `kind`, `dedupe_key`, `payload`, `last_error`, `lease_owner`, `incident_id` (nullable), partial unique index `uq_outbox_dedupe_in_flight`, and composite index `ix_outbox_kind_pending`. | Alembic revision verified at `stage11_2_001_outbox_identity (head)` | **PASSED** |
-| **Gate H** | **Deterministic Regression & CI** | All 61 automated tests across Unit, Security, and Integration suites execute deterministically and pass 100%; E5 evaluation suite (8 tests) passes 100%; zero HTML application code; Ruff linter clean (0 errors); Mypy typechecker clean (0 errors across 101 files); Frontend TSX clean (0 type errors, 0 build errors); `.github/workflows/ci.yml` updated with Alembic migration and Stage 11.2 suites. | 61/61 tests passed in 16.60s; 8/8 E5 tests passed in 5.33s | **PASSED** |
+| **Gate G** | **Database Integrity & Migrations** | Linear DAG reconciled across migrations `0009` through `0013`: `0009_stage11_1_revoked_tokens.py`, `0010_stage11_2_guardrail_outbox.py`, `0011_stage11_2_identity_membership.py`, `0012_stage11_2_outbox_identity.py`, and `0013_stage11_2_reconcile_outbox_identity.py`. Applied to both `opsblaze` and `opsblaze_test` with zero data loss; symmetric safe downgrades verified without `UndefinedObjectError`. | Alembic revision verified at `stage11_2_003_reconcile (head)` | **PASSED** |
+| **Gate H** | **Deterministic Regression & CI** | Full regression suite: 302 automated tests passed (`pytest -q -m 'not historical'`), 2 historical receipt safety tests passed (304 total passing); zero HTML application code; Ruff linter clean (0 errors); Mypy typechecker clean (0 errors across 105 files); Frontend TSX clean (0 type errors, 0 build errors, 0 lint errors); `.github/workflows/ci.yml` verified. | 304/304 tests passed; Ruff/Mypy/Vite 100% clean | **PASSED** |
 | **Gate I** | **Architecture Documentation** | Architecture Decision Record ADR-0013 published detailing all design decisions, trade-offs, and invariants; three operational runbooks authored; acceptance report published. | `docs/adr/0013-stage11.2-production-identity-durable-guardrails-shadow-execution.md` | **PASSED** |
 
 ---
@@ -207,11 +207,13 @@ tests/unit/test_e5_auth_and_contract_closure.py::test_gate0_successful_evaluatio
 
 | Tool / Check | Command | Result |
 |---|---|---|
+| **Full Pytest Suite** | `.venv\Scripts\python -m pytest -q -m "not historical"` | **302 passed, 4 deselected in 134.91s** |
+| **Historical Safety** | `.venv\Scripts\python -m pytest tests/unit/test_stage4_historical_receipt_safety.py` | **2 passed in 0.68s** |
 | **Ruff Linter** | `.venv\Scripts\python -m ruff check backend tests` | **All checks passed! (0 errors)** |
-| **Mypy Typechecker** | `.venv\Scripts\python -m mypy backend` | **Success: no issues found in 101 source files** |
-| **Frontend Lint** | `npm --prefix frontend run lint` | **0 errors (15 warnings, non-blocking)** |
+| **Mypy Typechecker** | `.venv\Scripts\python -m mypy backend` | **Success: no issues found in 105 source files** |
+| **Frontend Lint** | `npm --prefix frontend run lint` | **0 errors (14 warnings, non-blocking)** |
 | **Frontend Typecheck** | `npm --prefix frontend run typecheck` | **0 errors (`tsc --noEmit` clean)** |
-| **Frontend Build** | `npm --prefix frontend run build` | **Built in 286ms (`dist/index.html` 0.45 kB, JS 327.71 kB)** |
+| **Frontend Build** | `npm --prefix frontend run build` | **Built in 369ms (`dist/index.html` 0.45 kB, JS 328.08 kB)** |
 
 ---
 
