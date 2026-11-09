@@ -30,6 +30,7 @@ async def test_stage7_schema_and_historical_data_integrity(
             "s11_2_002_identity",
             "stage11_2_001_outbox_identity",
             "stage11_2_003_reconcile",
+            "stage12_001_e7_strategy_router",
         )
 
         # 2. Verify New Tables Exist
