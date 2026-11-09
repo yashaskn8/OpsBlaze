@@ -24,6 +24,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -57,6 +58,7 @@ from backend.workflows.recovery import (
 )
 
 
+@pytest.mark.historical
 async def test_1_readonly_audit_of_29_historical_effect_receipts_in_opsblaze_test(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

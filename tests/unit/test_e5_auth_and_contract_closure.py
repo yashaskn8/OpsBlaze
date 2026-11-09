@@ -365,7 +365,7 @@ async def test_gate0_unauthenticated_users_cannot_approve(
             "decision": ReviewDecision.ACCEPTED.value,
             "expected_version": 1,
         },
-        headers={"X-Tenant-ID": str(tenant_id)},
+        headers={"X-Tenant-ID": str(tenant_id), "X-Test-No-Auth": "true"},
     )
     assert res_no_auth.status_code == 401
 

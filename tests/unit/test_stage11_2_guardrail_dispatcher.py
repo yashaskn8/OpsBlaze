@@ -119,7 +119,7 @@ async def test_terminal_incident_enqueues_guardrail_outbox(
     async with session_factory() as session:
         stmt = select(Outbox).where(
             Outbox.kind == "RELEASE_GUARDRAIL",
-            Outbox.dedupe_key == f"guardrail:{release.id}",
+            Outbox.incident_id == incident_id,
         )
         outbox_row = (await session.execute(stmt)).scalar_one_or_none()
         assert outbox_row is not None

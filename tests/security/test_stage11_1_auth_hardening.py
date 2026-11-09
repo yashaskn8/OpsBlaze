@@ -8,9 +8,10 @@ import time
 import uuid
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
+from backend.api.main import create_app
 from backend.config import Settings
 from backend.domain.auth import (
     ActorKind,
@@ -165,3 +166,104 @@ async def test_authenticated_user_login_uses_server_derived_roles(
     assert "release_owner" in data["principal"]["roles"]
     assert data["principal"]["actor_kind"] == "HUMAN"
     assert data["principal"]["tenant_id"] == str(isolated_tenant)
+
+
+@pytest.mark.asyncio
+async def test_password_registry_login_fails_closed_outside_development(
+    api_client: AsyncClient,
+    isolated_tenant: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The built-in development registry must never be used as production authentication."""
+    production_settings = Settings(
+        postgres_password="ci-test-password",
+        opsblaze_env="production",
+        auth_secret_key="a" * 32,
+        policy_signing_secret="b" * 32,
+        auth_allow_password_login=False,
+    )
+    monkeypatch.setattr("backend.api.auth.get_settings", lambda: production_settings)
+
+    response = await api_client.post(
+        "/v1/auth/login",
+        json={
+            "username": "release_owner",
+            "password": "dev-password-secure",
+            "tenant_id": str(isolated_tenant),
+        },
+    )
+    assert response.status_code == 503
+    assert "trusted identity provider" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_revocation_is_persisted_and_scoped_to_the_current_token(
+    api_client: AsyncClient,
+    isolated_tenant: uuid.UUID,
+) -> None:
+    """Only the current token can be revoked and PostgreSQL revocation blocks later use."""
+    login = await api_client.post(
+        "/v1/auth/login",
+        json={
+            "username": "release_owner",
+            "password": "dev-password-secure",
+            "tenant_id": str(isolated_tenant),
+        },
+    )
+    assert login.status_code == 200
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    forbidden = await api_client.post(
+        "/v1/auth/revoke",
+        headers=headers,
+        json={"jti": "not-the-current-token"},
+    )
+    assert forbidden.status_code == 403
+
+    still_valid = await api_client.get("/v1/auth/me", headers=headers)
+    assert still_valid.status_code == 200
+
+    revoked = await api_client.post("/v1/auth/revoke", headers=headers, json={})
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "REVOKED"
+
+    rejected = await api_client.get("/v1/auth/me", headers=headers)
+    assert rejected.status_code == 401
+
+
+
+@pytest.mark.asyncio
+async def test_revocation_survives_new_application_instance(
+    api_client: AsyncClient,
+    test_settings,
+    isolated_tenant: uuid.UUID,
+) -> None:
+    """A second independently constructed API app observes the PostgreSQL revocation record."""
+    login = await api_client.post(
+        "/v1/auth/login",
+        json={
+            "username": "release_owner",
+            "password": "dev-password-secure",
+            "tenant_id": str(isolated_tenant),
+        },
+    )
+    assert login.status_code == 200
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    revoked = await api_client.post("/v1/auth/revoke", headers=headers, json={})
+    assert revoked.status_code == 200
+
+    second_app = create_app(test_settings)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=second_app),
+            base_url="http://second-process.test",
+        ) as second_client:
+            response = await second_client.get("/v1/auth/me", headers=headers)
+            assert response.status_code == 401
+            assert "revoked" in response.json()["detail"].lower()
+    finally:
+        if getattr(second_app.state, "engine", None) is not None:
+            await second_app.state.engine.dispose()

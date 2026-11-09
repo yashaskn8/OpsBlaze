@@ -19,6 +19,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.approvals.service import ApprovalService
+from backend.config import get_settings
 from backend.domain.approval import (
     ApprovalCreateRequest,
     ApprovalDecisionRequest,
@@ -26,6 +27,7 @@ from backend.domain.approval import (
     ApprovalState,
     ApprovalVersionMismatchError,
 )
+from backend.domain.auth import ActorKind, mint_principal_token
 from backend.experiments.oracle import HiddenLabel, IndependentOracle
 from backend.experiments.s1_replay import DiagnosticFixture, StrategyExecutor
 from backend.persistence.repositories import IncidentRepository
@@ -104,6 +106,16 @@ async def test_adversarial_2_model_and_agent_self_approval_rejected_sever_side(
     )
     inc_id = admit.response.id
     headers = {"X-Tenant-ID": str(isolated_tenant)}
+    token = mint_principal_token(
+        actor_id="stage6-test-operator",
+        actor_kind=ActorKind.HUMAN,
+        tenant_id=isolated_tenant,
+        roles=["incident_commander", "operator"],
+        secret_key=get_settings().auth_secret_key or "",
+        ttl_seconds=300,
+        auth_mechanism="pytest_stage6_omega",
+    )
+    headers["Authorization"] = f"Bearer {token}"
 
     # Create pending approval
     create_resp = await api_client.post(
@@ -132,6 +144,19 @@ async def test_adversarial_2_model_and_agent_self_approval_rejected_sever_side(
         "prompt_injection",
     ]
     for role in forbidden_roles:
+        model_token = mint_principal_token(
+            actor_id=f"adversarial-agent-{role}",
+            actor_kind=ActorKind.MODEL,
+            tenant_id=isolated_tenant,
+            roles=[role],
+            secret_key=get_settings().auth_secret_key or "",
+            ttl_seconds=300,
+            auth_mechanism="pytest_adversarial_model",
+        )
+        model_headers = {
+            "Authorization": f"Bearer {model_token}",
+            "X-Tenant-ID": str(isolated_tenant),
+        }
         res = await api_client.post(
             f"/v1/approvals/{approval_id}/approve",
             json={
@@ -139,9 +164,9 @@ async def test_adversarial_2_model_and_agent_self_approval_rejected_sever_side(
                 "reviewer_role": role,
                 "reason": "I approve my own proposed action",
             },
-            headers=headers,
+            headers=model_headers,
         )
-        assert res.status_code in (403, 422), f"Role {role} was not rejected with 403/422"
+        assert res.status_code == 403, f"MODEL principal with role {role} was not rejected"
 
     # Verify state remains PENDING
     get_res = await api_client.get(f"/v1/approvals/{approval_id}", headers=headers)

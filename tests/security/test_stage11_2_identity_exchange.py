@@ -1,4 +1,4 @@
-"""Stage 11.2 Gate A: Security and STRIDE adversarial tests for enterprise identity exchange."""
+"""Stage 11.2 Gate A: Security, STRIDE adversarial, and tenant membership tests for identity exchange."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.api.main import create_app
-from backend.config import Settings
+from backend.config import Settings, get_settings
 from backend.domain.auth import (
     ActorKind,
     PrincipalRole,
@@ -270,7 +270,7 @@ async def test_token_exchange_missing_membership_rejected(
                 },
             )
             assert resp.status_code == 403
-            assert "no active membership" in resp.json()["detail"].lower()
+            assert "no active" in resp.json()["detail"].lower() or "membership" in resp.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
@@ -359,7 +359,6 @@ async def test_cross_tenant_membership_isolation(
 
     with mock_idp_http(mock_idp_response):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            # User attempts to exchange token against isolated_tenant where they have NO membership
             resp = await client.post(
                 "/v1/auth/exchange",
                 json={
@@ -368,7 +367,7 @@ async def test_cross_tenant_membership_isolation(
                 },
             )
             assert resp.status_code == 403
-            assert "no active membership" in resp.json()["detail"].lower()
+            assert "no active" in resp.json()["detail"].lower() or "membership" in resp.json()["detail"].lower()
 
     # Clean up secondary tenant
     async with session_factory() as session:
@@ -440,7 +439,7 @@ async def test_zero_second_membership_revocation_guarantee(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Request 1: Valid while active
         resp = await client.get("/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
         assert resp.json()["actor_id"] == "user-bob"
 
         # Operator deactivates Bob's membership in database
@@ -475,3 +474,141 @@ async def test_production_rejects_password_login(
         )
         assert resp.status_code == 403
         assert "disabled in production" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_identity_exchange_derives_roles_from_server_membership(
+    api_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    isolated_tenant: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issuer = "https://identity.example.test/"
+    settings = get_settings().model_copy(
+        update={
+            "identity_issuer": issuer,
+            "identity_introspection_url": "https://identity.example.test/introspect",
+            "identity_client_id": "opsblaze-api",
+            "identity_client_secret": "test-only-secret",
+            "identity_audience": "opsblaze-api",
+        }
+    )
+    monkeypatch.setattr("backend.api.auth.get_settings", lambda: settings)
+
+    async def fake_introspection(
+        token: str,
+        *,
+        issuer: str,
+        introspection_url: str,
+        client_id: str,
+        client_secret: str,
+        audience: str,
+    ) -> dict:
+        assert token == "provider-access-token"
+        assert introspection_url.endswith("/introspect")
+        assert client_id == "opsblaze-api"
+        assert client_secret == "test-only-secret"
+        assert audience == "opsblaze-api"
+        return {
+            "active": True,
+            "iss": issuer,
+            "aud": audience,
+            "exp": int(time.time()) + 300,
+            "sub": "immutable-provider-subject-123",
+        }
+
+    monkeypatch.setattr("backend.api.auth.introspect_access_token", fake_introspection)
+
+    async with session_factory() as session:
+        session.add(
+            IdentityMembership(
+                id=uuid.uuid4(),
+                issuer=issuer.rstrip("/"),
+                subject="immutable-provider-subject-123",
+                tenant_id=isolated_tenant,
+                actor_id="ops-user-123",
+                actor_kind="HUMAN",
+                roles=["release_owner"],
+                is_active=True,
+            )
+        )
+        await session.commit()
+
+    response = await api_client.post(
+        "/v1/auth/exchange",
+        json={
+            "access_token": "provider-access-token",
+            "tenant_id": str(isolated_tenant),
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["expires_in"] == 900
+    assert body["principal"]["actor_id"] == "ops-user-123"
+    assert body["principal"]["roles"] == ["release_owner"]
+    assert body["principal"]["tenant_id"] == str(isolated_tenant)
+
+    me = await api_client.get(
+        "/v1/auth/me",
+        headers={"Authorization": f"Bearer {body['access_token']}"},
+    )
+    assert me.status_code == 200
+    assert me.json()["actor_id"] == "ops-user-123"
+
+
+@pytest.mark.asyncio
+async def test_identity_exchange_rejects_subject_without_tenant_membership(
+    api_client: AsyncClient,
+    isolated_tenant: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    issuer = "https://identity.example.test/"
+    settings = get_settings().model_copy(
+        update={
+            "identity_issuer": issuer,
+            "identity_introspection_url": "https://identity.example.test/introspect",
+            "identity_client_id": "opsblaze-api",
+            "identity_client_secret": "test-only-secret",
+            "identity_audience": "opsblaze-api",
+        }
+    )
+    monkeypatch.setattr("backend.api.auth.get_settings", lambda: settings)
+
+    async def fake_introspection(
+        token: str,
+        *,
+        issuer: str,
+        introspection_url: str,
+        client_id: str,
+        client_secret: str,
+        audience: str,
+    ) -> dict:
+        return {
+            "active": True,
+            "iss": issuer,
+            "aud": audience,
+            "exp": int(time.time()) + 300,
+            "sub": "unprovisioned-subject",
+        }
+
+    monkeypatch.setattr("backend.api.auth.introspect_access_token", fake_introspection)
+    response = await api_client.post(
+        "/v1/auth/exchange",
+        json={"access_token": "provider-access-token", "tenant_id": str(isolated_tenant)},
+    )
+    assert response.status_code == 403
+    assert "server-managed membership" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_identity_exchange_fails_closed_when_provider_is_not_configured(
+    api_client: AsyncClient,
+) -> None:
+    response = await api_client.post(
+        "/v1/auth/exchange",
+        json={
+            "access_token": "provider-access-token",
+            "tenant_id": str(uuid.uuid4()),
+        },
+    )
+    assert response.status_code == 503

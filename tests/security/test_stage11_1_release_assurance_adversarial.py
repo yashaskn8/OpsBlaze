@@ -55,7 +55,10 @@ async def test_tenant_header_alone_cannot_authenticate(
     isolated_tenant: uuid.UUID,
 ) -> None:
     """X-Tenant-ID alone without Bearer token must return HTTP 401 Unauthorized across APIs."""
-    headers_no_token = {"X-Tenant-ID": str(isolated_tenant)}
+    headers_no_token = {
+        "X-Tenant-ID": str(isolated_tenant),
+        "X-Test-No-Auth": "true",
+    }
 
     # Incidents API
     r_inc = await api_client.post(

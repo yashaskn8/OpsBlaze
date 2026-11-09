@@ -98,3 +98,36 @@ Prior to publication authorization, the full CI suite was reproduced locally wit
 - **Frontend Typecheck:** 0 errors.
 - **Frontend Build:** Built cleanly in 427ms.
 - **HTML Prohibition:** 0 standalone HTML pages or templates found.
+
+
+## Corrective CI verification addendum — 2026-11-08
+
+The earlier pre-publication/local-only figures are not GitHub Actions evidence. The initial remote run failed during settings initialization; the next run exposed a frontend JSX syntax error. Both were corrected.
+
+**Current verified commit:** `9a26a8e380c183798daa2681b244d0ac3dedd76a`  
+**GitHub Actions:** [CI run #42503583444](https://github.com/yashaskn8/OpsBlaze/actions/runs/42503583444)  
+**Overall result:** SUCCESS
+
+| Check | Verified result |
+|---|---|
+| PostgreSQL 17 service | Healthy |
+| Alembic migration | `uv run alembic upgrade head` passed |
+| Ruff | Passed |
+| Mypy | Passed |
+| Backend selected suite | 39 passed in 2.86s |
+| Frontend lint (Oxlint) | Passed |
+| Frontend typecheck | Passed |
+| Frontend Vite build | Passed |
+
+The backend job runs the following selected suites, not every test in the repository:
+- `tests/unit/test_no_unauthorized_html.py`
+- `tests/unit/test_e6_bundle_integrity.py`
+- `tests/unit/test_e6_canary_assignment.py`
+- `tests/unit/test_e6_guardrails.py`
+- `tests/unit/test_e6_kill_switch_and_fencing.py`
+- `tests/unit/test_e6_release_lifecycle.py`
+- `tests/security/test_stage11_1_auth_hardening.py`
+- `tests/security/test_stage11_1_release_assurance_adversarial.py`
+- `tests/integration/test_stage11_e6_lifecycle.py`
+
+The tests include the new production-login fail-closed and caller-scoped PostgreSQL revocation checks. This CI result does not independently prove a multi-worker/restart scenario or external identity-provider integration. Shadow execution and durable guardrail retry remain outstanding acceptance work.

@@ -30,7 +30,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "postgres: requires the local native PostgreSQL instance",
-    "historical: historical tests retained for audit compliance",
+    "historical: requires a separately provisioned historical database snapshot",
 ]
 
 [tool.ruff]

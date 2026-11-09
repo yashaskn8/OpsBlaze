@@ -1,7 +1,7 @@
 """Stage 11.2 migration: Outbox deduplication & payload, IdentityMembership table.
 
 Revision ID: stage11_2_001_outbox_identity
-Revises: stage11_001_e6
+Revises: s11_2_002_identity
 Create Date: 2026-11-09 14:00:00.000000
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "stage11_2_001_outbox_identity"
-down_revision: str | None = "stage11_001_e6"
+down_revision: str | None = "s11_2_002_identity"
 branch_labels: tuple[str, ...] | None = None
 depends_on: str | None = None
 
@@ -59,33 +59,25 @@ def upgrade() -> None:
                 ),
             )
 
-        # B. Add last_error (VARCHAR(2048) nullable)
-        if "last_error" not in existing_cols:
-            op.add_column(
-                "outbox",
-                sa.Column(
-                    "last_error",
-                    sa.String(2048),
-                    nullable=True,
-                ),
-            )
-
-        # C. Add lease_owner (VARCHAR(128) nullable)
+        # B. Add lease_owner (String(128) nullable)
         if "lease_owner" not in existing_cols:
             op.add_column(
                 "outbox",
-                sa.Column(
-                    "lease_owner",
-                    sa.String(128),
-                    nullable=True,
-                ),
+                sa.Column("lease_owner", sa.String(length=128), nullable=True),
             )
 
-        # D. Add dedupe_key (VARCHAR(128) nullable)
+        # C. Add last_error (String(2048) nullable)
+        if "last_error" not in existing_cols:
+            op.add_column(
+                "outbox",
+                sa.Column("last_error", sa.String(length=2048), nullable=True),
+            )
+
+        # D. Add dedupe_key (String(128) nullable)
         if "dedupe_key" not in existing_cols:
             op.add_column(
                 "outbox",
-                sa.Column("dedupe_key", sa.String(128), nullable=True),
+                sa.Column("dedupe_key", sa.String(length=128), nullable=True),
             )
 
         existing_indexes = {
@@ -112,7 +104,7 @@ def upgrade() -> None:
             )
 
     # -----------------------------------------------------------------------
-    # 2. Create `identity_membership` table
+    # 2. Create `identity_membership` table if missing
     # -----------------------------------------------------------------------
     if "identity_membership" not in existing_tables:
         op.create_table(
@@ -124,12 +116,12 @@ def upgrade() -> None:
                 sa.ForeignKey("tenant.id", ondelete="RESTRICT"),
                 nullable=False,
             ),
-            sa.Column("idp_issuer", sa.String(256), nullable=False),
-            sa.Column("idp_subject", sa.String(256), nullable=False),
-            sa.Column("actor_id", sa.String(128), nullable=False),
+            sa.Column("idp_issuer", sa.String(length=256), nullable=False),
+            sa.Column("idp_subject", sa.String(length=256), nullable=False),
+            sa.Column("actor_id", sa.String(length=128), nullable=False),
             sa.Column(
                 "actor_kind",
-                sa.String(32),
+                sa.String(length=32),
                 server_default=sa.text("'HUMAN'"),
                 nullable=False,
             ),
@@ -139,7 +131,12 @@ def upgrade() -> None:
                 server_default=sa.text("'[]'::json"),
                 nullable=False,
             ),
-            sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False),
+            sa.Column(
+                "is_active",
+                sa.Boolean(),
+                server_default=sa.text("true"),
+                nullable=False,
+            ),
             sa.Column(
                 "created_at",
                 sa.DateTime(timezone=True),
@@ -153,8 +150,12 @@ def upgrade() -> None:
                 nullable=False,
             ),
             sa.Column("deactivated_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("deactivated_by", sa.String(128), nullable=True),
-            sa.Column("deactivation_reason", sa.String(512), nullable=True),
+            sa.Column("deactivated_by", sa.String(length=128), nullable=True),
+            sa.Column("deactivation_reason", sa.String(length=512), nullable=True),
+            sa.CheckConstraint(
+                "actor_kind IN ('HUMAN', 'SYSTEM', 'BOT')",
+                name="chk_membership_actor_kind",
+            ),
             sa.UniqueConstraint(
                 "tenant_id",
                 "idp_issuer",
@@ -166,11 +167,8 @@ def upgrade() -> None:
                 "actor_id",
                 name="uq_identity_membership_tenant_actor",
             ),
-            sa.CheckConstraint(
-                "actor_kind IN ('HUMAN', 'SYSTEM', 'BOT')",
-                name="chk_membership_actor_kind",
-            ),
         )
+
         op.create_index(
             "idx_identity_membership_lookup",
             "identity_membership",
@@ -189,11 +187,7 @@ def downgrade() -> None:
     current_schema = bind.execute(sa.text("SELECT current_schema()")).scalar()
     existing_tables = set(inspector.get_table_names(schema=current_schema))
 
-    if "identity_membership" in existing_tables:
-        op.drop_index("idx_identity_membership_tenant_actor", table_name="identity_membership")
-        op.drop_index("idx_identity_membership_lookup", table_name="identity_membership")
-        op.drop_table("identity_membership")
-
+    # identity_membership lifecycle is managed by 0011 (s11_2_002_identity)
     if "outbox" in existing_tables:
         existing_indexes = {
             idx["name"] for idx in inspector.get_indexes("outbox", schema=current_schema)
@@ -206,11 +200,7 @@ def downgrade() -> None:
         existing_cols = {
             col["name"] for col in inspector.get_columns("outbox", schema=current_schema)
         }
-        if "dedupe_key" in existing_cols:
-            op.drop_column("outbox", "dedupe_key")
         if "lease_owner" in existing_cols:
             op.drop_column("outbox", "lease_owner")
-        if "last_error" in existing_cols:
-            op.drop_column("outbox", "last_error")
         if "payload" in existing_cols:
             op.drop_column("outbox", "payload")

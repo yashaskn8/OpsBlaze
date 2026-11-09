@@ -36,7 +36,13 @@ class Settings(BaseSettings):
     policy_signing_secret: str | None = None
     policy_signing_key_id: str = "opsblaze-signer-v1"
 
-    # Stage 11.2: Enterprise Identity Provider (RFC 7662) & Dispatcher Knobs
+    # Production identity provider settings (RFC 7662)
+    identity_issuer: str | None = None
+    identity_introspection_url: str | None = None
+    identity_client_id: str | None = None
+    identity_client_secret: str | None = None
+    identity_audience: str | None = None
+
     idp_introspection_url: str | None = None
     idp_client_id: str | None = None
     idp_client_secret: str | None = None
@@ -48,6 +54,32 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_secrets(self) -> Settings:
+        # Harmonize identity_* and idp_* settings
+        if self.identity_introspection_url and not self.idp_introspection_url:
+            self.idp_introspection_url = self.identity_introspection_url
+        elif self.idp_introspection_url and not self.identity_introspection_url:
+            self.identity_introspection_url = self.idp_introspection_url
+
+        if self.identity_issuer and not self.idp_expected_issuer:
+            self.idp_expected_issuer = self.identity_issuer
+        elif self.idp_expected_issuer and not self.identity_issuer:
+            self.identity_issuer = self.idp_expected_issuer
+
+        if self.identity_audience and not self.idp_expected_audience:
+            self.idp_expected_audience = self.identity_audience
+        elif self.idp_expected_audience and not self.identity_audience:
+            self.identity_audience = self.idp_expected_audience
+
+        if self.identity_client_id and not self.idp_client_id:
+            self.idp_client_id = self.identity_client_id
+        elif self.idp_client_id and not self.identity_client_id:
+            self.identity_client_id = self.idp_client_id
+
+        if self.identity_client_secret and not self.idp_client_secret:
+            self.idp_client_secret = self.identity_client_secret
+        elif self.idp_client_secret and not self.identity_client_secret:
+            self.identity_client_secret = self.idp_client_secret
+
         env_norm = self.opsblaze_env.strip().lower()
         if env_norm == "production":
             if not self.auth_secret_key or len(self.auth_secret_key.strip()) < 32:

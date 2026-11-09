@@ -89,7 +89,7 @@ class Outbox(Base):
             "id",
             postgresql_where=text("delivered_at IS NULL"),
         ),
-        Index(
+Index(
             "ix_outbox_kind_pending",
             "kind",
             "available_at",
@@ -116,6 +116,7 @@ class Outbox(Base):
     payload: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, server_default=text("'{}'::json"), nullable=False
     )
+
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -1545,6 +1546,23 @@ class ReleaseEventAudit(Base):
     )
 
 
+class RevokedToken(Base):
+    """Durable, cross-worker revocation record for signed access tokens."""
+
+    __tablename__ = "revoked_token"
+    __table_args__ = (Index("ix_revoked_token_expiry", "expires_at"),)
+
+    jti: Mapped[str] = mapped_column(String(128), primary_key=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenant.id", ondelete="CASCADE"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class IdentityMembership(Base):
     """Authoritative server-managed tenant identity and role registry for Stage 11.2 (Gate A)."""
 
@@ -1585,3 +1603,18 @@ class IdentityMembership(Base):
     deactivated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     deactivation_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
+    @property
+    def issuer(self) -> str:
+        return self.idp_issuer
+
+    @issuer.setter
+    def issuer(self, val: str) -> None:
+        self.idp_issuer = val
+
+    @property
+    def subject(self) -> str:
+        return self.idp_subject
+
+    @subject.setter
+    def subject(self, val: str) -> None:
+        self.idp_subject = val

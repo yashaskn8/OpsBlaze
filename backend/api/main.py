@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -35,6 +36,8 @@ from backend.observability.metrics import (
 )
 from backend.persistence.db import make_engine, make_session_factory
 from backend.persistence.repositories import IncidentRepository
+from backend.releases.guardrail_dispatcher import ReleaseGuardrailDispatcher
+from backend.releases.shadow_dispatcher import ShadowEvaluationDispatcher
 
 # Default local lab tenant for interactive React development (registered on startup if DB is up)
 DEFAULT_LAB_TENANT_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
@@ -68,35 +71,31 @@ async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
     except (SQLAlchemyError, OSError):
         # Allow app startup even if DB is temporarily unreachable; /readyz reports readiness
         pass
-
-    stop_event = asyncio.Event()
+    stop_background_workers = asyncio.Event()
     dispatcher_tasks: list[asyncio.Task[None]] = []
 
-    if getattr(cfg, "enable_in_process_dispatchers", False):
-        from backend.releases.guardrail_dispatcher import GuardrailOutboxDispatcher
-        from backend.releases.shadow_dispatcher import ShadowOutboxDispatcher
-
-        guardrail_dispatcher = GuardrailOutboxDispatcher(session_factory=session_factory)
-        shadow_dispatcher = ShadowOutboxDispatcher(session_factory=session_factory)
-
-        dispatcher_tasks.append(
-            asyncio.create_task(guardrail_dispatcher.run_forever(stop_event=stop_event), name="guardrail-dispatcher")
+    if getattr(cfg, "enable_in_process_dispatchers", True):
+        guardrail_task = asyncio.create_task(
+            ReleaseGuardrailDispatcher(session_factory).run_forever(stop_background_workers),
+            name="opsblaze-release-guardrail-dispatcher",
         )
-        dispatcher_tasks.append(
-            asyncio.create_task(shadow_dispatcher.run_forever(stop_event=stop_event), name="shadow-dispatcher")
+        shadow_task = asyncio.create_task(
+            ShadowEvaluationDispatcher(session_factory).run_forever(stop_background_workers),
+            name="opsblaze-shadow-evaluation-dispatcher",
         )
+        dispatcher_tasks.extend([guardrail_task, shadow_task])
 
     try:
         yield
     finally:
         if dispatcher_tasks:
-            stop_event.set()
-            _done, pending = await asyncio.wait(dispatcher_tasks, timeout=5.0)
-            for t in pending:
-                t.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-
+            stop_background_workers.set()
+            try:
+                await asyncio.wait_for(asyncio.gather(*dispatcher_tasks), timeout=5.0)
+            except TimeoutError:
+                for task in dispatcher_tasks:
+                    task.cancel()
+                await asyncio.gather(*dispatcher_tasks, return_exceptions=True)
         if getattr(app_instance.state, "engine", None) is not None:
             await engine.dispose()
             app_instance.state.engine = None

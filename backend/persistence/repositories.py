@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger('opsblaze.persistence.repositories')
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -396,15 +396,18 @@ class IncidentRepository:
                     .values(delivered_at=now)
                 )
 
-            # Stage 11.2 Gate B: Transactionally atomic outbox enqueue for durable guardrail evaluation
-            if target_status in (
-                IncidentStatus.VERIFIED,
-                IncidentStatus.FAILED,
-                IncidentStatus.NEEDS_REVIEW,
-                IncidentStatus.CANCELLED,
-            ) and incident.policy_release_id is not None:
-                guardrail_dedupe = f"guardrail:{incident.policy_release_id}"
-                # Deduplication check: only enqueue if no in-flight guardrail check exists for this release
+            # Persist the guardrail evaluation request in the same transaction as the
+            # terminal incident transition. The independent dispatcher retries after crashes.
+            if (
+                target_status in (
+                    IncidentStatus.VERIFIED,
+                    IncidentStatus.FAILED,
+                    IncidentStatus.NEEDS_REVIEW,
+                    IncidentStatus.CANCELLED,
+                )
+                and incident.policy_release_id is not None
+            ):
+                guardrail_dedupe = f"guardrail:{incident.id}:{incident.status_version}"
                 check_stmt = select(Outbox.id).where(
                     Outbox.kind == "RELEASE_GUARDRAIL",
                     Outbox.dedupe_key == guardrail_dedupe,
@@ -424,31 +427,12 @@ class IncidentRepository:
                                 "terminal_status": target_status.value,
                                 "canary_arm": incident.canary_arm,
                             },
+                            attempt=0,
                             available_at=datetime.now(UTC),
                         )
                     )
 
             await session.commit()
-
-            # Inline fallback if dispatcher is not running in background
-            if target_status in (
-                IncidentStatus.VERIFIED,
-                IncidentStatus.FAILED,
-                IncidentStatus.NEEDS_REVIEW,
-                IncidentStatus.CANCELLED,
-            ) and incident.policy_release_id is not None:
-                try:
-                    from backend.releases.guardrails import ReleaseGuardrailService
-                    guardrail_svc = ReleaseGuardrailService(self._session_factory)
-                    await guardrail_svc.evaluate_and_enforce_guardrails(
-                        tenant_id=tenant_id,
-                        release_id=incident.policy_release_id,
-                    )
-                except (SQLAlchemyError, ValueError, RuntimeError, OSError) as guardrail_err:
-                    logger.warning(
-                        "Automated guardrail check on terminal incident progression failed gracefully: %s",
-                        guardrail_err,
-                    )
 
             if target_status == IncidentStatus.CANCELLED:
                 metrics.inc("workflow_cancelled_total")
@@ -605,7 +589,7 @@ class OutboxRepository:
                 select(Outbox, Incident)
                 .join(Incident, Outbox.incident_id == Incident.id)
                 .where(
-                    Outbox.kind.in_((kind, kind.lower())),
+                    Outbox.kind.in_((kind, kind.lower(), kind.upper())),
                     Outbox.delivered_at.is_(None),
                     Outbox.available_at <= claim_time,
                 )

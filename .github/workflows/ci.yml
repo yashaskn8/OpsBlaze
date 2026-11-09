@@ -26,7 +26,11 @@ jobs:
           --health-retries 5
     env:
       OPSBLAZE_ENV: development
-      DATABASE_URL: postgresql+asyncpg://opsblaze:opsblaze_dev_password@localhost:5432/opsblaze_test
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: opsblaze
+      POSTGRES_PASSWORD: opsblaze_dev_password
+      POSTGRES_DB: opsblaze_test
       AUTH_SECRET_KEY: opsblaze-dev-auth-secret-key-32bytes-hex-safe
       POLICY_SIGNING_SECRET: opsblaze-dev-policy-signing-secret-hex-safe
       POLICY_SIGNING_KEY_ID: key-1
@@ -45,31 +49,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
+      - name: Apply PostgreSQL migrations
+        run: uv run alembic upgrade head
+
       - name: Lint with Ruff
         run: uv run ruff check backend tests
 
       - name: Typecheck with Mypy
         run: uv run mypy backend
 
-      - name: Apply Database Migrations (Alembic)
-        run: uv run alembic upgrade head
-
-      - name: Run Schema, Release & Security Test Suite
-        run: >
-          uv run pytest
-          tests/unit/test_no_unauthorized_html.py
-          tests/unit/test_e6_bundle_integrity.py
-          tests/unit/test_e6_canary_assignment.py
-          tests/unit/test_e6_guardrails.py
-          tests/unit/test_e6_kill_switch_and_fencing.py
-          tests/unit/test_e6_release_lifecycle.py
-          tests/unit/test_stage11_2_guardrail_dispatcher.py
-          tests/unit/test_stage11_2_shadow_execution.py
-          tests/security/test_stage11_1_auth_hardening.py
-          tests/security/test_stage11_1_release_assurance_adversarial.py
-          tests/security/test_stage11_2_identity_exchange.py
-          tests/integration/test_stage11_e6_lifecycle.py
-          -v
+      - name: Run the complete repository test suite
+        run: uv run pytest -q -m "not historical"
 
   frontend-quality:
     name: Frontend Quality & Build

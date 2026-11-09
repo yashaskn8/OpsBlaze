@@ -1,110 +1,123 @@
 /**
- * Authentication service for OpsBlaze.
- * Communicates with /v1/auth/login and /v1/auth/revoke.
+ * Authentication client for OpsBlaze.
+ * Development identity names are labels only; credentials are entered by the operator.
+ * Access tokens remain in React memory and are not written to browser storage.
  */
+
+export type ActorKind = 'HUMAN' | 'SYSTEM' | 'MODEL' | 'BOT'
 
 export interface AuthenticatedUser {
   actor_id: string
-  actor_kind: 'human' | 'bot' | 'system'
+  actor_kind: ActorKind
   roles: string[]
   tenant_id: string
+  auth_mechanism?: string
+  can_review_evaluation?: boolean
+  can_approve_release?: boolean
 }
 
 export interface LoginResponse {
   access_token: string
   token_type: string
-  actor_id: string
-  actor_kind: string
-  roles: string[]
-  tenant_id: string
+  expires_in: number
+  principal: AuthenticatedUser
 }
 
 export interface PreconfiguredUserPreset {
   username: string
   label: string
-  defaultRole: string
-  password: string
-  description: string
 }
 
 export const PRECONFIGURED_PRESETS: PreconfiguredUserPreset[] = [
-  {
-    username: 'incident_commander',
-    label: 'Incident Commander',
-    defaultRole: 'incident_commander',
-    password: 'incident-commander-secret-pass-2026',
-    description: 'Human responder authorized for incident approvals and canary activations',
-  },
-  {
-    username: 'release_owner',
-    label: 'Release Owner',
-    defaultRole: 'release_owner',
-    password: 'release-owner-secret-pass-2026',
-    description: 'Release governance owner authorized for E6 reviews, rollouts, and promotions',
-  },
-  {
-    username: 'platform_engineer',
-    label: 'Platform Engineer',
-    defaultRole: 'platform_engineer',
-    password: 'platform-engineer-secret-pass-2026',
-    description: 'Infrastructure engineer authorized to create bundles, draft releases, and activate shadow',
-  },
-  {
-    username: 'evaluation_owner',
-    label: 'Evaluation Owner',
-    defaultRole: 'evaluation_owner',
-    password: 'evaluation-owner-secret-pass-2026',
-    description: 'E5 evaluation owner authorized for candidate testing and regression gating',
-  },
-  {
-    username: 'sre_lead',
-    label: 'SRE Lead',
-    defaultRole: 'sre_lead',
-    password: 'sre-lead-secret-pass-2026',
-    description: 'Reliability lead authorized for rollback and emergency kill-switch',
-  },
-  {
-    username: 'operator',
-    label: 'Standard Operator',
-    defaultRole: 'operator',
-    password: 'operator-secret-pass-2026',
-    description: 'Standard responder with observation and emergency mitigation rights',
-  },
-  {
-    username: 'bot_agent',
-    label: 'Bot Agent (Non-human)',
-    defaultRole: 'operator',
-    password: 'bot-agent-secret-pass-2026',
-    description: 'Automated agent (strictly forbidden from human approval and release promotion)',
-  },
+  { username: 'incident_commander', label: 'Incident Commander (development)' },
+  { username: 'release_owner', label: 'Release Owner (development)' },
+  { username: 'platform_engineer', label: 'Platform Engineer (development)' },
+  { username: 'evaluation_owner', label: 'Evaluation Owner (development)' },
+  { username: 'sre_lead', label: 'SRE Lead (development)' },
+  { username: 'operator', label: 'Operator (development)' },
+  { username: 'bot_agent', label: 'Bot Agent (development)' },
 ]
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parsePrincipal(value: unknown): AuthenticatedUser {
+  if (!isRecord(value)) throw new Error('Authentication response has no principal object.')
+  const { actor_id, actor_kind, roles, tenant_id } = value
+  const actorKinds: ActorKind[] = ['HUMAN', 'SYSTEM', 'MODEL', 'BOT']
+  if (
+    typeof actor_id !== 'string' ||
+    typeof tenant_id !== 'string' ||
+    typeof actor_kind !== 'string' ||
+    !actorKinds.includes(actor_kind as ActorKind) ||
+    !Array.isArray(roles) ||
+    !roles.every((role) => typeof role === 'string')
+  ) {
+    throw new Error('Authentication response contains an invalid principal.')
+  }
+  return {
+    actor_id,
+    actor_kind: actor_kind as ActorKind,
+    tenant_id,
+    roles,
+    auth_mechanism: typeof value.auth_mechanism === 'string' ? value.auth_mechanism : undefined,
+    can_review_evaluation:
+      typeof value.can_review_evaluation === 'boolean' ? value.can_review_evaluation : undefined,
+    can_approve_release:
+      typeof value.can_approve_release === 'boolean' ? value.can_approve_release : undefined,
+  }
+}
+
+async function readError(response: Response): Promise<Error> {
+  const body = await response.json().catch(() => ({ detail: response.statusText }))
+  const detail = isRecord(body) ? body.detail : undefined
+  return new Error(typeof detail === 'string' ? detail : `Request failed: HTTP ${response.status}`)
+}
 
 export const authApi = {
   async login(username: string, password: string, tenantId: string): Promise<LoginResponse> {
-    const res = await fetch('/v1/auth/login', {
+    const response = await fetch('/v1/auth/login', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        username,
-        password,
-        tenant_id: tenantId,
-      }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, tenant_id: tenantId }),
     })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }))
-      throw new Error(typeof err.detail === 'string' ? err.detail : `Login failed: HTTP ${res.status}`)
+    if (!response.ok) throw await readError(response)
+
+    const body: unknown = await response.json()
+    if (
+      !isRecord(body) ||
+      typeof body.access_token !== 'string' ||
+      typeof body.token_type !== 'string' ||
+      typeof body.expires_in !== 'number'
+    ) {
+      throw new Error('Authentication endpoint returned an invalid token response.')
     }
-    return (await res.json()) as LoginResponse
+    return {
+      access_token: body.access_token,
+      token_type: body.token_type,
+      expires_in: body.expires_in,
+      principal: parsePrincipal(body.principal),
+    }
+  },
+
+  async me(token: string): Promise<AuthenticatedUser> {
+    const response = await fetch('/v1/auth/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) throw await readError(response)
+    return parsePrincipal(await response.json())
   },
 
   async revoke(token: string): Promise<void> {
-    await fetch('/v1/auth/revoke', {
+    const response = await fetch('/v1/auth/revoke', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({}),
     })
+    if (!response.ok) throw await readError(response)
   },
 }

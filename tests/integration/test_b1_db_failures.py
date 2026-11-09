@@ -15,11 +15,30 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from backend.api.main import create_app
 from backend.config import Settings
+from backend.domain.auth import mint_principal_token
 from backend.persistence.db import make_engine, make_session_factory
 from backend.persistence.models import Incident, Outbox
 from backend.persistence.repositories import IncidentRepository
 
 pytestmark = pytest.mark.postgres
+
+
+def _signed_headers(
+    settings: Settings, tenant_id: uuid.UUID, idempotency_key: str
+) -> dict[str, str]:
+    token = mint_principal_token(
+        actor_id="db-failure-test-user",
+        tenant_id=tenant_id,
+        roles=["operator"],
+        secret_key=settings.auth_secret_key or "",
+        ttl_seconds=300,
+        auth_mechanism="pytest_db_failure_test",
+    )
+    return {
+        "Authorization": f"Bearer {token}",
+        "X-Tenant-ID": str(tenant_id),
+        "Idempotency-Key": idempotency_key,
+    }
 
 
 async def _count_tenant_state(
@@ -209,6 +228,7 @@ async def test_7_database_connection_loss_returns_explicit_503_on_api_and_readyz
     app.state.engine = make_engine(broken_settings, pool_size=1, max_overflow=0, pool_timeout=0.5)
     app.state.session_factory = make_session_factory(app.state.engine)
 
+    db_down_tenant = uuid.uuid4()
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
@@ -224,10 +244,7 @@ async def test_7_database_connection_loss_returns_explicit_503_on_api_and_readyz
             r_admit = await client.post(
                 "/v1/incidents",
                 json={"target_id": "sim-db-1"},
-                headers={
-                    "X-Tenant-ID": str(uuid.uuid4()),
-                    "Idempotency-Key": "db-down-key",
-                },
+                headers=_signed_headers(broken_settings, db_down_tenant, "db-down-key"),
             )
             assert r_admit.status_code == 503
     finally:
@@ -256,10 +273,7 @@ async def test_9_connection_pool_exhaustion_and_recovery(
                 r_exhausted = await client.post(
                     "/v1/incidents",
                     json={"target_id": "sim-pool-target"},
-                    headers={
-                        "X-Tenant-ID": str(isolated_tenant),
-                        "Idempotency-Key": f"pool-key-{uuid.uuid4()}",
-                    },
+                    headers=_signed_headers(test_settings, isolated_tenant, f"pool-key-{uuid.uuid4()}"),
                 )
                 assert r_exhausted.status_code == 503
             finally:
@@ -269,10 +283,9 @@ async def test_9_connection_pool_exhaustion_and_recovery(
             r_recovered = await client.post(
                 "/v1/incidents",
                 json={"target_id": "sim-pool-target"},
-                headers={
-                    "X-Tenant-ID": str(isolated_tenant),
-                    "Idempotency-Key": f"pool-key-recovered-{uuid.uuid4()}",
-                },
+                headers=_signed_headers(
+                    test_settings, isolated_tenant, f"pool-key-recovered-{uuid.uuid4()}"
+                ),
             )
             assert r_recovered.status_code == 202
     finally:

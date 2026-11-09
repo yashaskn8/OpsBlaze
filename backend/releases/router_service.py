@@ -16,12 +16,15 @@ from backend.domain.release import (
     assign_incident_cohort,
 )
 from backend.persistence.models import (
+    EvidenceLedger,
     Incident,
     Outbox,
     PolicyBundle,
     PolicyRelease,
     ReleaseEventAudit,
 )
+from backend.releases.bundle_service import PolicyBundleService
+from backend.releases.shadow_executor import evaluate_bundle_shadow_policy
 
 logger = logging.getLogger("opsblaze.releases.router_service")
 
@@ -105,8 +108,6 @@ class PolicyRouterService:
                 incident.policy_release_id = rel_id
                 incident.canary_arm = arm.value
                 incident.assignment_hash_val = hash_val
-
-            # Stage 11.2 Gate C: Atomically enqueue shadow evaluation when release is in SHADOW state
             if active_release and active_release.state == ReleaseState.SHADOW.value:
                 shadow_dedupe = f"shadow:{active_release.id}:{incident_id}"
                 check_stmt = select(Outbox.id).where(
@@ -128,6 +129,7 @@ class PolicyRouterService:
                                 "candidate_bundle_id": str(active_release.bundle_id),
                                 "incumbent_bundle_id": str(active_release.incumbent_bundle_id),
                             },
+                            attempt=0,
                             available_at=datetime.now(UTC),
                         )
                     )
@@ -204,30 +206,62 @@ class PolicyRouterService:
         target_id: str,
         release_id: uuid.UUID,
     ) -> dict[str, Any]:
-        """Executes candidate reasoning in an isolated read-only shadow observation path.
+        """Run candidate and incumbent declarative policy rules over the same evidence snapshot.
 
-        Guarantees (ADR-0011 INV-E6-5):
-        - Candidate reasoning runs in observation isolation.
-        - Candidate CANNOT acquire B2 reservations, emit P2 approval cards, or reach B3 effect gateway.
-        - Candidate findings and proposed plan are recorded for offline comparison.
-        - Zero effect on live incident outcome or incumbent authority.
+        This path is read-only: it has no B2 reservation manager, P2 approval service,
+        B3 action gateway, adapter, or A2 capability gateway.
         """
         async with self._session_factory() as session:
             release = await session.get(PolicyRelease, release_id)
             if release is None or release.tenant_id != tenant_id:
                 raise ValueError(f"Policy release {release_id} not found.")
+            if release.state != ReleaseState.SHADOW.value or release.kill_switch_active:
+                raise ValueError("Shadow evaluation requires a live SHADOW release with no kill switch.")
+
+            incident = await session.get(Incident, incident_id)
+            if incident is None or incident.tenant_id != tenant_id or incident.target_id != target_id:
+                raise ValueError("Shadow incident or target is not valid for this tenant.")
 
             candidate_bundle = await session.get(PolicyBundle, release.bundle_id)
-            if candidate_bundle is None:
-                raise ValueError(f"Candidate bundle {release.bundle_id} not found.")
+            incumbent_bundle = await session.get(PolicyBundle, release.incumbent_bundle_id)
+            if candidate_bundle is None or incumbent_bundle is None:
+                raise ValueError("Candidate or incumbent policy bundle is missing.")
 
+            evidence = (
+                await session.execute(
+                    select(EvidenceLedger).where(
+                        EvidenceLedger.tenant_id == tenant_id,
+                        EvidenceLedger.incident_id == incident_id,
+                        EvidenceLedger.target_id == target_id,
+                        EvidenceLedger.validity_status == "VALID",
+                    ).order_by(EvidenceLedger.observed_at.asc(), EvidenceLedger.id.asc())
+                )
+            ).scalars().all()
+
+        bundle_service = PolicyBundleService(self._session_factory)
+        await bundle_service.verify_bundle_integrity(tenant_id=tenant_id, bundle=candidate_bundle)
+        await bundle_service.verify_bundle_integrity(tenant_id=tenant_id, bundle=incumbent_bundle)
+
+        candidate_result = evaluate_bundle_shadow_policy(candidate_bundle, list(evidence))
+        incumbent_result = evaluate_bundle_shadow_policy(incumbent_bundle, list(evidence))
+        candidate_decision = candidate_result["decision"]
+        incumbent_decision = incumbent_result["decision"]
+        comparison = {
+            "same_decision": candidate_decision == incumbent_decision,
+            "candidate_only": candidate_decision != incumbent_decision,
+            "evidence_count": len(evidence),
+            "candidate_policy_status": candidate_result["status"],
+            "incumbent_policy_status": incumbent_result["status"],
+        }
+
+        async with self._session_factory() as session:
             audit = ReleaseEventAudit(
                 id=uuid.uuid4(),
                 tenant_id=tenant_id,
-                release_id=release.id,
-                event_type="SHADOW_OBSERVATION",
-                from_state=release.state,
-                to_state=release.state,
+                release_id=release_id,
+                event_type="SHADOW_EVALUATION_COMPLETED",
+                from_state=ReleaseState.SHADOW.value,
+                to_state=ReleaseState.SHADOW.value,
                 actor_id="shadow-runner",
                 actor_role="system",
                 metadata_redacted={
@@ -235,22 +269,37 @@ class PolicyRouterService:
                     "target_id": target_id,
                     "candidate_bundle_id": str(candidate_bundle.id),
                     "candidate_bundle_sha256": candidate_bundle.bundle_sha256,
-                    "execution_mode": "SHADOW_OBSERVATION_ONLY",
+                    "incumbent_bundle_id": str(incumbent_bundle.id),
+                    "incumbent_bundle_sha256": incumbent_bundle.bundle_sha256,
+                    "candidate_result": candidate_result,
+                    "incumbent_result": incumbent_result,
+                    "comparison": comparison,
+                    "execution_mode": "DECLARATIVE_READ_ONLY_SHADOW_V1",
                     "consequential_authority": False,
+                    "tool_calls": 0,
+                    "effect_emitted": False,
                 },
                 created_at=datetime.now(UTC),
             )
             session.add(audit)
             await session.commit()
 
-            return {
-                "incident_id": str(incident_id),
-                "release_id": str(release.id),
-                "candidate_bundle_id": str(candidate_bundle.id),
-                "candidate_bundle_sha256": candidate_bundle.bundle_sha256,
-                "consequential_authority": False,
-                "shadow_status": "OBSERVED",
-            }
+        return {
+            "incident_id": str(incident_id),
+            "release_id": str(release_id),
+            "candidate_bundle_id": str(candidate_bundle.id),
+            "candidate_result": candidate_result,
+            "incumbent_result": incumbent_result,
+            "comparison": comparison,
+            "consequential_authority": False,
+            "tool_calls": 0,
+            "effect_emitted": False,
+            "shadow_status": (
+                "EVALUATED"
+                if candidate_result["status"] == "EVALUATED"
+                else candidate_result["status"]
+            ),
+        }
 
     async def get_incident_pinned_policy(
         self,
