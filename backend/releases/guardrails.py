@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.domain.release import (
     CanaryArm,
     CanaryMetricsResponse,
+    ReleaseNotFoundError,
     ReleaseState,
 )
 from backend.persistence.models import Incident, PolicyRelease, ReleaseEventAudit
@@ -85,7 +86,7 @@ class ReleaseGuardrailService:
         async with self._session_factory() as session:
             release = await session.get(PolicyRelease, release_id)
             if release is None or release.tenant_id != tenant_id:
-                raise ValueError(f"Release {release_id} not found.")
+                raise ReleaseNotFoundError(release_id)
 
             # Count real server-side invariant breaches
             stmt_breaches = (

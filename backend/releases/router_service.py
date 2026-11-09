@@ -15,7 +15,13 @@ from backend.domain.release import (
     ReleaseState,
     assign_incident_cohort,
 )
-from backend.persistence.models import Incident, PolicyBundle, PolicyRelease, ReleaseEventAudit
+from backend.persistence.models import (
+    Incident,
+    Outbox,
+    PolicyBundle,
+    PolicyRelease,
+    ReleaseEventAudit,
+)
 
 logger = logging.getLogger("opsblaze.releases.router_service")
 
@@ -99,7 +105,34 @@ class PolicyRouterService:
                 incident.policy_release_id = rel_id
                 incident.canary_arm = arm.value
                 incident.assignment_hash_val = hash_val
-                await session.commit()
+
+            # Stage 11.2 Gate C: Atomically enqueue shadow evaluation when release is in SHADOW state
+            if active_release and active_release.state == ReleaseState.SHADOW.value:
+                shadow_dedupe = f"shadow:{active_release.id}:{incident_id}"
+                check_stmt = select(Outbox.id).where(
+                    Outbox.kind == "RELEASE_SHADOW_EVALUATION",
+                    Outbox.dedupe_key == shadow_dedupe,
+                    Outbox.delivered_at.is_(None),
+                ).limit(1)
+                existing_shadow = (await session.execute(check_stmt)).scalar_one_or_none()
+                if existing_shadow is None:
+                    session.add(
+                        Outbox(
+                            incident_id=incident_id,
+                            kind="RELEASE_SHADOW_EVALUATION",
+                            dedupe_key=shadow_dedupe,
+                            payload={
+                                "tenant_id": str(tenant_id),
+                                "release_id": str(active_release.id),
+                                "incident_id": str(incident_id),
+                                "candidate_bundle_id": str(active_release.bundle_id),
+                                "incumbent_bundle_id": str(active_release.incumbent_bundle_id),
+                            },
+                            available_at=datetime.now(UTC),
+                        )
+                    )
+
+            await session.commit()
 
             return (arm, bundle_id, rel_id, hash_val)
 

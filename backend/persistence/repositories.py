@@ -6,6 +6,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -29,6 +30,30 @@ from backend.observability.metrics import emit_event, metrics
 from backend.persistence.models import Incident, Outbox, Tenant
 
 OUTBOX_KIND_INCIDENT_START = "INCIDENT_START"
+OUTBOX_KIND_GUARDRAIL = "RELEASE_GUARDRAIL"
+OUTBOX_KIND_SHADOW = "RELEASE_SHADOW_EVALUATION"
+
+
+@dataclass(frozen=True)
+class ClaimedGuardrailOutboxItem:
+    outbox_id: int
+    tenant_id: uuid.UUID
+    release_id: uuid.UUID
+    incident_id: uuid.UUID | None
+    attempt: int
+    payload: dict[str, Any]
+    available_at: datetime
+
+
+@dataclass(frozen=True)
+class ClaimedShadowOutboxItem:
+    outbox_id: int
+    tenant_id: uuid.UUID
+    release_id: uuid.UUID
+    incident_id: uuid.UUID | None
+    attempt: int
+    payload: dict[str, Any]
+    available_at: datetime
 
 
 @dataclass(frozen=True)
@@ -357,7 +382,7 @@ class IncidentRepository:
                 incident.status_projection = target_status.value
                 incident.status_version = current_version + 1
 
-            # If cancelling, also mark any undelivered outbox entry as delivered/superseded
+            # If cancelling, also mark any undelivered incident_start outbox entry as delivered/superseded
             # in the same short transaction so the dispatcher will not start a workflow later.
             if target_status == IncidentStatus.CANCELLED:
                 now = datetime.now(UTC)
@@ -365,14 +390,47 @@ class IncidentRepository:
                     update(Outbox)
                     .where(
                         Outbox.incident_id == incident_id,
+                        Outbox.kind.in_(("INCIDENT_START", "incident_start")),
                         Outbox.delivered_at.is_(None),
                     )
                     .values(delivered_at=now)
                 )
 
+            # Stage 11.2 Gate B: Transactionally atomic outbox enqueue for durable guardrail evaluation
+            if target_status in (
+                IncidentStatus.VERIFIED,
+                IncidentStatus.FAILED,
+                IncidentStatus.NEEDS_REVIEW,
+                IncidentStatus.CANCELLED,
+            ) and incident.policy_release_id is not None:
+                guardrail_dedupe = f"guardrail:{incident.policy_release_id}"
+                # Deduplication check: only enqueue if no in-flight guardrail check exists for this release
+                check_stmt = select(Outbox.id).where(
+                    Outbox.kind == "RELEASE_GUARDRAIL",
+                    Outbox.dedupe_key == guardrail_dedupe,
+                    Outbox.delivered_at.is_(None),
+                ).limit(1)
+                existing_guardrail = (await session.execute(check_stmt)).scalar_one_or_none()
+                if existing_guardrail is None:
+                    session.add(
+                        Outbox(
+                            incident_id=incident.id,
+                            kind="RELEASE_GUARDRAIL",
+                            dedupe_key=guardrail_dedupe,
+                            payload={
+                                "tenant_id": str(tenant_id),
+                                "release_id": str(incident.policy_release_id),
+                                "incident_id": str(incident.id),
+                                "terminal_status": target_status.value,
+                                "canary_arm": incident.canary_arm,
+                            },
+                            available_at=datetime.now(UTC),
+                        )
+                    )
+
             await session.commit()
 
-            # Stage 11.1 Gate E: Automated runtime guardrail check upon terminal incident progression
+            # Inline fallback if dispatcher is not running in background
             if target_status in (
                 IncidentStatus.VERIFIED,
                 IncidentStatus.FAILED,
@@ -476,6 +534,7 @@ class IncidentRepository:
                         update(Outbox)
                         .where(
                             Outbox.incident_id == incident_id,
+                            Outbox.kind.in_(("INCIDENT_START", "incident_start")),
                             Outbox.delivered_at.is_(None),
                         )
                         .values(delivered_at=current_time)
@@ -498,6 +557,7 @@ class IncidentRepository:
                     update(Outbox)
                     .where(
                         Outbox.incident_id == incident_id,
+                        Outbox.kind.in_(("INCIDENT_START", "incident_start")),
                         Outbox.delivered_at.is_(None),
                     )
                     .values(delivered_at=current_time)
@@ -525,6 +585,7 @@ class OutboxRepository:
     async def claim_batch(
         self,
         *,
+        kind: str = OUTBOX_KIND_INCIDENT_START,
         batch_size: int = 10,
         lease_seconds: float = 15.0,
         stuck_attempt_threshold: int = 5,
@@ -544,6 +605,7 @@ class OutboxRepository:
                 select(Outbox, Incident)
                 .join(Incident, Outbox.incident_id == Incident.id)
                 .where(
+                    Outbox.kind.in_((kind, kind.lower())),
                     Outbox.delivered_at.is_(None),
                     Outbox.available_at <= claim_time,
                 )
@@ -670,36 +732,163 @@ class OutboxRepository:
                 )
             return True
 
+    async def mark_outbox_delivered(
+        self,
+        *,
+        outbox_id: int,
+        now: datetime | None = None,
+    ) -> bool:
+        """Mark an outbox row delivered without modifying incident status projections."""
+        delivered_time = now or datetime.now(UTC)
+        async with self._session_factory() as session:
+            res = await session.execute(
+                update(Outbox)
+                .where(Outbox.id == outbox_id, Outbox.delivered_at.is_(None))
+                .values(delivered_at=delivered_time, lease_owner=None)
+            )
+            await session.commit()
+            return (res.rowcount or 0) > 0  # type: ignore[attr-defined]
+
+    async def claim_guardrail_batch(
+        self,
+        *,
+        batch_size: int = 10,
+        lease_seconds: float = 15.0,
+        now: datetime | None = None,
+    ) -> list[ClaimedGuardrailOutboxItem]:
+        """Claim eligible RELEASE_GUARDRAIL outbox rows via FOR UPDATE SKIP LOCKED."""
+        claim_time = now or datetime.now(UTC)
+        lease_until = claim_time + timedelta(seconds=lease_seconds)
+
+        async with self._session_factory() as session:
+            stmt = (
+                select(Outbox)
+                .where(
+                    Outbox.kind == OUTBOX_KIND_GUARDRAIL,
+                    Outbox.delivered_at.is_(None),
+                    Outbox.available_at <= claim_time,
+                )
+                .order_by(Outbox.available_at.asc(), Outbox.id.asc())
+                .limit(batch_size)
+                .with_for_update(skip_locked=True)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            if not rows:
+                return []
+
+            claimed: list[ClaimedGuardrailOutboxItem] = []
+            for outbox in rows:
+                outbox.attempt += 1
+                outbox.available_at = lease_until
+                outbox.lease_owner = "guardrail-dispatcher"
+                payload = outbox.payload or {}
+                tenant_id = uuid.UUID(payload.get("tenant_id")) if payload.get("tenant_id") else uuid.UUID("00000000-0000-0000-0000-000000000000")
+                release_id = uuid.UUID(payload.get("release_id")) if payload.get("release_id") else uuid.UUID("00000000-0000-0000-0000-000000000000")
+
+                claimed.append(
+                    ClaimedGuardrailOutboxItem(
+                        outbox_id=outbox.id,
+                        tenant_id=tenant_id,
+                        release_id=release_id,
+                        incident_id=outbox.incident_id,
+                        attempt=outbox.attempt,
+                        payload=payload,
+                        available_at=lease_until,
+                    )
+                )
+                metrics.inc("outbox_guardrail_claimed_total")
+
+            await session.commit()
+            return claimed
+
+    async def claim_shadow_batch(
+        self,
+        *,
+        batch_size: int = 10,
+        lease_seconds: float = 30.0,
+        now: datetime | None = None,
+    ) -> list[ClaimedShadowOutboxItem]:
+        """Claim eligible RELEASE_SHADOW_EVALUATION outbox rows via FOR UPDATE SKIP LOCKED."""
+        claim_time = now or datetime.now(UTC)
+        lease_until = claim_time + timedelta(seconds=lease_seconds)
+
+        async with self._session_factory() as session:
+            stmt = (
+                select(Outbox)
+                .where(
+                    Outbox.kind == OUTBOX_KIND_SHADOW,
+                    Outbox.delivered_at.is_(None),
+                    Outbox.available_at <= claim_time,
+                )
+                .order_by(Outbox.available_at.asc(), Outbox.id.asc())
+                .limit(batch_size)
+                .with_for_update(skip_locked=True)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            if not rows:
+                return []
+
+            claimed: list[ClaimedShadowOutboxItem] = []
+            for outbox in rows:
+                outbox.attempt += 1
+                outbox.available_at = lease_until
+                outbox.lease_owner = "shadow-dispatcher"
+                payload = outbox.payload or {}
+                tenant_id = uuid.UUID(payload.get("tenant_id")) if payload.get("tenant_id") else uuid.UUID("00000000-0000-0000-0000-000000000000")
+                release_id = uuid.UUID(payload.get("release_id")) if payload.get("release_id") else uuid.UUID("00000000-0000-0000-0000-000000000000")
+
+                claimed.append(
+                    ClaimedShadowOutboxItem(
+                        outbox_id=outbox.id,
+                        tenant_id=tenant_id,
+                        release_id=release_id,
+                        incident_id=outbox.incident_id,
+                        attempt=outbox.attempt,
+                        payload=payload,
+                        available_at=lease_until,
+                    )
+                )
+                metrics.inc("outbox_shadow_claimed_total")
+
+            await session.commit()
+            return claimed
+
     async def schedule_retry(
         self,
         *,
         outbox_id: int,
-        incident_id: uuid.UUID,
-        tenant_id: uuid.UUID,
+        incident_id: uuid.UUID | None = None,
+        tenant_id: uuid.UUID | None = None,
         backoff_seconds: float,
         error_reason: str,
         now: datetime | None = None,
     ) -> None:
-        """Reschedule a failed outbox delivery with bounded backoff."""
+        """Reschedule a failed outbox delivery with bounded backoff and recorded last_error."""
         retry_base = now or datetime.now(UTC)
         next_available = retry_base + timedelta(seconds=max(0.05, backoff_seconds))
+        sanitized_error = error_reason.replace("\r", " ").replace("\n", " ").strip()[:2048]
         async with self._session_factory() as session:
             await session.execute(
                 update(Outbox)
                 .where(Outbox.id == outbox_id, Outbox.delivered_at.is_(None))
-                .values(available_at=next_available)
+                .values(
+                    available_at=next_available,
+                    last_error=sanitized_error,
+                    lease_owner=None,
+                )
             )
             await session.commit()
 
-        wf_id = make_incident_workflow_id(tenant_id, incident_id)
-        metrics.inc("outbox_retries_total")
-        metrics.inc("dispatcher_failures_total")
-        emit_event(
-            "outbox.retry",
-            incident_id=incident_id,
-            workflow_id=wf_id,
-            outbox_id=outbox_id,
-            backoff_seconds=round(backoff_seconds, 3),
-            error=error_reason,
-            level="WARNING",
-        )
+        if incident_id is not None and tenant_id is not None:
+            wf_id = make_incident_workflow_id(tenant_id, incident_id)
+            metrics.inc("outbox_retries_total")
+            metrics.inc("dispatcher_failures_total")
+            emit_event(
+                "outbox.retry",
+                incident_id=incident_id,
+                workflow_id=wf_id,
+                outbox_id=outbox_id,
+                backoff_seconds=round(backoff_seconds, 3),
+                error=sanitized_error,
+                level="WARNING",
+            )

@@ -48,6 +48,7 @@ def _ensure_app_engine(app_instance: FastAPI, settings: Settings | None = None) 
     if existing is not None:
         return existing
     cfg = settings or get_settings()
+    app_instance.state.settings = cfg
     engine = make_engine(cfg)
     app_instance.state.engine = engine
     app_instance.state.session_factory = make_session_factory(engine)
@@ -56,16 +57,46 @@ def _ensure_app_engine(app_instance: FastAPI, settings: Settings | None = None) 
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
+    import asyncio
     engine = _ensure_app_engine(app_instance)
+    cfg: Settings = getattr(app_instance.state, "settings", None) or get_settings()
+    session_factory = app_instance.state.session_factory
+
     try:
-        repo = IncidentRepository(app_instance.state.session_factory)
+        repo = IncidentRepository(session_factory)
         await repo.ensure_tenant(DEFAULT_LAB_TENANT_ID, DEFAULT_LAB_TENANT_NAME)
     except (SQLAlchemyError, OSError):
         # Allow app startup even if DB is temporarily unreachable; /readyz reports readiness
         pass
+
+    stop_event = asyncio.Event()
+    dispatcher_tasks: list[asyncio.Task[None]] = []
+
+    if getattr(cfg, "enable_in_process_dispatchers", False):
+        from backend.releases.guardrail_dispatcher import GuardrailOutboxDispatcher
+        from backend.releases.shadow_dispatcher import ShadowOutboxDispatcher
+
+        guardrail_dispatcher = GuardrailOutboxDispatcher(session_factory=session_factory)
+        shadow_dispatcher = ShadowOutboxDispatcher(session_factory=session_factory)
+
+        dispatcher_tasks.append(
+            asyncio.create_task(guardrail_dispatcher.run_forever(stop_event=stop_event), name="guardrail-dispatcher")
+        )
+        dispatcher_tasks.append(
+            asyncio.create_task(shadow_dispatcher.run_forever(stop_event=stop_event), name="shadow-dispatcher")
+        )
+
     try:
         yield
     finally:
+        if dispatcher_tasks:
+            stop_event.set()
+            _done, pending = await asyncio.wait(dispatcher_tasks, timeout=5.0)
+            for t in pending:
+                t.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
         if getattr(app_instance.state, "engine", None) is not None:
             await engine.dispose()
             app_instance.state.engine = None

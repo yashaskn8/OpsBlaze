@@ -88,15 +88,21 @@ async def isolated_tenant(
                 ExperienceCapsule,
                 FailureCase,
                 FailureCluster,
+                IdentityMembership,
                 ImprovementProposal,
                 InvestigationStep,
                 LessonUsage,
                 OperationalLesson,
                 OutcomeObservation,
                 OutcomeRevision,
+                PolicyBundle,
+                PolicyRelease,
+                ReleaseEventAudit,
                 ToolCall,
             )
 
+            await session.execute(delete(IdentityMembership).where(IdentityMembership.tenant_id == tenant_id))
+            await session.execute(delete(ReleaseEventAudit).where(ReleaseEventAudit.tenant_id == tenant_id))
             await session.execute(delete(CandidateEvaluationReport).where(CandidateEvaluationReport.tenant_id == tenant_id))
             await session.execute(delete(CandidateEvaluationTrial).where(CandidateEvaluationTrial.tenant_id == tenant_id))
             await session.execute(delete(CandidateEvaluationManifest).where(CandidateEvaluationManifest.tenant_id == tenant_id))
@@ -122,8 +128,15 @@ async def isolated_tenant(
                 delete(ResourceReservation).where(ResourceReservation.tenant_id == tenant_id)
             )
             await session.execute(delete(ResourceEpoch).where(ResourceEpoch.tenant_id == tenant_id))
-            await session.execute(delete(Outbox).where(Outbox.incident_id.in_(inc_ids_subq)))
+            await session.execute(
+                delete(Outbox).where(
+                    (Outbox.incident_id.in_(inc_ids_subq))
+                    | (Outbox.payload["tenant_id"].as_string() == str(tenant_id))
+                )
+            )
             await session.execute(delete(Incident).where(Incident.tenant_id == tenant_id))
+            await session.execute(delete(PolicyRelease).where(PolicyRelease.tenant_id == tenant_id))
+            await session.execute(delete(PolicyBundle).where(PolicyBundle.tenant_id == tenant_id))
             await session.execute(delete(Tenant).where(Tenant.id == tenant_id))
             await session.commit()
 
@@ -184,7 +197,12 @@ async def second_isolated_tenant(
                 delete(ResourceReservation).where(ResourceReservation.tenant_id == tenant_id)
             )
             await session.execute(delete(ResourceEpoch).where(ResourceEpoch.tenant_id == tenant_id))
-            await session.execute(delete(Outbox).where(Outbox.incident_id.in_(inc_ids_subq)))
+            await session.execute(
+                delete(Outbox).where(
+                    (Outbox.incident_id.in_(inc_ids_subq))
+                    | (Outbox.payload["tenant_id"].as_string() == str(tenant_id))
+                )
+            )
             await session.execute(delete(Incident).where(Incident.tenant_id == tenant_id))
             await session.execute(delete(Tenant).where(Tenant.id == tenant_id))
             await session.commit()

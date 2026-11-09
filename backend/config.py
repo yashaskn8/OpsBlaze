@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     policy_signing_secret: str | None = None
     policy_signing_key_id: str = "opsblaze-signer-v1"
 
+    # Stage 11.2: Enterprise Identity Provider (RFC 7662) & Dispatcher Knobs
+    idp_introspection_url: str | None = None
+    idp_client_id: str | None = None
+    idp_client_secret: str | None = None
+    idp_expected_issuer: str | None = None
+    idp_expected_audience: str | None = None
+    idp_timeout_seconds: float = 5.0
+    auth_allow_password_login: bool = True
+    enable_in_process_dispatchers: bool = False
+
     @model_validator(mode="after")
     def validate_secrets(self) -> Settings:
         env_norm = self.opsblaze_env.strip().lower()
@@ -56,6 +66,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Insecure compromised default secret key detected for POLICY_SIGNING_SECRET. Key rotation required."
                 )
+            if self.auth_allow_password_login:
+                raise ValueError(
+                    "Production configuration forbids password-registry login (auth_allow_password_login must be False)."
+                )
+            if self.idp_introspection_url and not self.idp_introspection_url.startswith("https://"):
+                raise ValueError("Production IdP introspection URL must use HTTPS.")
         else:
             # Safe fallbacks strictly for local development and unit tests
             if not self.auth_secret_key:

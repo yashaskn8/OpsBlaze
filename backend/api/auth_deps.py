@@ -6,6 +6,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.config import get_settings
@@ -14,7 +15,7 @@ from backend.domain.auth import (
     Principal,
     verify_principal_token,
 )
-from backend.persistence.models import Tenant
+from backend.persistence.models import IdentityMembership, Tenant
 
 
 def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -62,13 +63,23 @@ async def get_authenticated_principal(
             detail=f"Authentication failed: {e}",
         ) from e
 
-    # Verify tenant exists in database
+    # Verify tenant exists in database and membership is active (0-second revocation guarantee)
     async with session_factory() as session:
         tenant = await session.get(Tenant, principal.tenant_id)
         if not tenant:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Authenticated tenant {principal.tenant_id} does not exist in authoritative store",
+            )
+        mem_stmt = select(IdentityMembership.is_active).where(
+            IdentityMembership.tenant_id == principal.tenant_id,
+            IdentityMembership.actor_id == principal.actor_id,
+        ).limit(1)
+        is_active = (await session.execute(mem_stmt)).scalar_one_or_none()
+        if is_active is False:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Actor {principal.actor_id} membership is deactivated or revoked for tenant {principal.tenant_id}",
             )
 
     # If X-Tenant-ID header is also provided, ensure strict match (prevent cross-tenant operations)

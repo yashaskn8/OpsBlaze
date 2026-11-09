@@ -51,6 +51,9 @@ jobs:
       - name: Typecheck with Mypy
         run: uv run mypy backend
 
+      - name: Apply Database Migrations (Alembic)
+        run: uv run alembic upgrade head
+
       - name: Run Schema, Release & Security Test Suite
         run: >
           uv run pytest
@@ -60,8 +63,11 @@ jobs:
           tests/unit/test_e6_guardrails.py
           tests/unit/test_e6_kill_switch_and_fencing.py
           tests/unit/test_e6_release_lifecycle.py
+          tests/unit/test_stage11_2_guardrail_dispatcher.py
+          tests/unit/test_stage11_2_shadow_execution.py
           tests/security/test_stage11_1_auth_hardening.py
           tests/security/test_stage11_1_release_assurance_adversarial.py
+          tests/security/test_stage11_2_identity_exchange.py
           tests/integration/test_stage11_e6_lifecycle.py
           -v
 

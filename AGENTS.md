@@ -269,7 +269,7 @@ Treat these as release-blocking correctness properties, not optional quality imp
 - **E3:** Typed failure taxonomy and bounded proposal queue; model output is a draft; source attribution and human review required; no autonomous code/config mutation.
 - **E4:** Validated, scoped, version-current lessons; recheck source state on every retrieval; bounded top-k/context/token budget; PostgreSQL FTS baseline; safe no-memory fallback.
 - **E5:** Freeze manifest, model/prompt/tool/lesson versions, fixture hashes, sample/stopping rules, and holdout; preserve raw trials; invalid oracle/negative control invalidates the report; no auto-promotion.
-- **E6:** Immutable signed policy bundle, explicit shadow/canary assignment, active-run pinning, deterministic assignment, guardrails, kill switch, rollback; humans authorize consequential exposure.
+- **E6:** Immutable signed policy bundle, explicit shadow/canary assignment, active-run pinning, deterministic assignment, guardrails, kill switch, rollback; humans authorize consequential exposure. Stage 11.2 hardens this with RFC 7662 IdP identity exchange (SSRF protection, server-derived roles, 0-second revocation via `identity_memberships`, deprecated password login), outbox-partitioned durable guardrail dispatchers (`FOR UPDATE SKIP LOCKED`), and cryptographically verified isolated shadow evaluation (RFC 8785 + HMAC-SHA256 dual verification, 0 consequential authority, mid-flight CAS kill-switch aborts).
 - **E7:** Deterministic, budgeted routing over pre-approved options; record route/propensity/cost; may reduce but never expand A2 permissions; safe incumbent or handoff fallback.
 - **E8:** Isolated conformance/chaos harness tied to exact adapter digest; test lost reply after commit, duplicate request, stale worker, competing fences, external version change, partial apply, status outage, and retention expiry; new or changed adapters remain disabled until approved.
 
@@ -286,7 +286,7 @@ Use the blueprint's dependency gates rather than promising a calendar deadline. 
 8. Capture/outcomes: E1 consent capsule and E2 adjudication; test revocation and false-success.
 9. Diagnosis/memory: E3 taxonomy/proposals and E4 validated lessons; test source outcome reversal invalidates retrieval.
 10. Candidate evaluation: E5 frozen manifest, paired trials, protected holdout, safety gates.
-11. Release control: E6 signed immutable bundle, assignment, shadow/canary, concurrent admission/rollback and kill-switch tests.
+11. Release control: E6 signed immutable bundle, assignment, shadow/canary, concurrent admission/rollback and kill-switch tests (Stage 11, 11.1, and 11.2 complete: production RFC 7662 identity exchange, durable outbox guardrails, isolated dual-bundle shadow evaluation; ADR-0013, Alembic migration 0009).
 12. Adaptive routing: E7 pre-approved strategy policy and cost ledger; compare no-memory/fixed-runbook baselines.
 13. Security hardening: tenant fuzzing, injection, secret handling, role/revocation races, SSRF/output bounds.
 14. Reliability and scale: Locust profiles, fault proxy, PostgreSQL/Temporal outage tests, queue and UNKNOWN alerts.
@@ -494,6 +494,12 @@ When a task uses the blueprint, locate the uploaded/canonical copy through the r
 - Volume VI: execute–observe–evaluate–learn–verify–improve loop, ten candidate gates, A/B/C evaluation, and thirty targeted attacks.
 
 If the original blueprint is not present in the repository, do not invent a path or claim to have re-opened it. Use this file's extracted project contracts and ask for the source again only when an implementation detail genuinely requires information not captured here.
+
+Key milestone evidence and architectural records:
+- Stage 11.2 ADR: `docs/adr/0013-stage11.2-production-identity-durable-guardrails-shadow-execution.md`
+- Stage 11.2 Acceptance Report: `docs/evidence/2026-11-09_STAGE11_2_ACCEPTANCE_REPORT.md`
+- Stage 11.2 Spec Drift Report: `docs/evidence/2026-11-09_STAGE11_2_DRIFT_REPORT.md`
+- Stage 11.2 Runbooks: `docs/runbooks/identity-membership-provisioning.md`, `docs/runbooks/durable-guardrail-operations.md`, `docs/runbooks/shadow-evaluation-operations.md`
 
 The installed skill packs are independently maintained. Read the actual installed versions rather than copying remembered command syntax:
 - Ponytail: https://github.com/DietrichGebert/ponytail

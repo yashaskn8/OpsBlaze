@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.config import get_settings
 from backend.domain.auth import (
+    ActorKind,
     mint_principal_token,
 )
 from backend.domain.evaluation import (
@@ -58,6 +59,20 @@ async def _create_test_tenant(session_factory: async_sessionmaker[AsyncSession])
         session.add(epoch)
         await session.commit()
     return t_id
+
+
+def _auth_headers(tenant_id: uuid.UUID, role: str = "evaluation_owner", actor_id: str = "eval-owner") -> dict[str, str]:
+    token = mint_principal_token(
+        actor_id=actor_id,
+        actor_kind=ActorKind.HUMAN,
+        tenant_id=tenant_id,
+        roles=frozenset({role}),
+        secret_key=get_settings().auth_secret_key or "opsblaze-dev-auth-secret-key-32bytes-hex-safe",
+    )
+    return {
+        "X-Tenant-ID": str(tenant_id),
+        "Authorization": f"Bearer {token}",
+    }
 
 
 async def _setup_e5_test_manifest(
@@ -148,7 +163,7 @@ async def _setup_e5_test_manifest(
         expected_version=2,
     )
 
-    headers = {"X-Tenant-ID": str(tenant_id)}
+    headers = _auth_headers(tenant_id)
     payload = {
         "title": "Gate 0 Validation Manifest",
         "incumbent_bundle": {
@@ -186,7 +201,7 @@ async def test_gate0_bodyless_or_malformed_requests(
     """1. Bodyless or malformed requests are rejected with typed validation errors."""
     tenant_id = await _create_test_tenant(session_factory)
     manifest_id, _ = await _setup_e5_test_manifest(session_factory, tenant_id, api_client)
-    headers = {"X-Tenant-ID": str(tenant_id)}
+    headers = _auth_headers(tenant_id)
 
     # A: Freeze without body or malformed body
     res_freeze_empty = await api_client.post(
@@ -225,7 +240,7 @@ async def test_gate0_version_conflicts_rejected(
     """2. Manifest and report version conflicts are rejected with HTTP 409 Conflict."""
     tenant_id = await _create_test_tenant(session_factory)
     manifest_id, _ = await _setup_e5_test_manifest(session_factory, tenant_id, api_client)
-    headers = {"X-Tenant-ID": str(tenant_id)}
+    headers = _auth_headers(tenant_id)
 
     # Initial freeze passes (version 1 -> 2)
     res_freeze = await api_client.post(
@@ -253,7 +268,7 @@ async def test_gate0_run_requests_enforce_contract(
     """3. Run requests strictly enforce required typed worker contract."""
     tenant_id = await _create_test_tenant(session_factory)
     manifest_id, _ = await _setup_e5_test_manifest(session_factory, tenant_id, api_client, auto_freeze=True)
-    headers = {"X-Tenant-ID": str(tenant_id)}
+    headers = _auth_headers(tenant_id)
 
     # Valid run request
     res_run = await api_client.post(
@@ -275,7 +290,7 @@ async def test_gate0_client_supplied_reviewer_role_cannot_grant_authority(
     """4. Client-supplied reviewer roles cannot grant authority (server-side claims govern)."""
     tenant_id = await _create_test_tenant(session_factory)
     manifest_id, _ = await _setup_e5_test_manifest(session_factory, tenant_id, api_client, auto_freeze=True)
-    headers = {"X-Tenant-ID": str(tenant_id)}
+    headers = _auth_headers(tenant_id)
 
     # Run evaluation to produce report
     await api_client.post(
@@ -335,7 +350,7 @@ async def test_gate0_unauthenticated_users_cannot_approve(
     """5. Unauthenticated users cannot review or approve (HTTP 401 Unauthorized)."""
     tenant_id = await _create_test_tenant(session_factory)
     manifest_id, _ = await _setup_e5_test_manifest(session_factory, tenant_id, api_client, auto_freeze=True)
-    headers = {"X-Tenant-ID": str(tenant_id)}
+    headers = _auth_headers(tenant_id)
 
     await api_client.post(
         f"/v1/evaluations/{manifest_id}/run",
@@ -350,7 +365,7 @@ async def test_gate0_unauthenticated_users_cannot_approve(
             "decision": ReviewDecision.ACCEPTED.value,
             "expected_version": 1,
         },
-        headers=headers,
+        headers={"X-Tenant-ID": str(tenant_id)},
     )
     assert res_no_auth.status_code == 401
 
@@ -420,7 +435,7 @@ async def test_gate0_source_invalidation_blocks_review(
     """7. Source outcome or consent invalidation blocks review (HTTP 409 Conflict)."""
     tenant_id = await _create_test_tenant(session_factory)
     manifest_id, outcome_id = await _setup_e5_test_manifest(session_factory, tenant_id, api_client, auto_freeze=True)
-    headers = {"X-Tenant-ID": str(tenant_id)}
+    headers = _auth_headers(tenant_id)
 
     await api_client.post(
         f"/v1/evaluations/{manifest_id}/run",
@@ -471,7 +486,7 @@ async def test_gate0_successful_evaluation_and_review_workflow(
     """8. Successful evaluation and review workflows remain functional under verified principal."""
     tenant_id = await _create_test_tenant(session_factory)
     manifest_id, _ = await _setup_e5_test_manifest(session_factory, tenant_id, api_client, auto_freeze=False)
-    headers = {"X-Tenant-ID": str(tenant_id)}
+    headers = _auth_headers(tenant_id)
 
     # Freeze with expected_version
     freeze_resp = await api_client.post(

@@ -89,20 +89,40 @@ class Outbox(Base):
             "id",
             postgresql_where=text("delivered_at IS NULL"),
         ),
+        Index(
+            "ix_outbox_kind_pending",
+            "kind",
+            "available_at",
+            "id",
+            postgresql_where=text("delivered_at IS NULL"),
+        ),
+        Index(
+            "uq_outbox_dedupe_in_flight",
+            "kind",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text("delivered_at IS NULL AND dedupe_key IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(
         BigInteger, outbox_id_seq, primary_key=True, server_default=outbox_id_seq.next_value()
     )
-    incident_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("incident.id", ondelete="CASCADE"), nullable=False
+    incident_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id", ondelete="CASCADE"), nullable=True
     )
-    kind: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    dedupe_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, server_default=text("'{}'::json"), nullable=False
+    )
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class ResourceEpoch(Base):
@@ -1523,4 +1543,45 @@ class ReleaseEventAudit(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class IdentityMembership(Base):
+    """Authoritative server-managed tenant identity and role registry for Stage 11.2 (Gate A)."""
+
+    __tablename__ = "identity_membership"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "idp_issuer", "idp_subject", name="uq_identity_membership_tenant_idp"
+        ),
+        UniqueConstraint("tenant_id", "actor_id", name="uq_identity_membership_tenant_actor"),
+        CheckConstraint("actor_kind IN ('HUMAN', 'SYSTEM', 'BOT')", name="chk_membership_actor_kind"),
+        Index("idx_identity_membership_lookup", "tenant_id", "idp_issuer", "idp_subject", "is_active"),
+        Index("idx_identity_membership_tenant_actor", "tenant_id", "actor_id", "is_active"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenant.id", ondelete="RESTRICT"), nullable=False
+    )
+    idp_issuer: Mapped[str] = mapped_column(String(256), nullable=False)
+    idp_subject: Mapped[str] = mapped_column(String(256), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'HUMAN'")
+    )
+    roles: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, server_default=text("'[]'::json")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deactivated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    deactivation_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
 

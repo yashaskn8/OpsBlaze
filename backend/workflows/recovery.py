@@ -202,6 +202,7 @@ class CrossStoreRecoveryCoordinator:
                     update(Outbox)
                     .where(
                         Outbox.incident_id.in_(term_subq),
+                        Outbox.kind.in_(("INCIDENT_START", "incident_start")),
                         Outbox.delivered_at.is_(None),
                     )
                     .values(delivered_at=started_at)
