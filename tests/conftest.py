@@ -99,30 +99,74 @@ async def isolated_tenant(
                 PolicyBundle,
                 PolicyRelease,
                 ReleaseEventAudit,
+                StrategyDecision,
+                StrategyRoute,
                 ToolCall,
             )
 
-            await session.execute(delete(IdentityMembership).where(IdentityMembership.tenant_id == tenant_id))
-            await session.execute(delete(ReleaseEventAudit).where(ReleaseEventAudit.tenant_id == tenant_id))
-            await session.execute(delete(CandidateEvaluationReport).where(CandidateEvaluationReport.tenant_id == tenant_id))
-            await session.execute(delete(CandidateEvaluationTrial).where(CandidateEvaluationTrial.tenant_id == tenant_id))
-            await session.execute(delete(CandidateEvaluationManifest).where(CandidateEvaluationManifest.tenant_id == tenant_id))
+            await session.execute(
+                delete(StrategyDecision).where(StrategyDecision.tenant_id == tenant_id)
+            )
+            await session.execute(delete(StrategyRoute).where(StrategyRoute.tenant_id == tenant_id))
+            await session.execute(
+                delete(IdentityMembership).where(IdentityMembership.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(ReleaseEventAudit).where(ReleaseEventAudit.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(CandidateEvaluationReport).where(
+                    CandidateEvaluationReport.tenant_id == tenant_id
+                )
+            )
+            await session.execute(
+                delete(CandidateEvaluationTrial).where(
+                    CandidateEvaluationTrial.tenant_id == tenant_id
+                )
+            )
+            await session.execute(
+                delete(CandidateEvaluationManifest).where(
+                    CandidateEvaluationManifest.tenant_id == tenant_id
+                )
+            )
             await session.execute(delete(LessonUsage).where(LessonUsage.tenant_id == tenant_id))
-            await session.execute(delete(OperationalLesson).where(OperationalLesson.tenant_id == tenant_id))
-            await session.execute(delete(ImprovementProposal).where(ImprovementProposal.tenant_id == tenant_id))
+            await session.execute(
+                delete(OperationalLesson).where(OperationalLesson.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(ImprovementProposal).where(ImprovementProposal.tenant_id == tenant_id)
+            )
             await session.execute(delete(FailureCase).where(FailureCase.tenant_id == tenant_id))
-            await session.execute(delete(FailureCluster).where(FailureCluster.tenant_id == tenant_id))
-            await session.execute(delete(ExperienceAudit).where(ExperienceAudit.tenant_id == tenant_id))
-            await session.execute(delete(ExperienceCapsule).where(ExperienceCapsule.tenant_id == tenant_id))
+            await session.execute(
+                delete(FailureCluster).where(FailureCluster.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(ExperienceAudit).where(ExperienceAudit.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(ExperienceCapsule).where(ExperienceCapsule.tenant_id == tenant_id)
+            )
             await session.execute(delete(ConsentEpoch).where(ConsentEpoch.tenant_id == tenant_id))
-            await session.execute(delete(OutcomeRevision).where(OutcomeRevision.tenant_id == tenant_id))
-            await session.execute(delete(OutcomeObservation).where(OutcomeObservation.tenant_id == tenant_id))
+            await session.execute(
+                delete(OutcomeRevision).where(OutcomeRevision.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(OutcomeObservation).where(OutcomeObservation.tenant_id == tenant_id)
+            )
             await session.execute(delete(ApprovalAudit).where(ApprovalAudit.tenant_id == tenant_id))
-            await session.execute(delete(ApprovalRequest).where(ApprovalRequest.tenant_id == tenant_id))
+            await session.execute(
+                delete(ApprovalRequest).where(ApprovalRequest.tenant_id == tenant_id)
+            )
             await session.execute(delete(ToolCall).where(ToolCall.tenant_id == tenant_id))
-            await session.execute(delete(CapabilityGrant).where(CapabilityGrant.tenant_id == tenant_id))
-            await session.execute(delete(EvidenceLedger).where(EvidenceLedger.tenant_id == tenant_id))
-            await session.execute(delete(InvestigationStep).where(InvestigationStep.tenant_id == tenant_id))
+            await session.execute(
+                delete(CapabilityGrant).where(CapabilityGrant.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(EvidenceLedger).where(EvidenceLedger.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(InvestigationStep).where(InvestigationStep.tenant_id == tenant_id)
+            )
             await session.execute(delete(BudgetLedger).where(BudgetLedger.tenant_id == tenant_id))
             await session.execute(delete(EffectReceipt).where(EffectReceipt.tenant_id == tenant_id))
             await session.execute(
@@ -178,21 +222,49 @@ async def second_isolated_tenant(
                 OutcomeRevision,
             )
 
-            await session.execute(delete(CandidateEvaluationReport).where(CandidateEvaluationReport.tenant_id == tenant_id))
-            await session.execute(delete(CandidateEvaluationTrial).where(CandidateEvaluationTrial.tenant_id == tenant_id))
-            await session.execute(delete(CandidateEvaluationManifest).where(CandidateEvaluationManifest.tenant_id == tenant_id))
+            await session.execute(
+                delete(CandidateEvaluationReport).where(
+                    CandidateEvaluationReport.tenant_id == tenant_id
+                )
+            )
+            await session.execute(
+                delete(CandidateEvaluationTrial).where(
+                    CandidateEvaluationTrial.tenant_id == tenant_id
+                )
+            )
+            await session.execute(
+                delete(CandidateEvaluationManifest).where(
+                    CandidateEvaluationManifest.tenant_id == tenant_id
+                )
+            )
             await session.execute(delete(LessonUsage).where(LessonUsage.tenant_id == tenant_id))
-            await session.execute(delete(OperationalLesson).where(OperationalLesson.tenant_id == tenant_id))
-            await session.execute(delete(ImprovementProposal).where(ImprovementProposal.tenant_id == tenant_id))
+            await session.execute(
+                delete(OperationalLesson).where(OperationalLesson.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(ImprovementProposal).where(ImprovementProposal.tenant_id == tenant_id)
+            )
             await session.execute(delete(FailureCase).where(FailureCase.tenant_id == tenant_id))
-            await session.execute(delete(FailureCluster).where(FailureCluster.tenant_id == tenant_id))
-            await session.execute(delete(ExperienceAudit).where(ExperienceAudit.tenant_id == tenant_id))
-            await session.execute(delete(ExperienceCapsule).where(ExperienceCapsule.tenant_id == tenant_id))
+            await session.execute(
+                delete(FailureCluster).where(FailureCluster.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(ExperienceAudit).where(ExperienceAudit.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(ExperienceCapsule).where(ExperienceCapsule.tenant_id == tenant_id)
+            )
             await session.execute(delete(ConsentEpoch).where(ConsentEpoch.tenant_id == tenant_id))
-            await session.execute(delete(OutcomeRevision).where(OutcomeRevision.tenant_id == tenant_id))
-            await session.execute(delete(OutcomeObservation).where(OutcomeObservation.tenant_id == tenant_id))
+            await session.execute(
+                delete(OutcomeRevision).where(OutcomeRevision.tenant_id == tenant_id)
+            )
+            await session.execute(
+                delete(OutcomeObservation).where(OutcomeObservation.tenant_id == tenant_id)
+            )
             await session.execute(delete(ApprovalAudit).where(ApprovalAudit.tenant_id == tenant_id))
-            await session.execute(delete(ApprovalRequest).where(ApprovalRequest.tenant_id == tenant_id))
+            await session.execute(
+                delete(ApprovalRequest).where(ApprovalRequest.tenant_id == tenant_id)
+            )
             await session.execute(delete(EffectReceipt).where(EffectReceipt.tenant_id == tenant_id))
             await session.execute(
                 delete(ResourceReservation).where(ResourceReservation.tenant_id == tenant_id)

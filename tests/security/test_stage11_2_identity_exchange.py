@@ -56,7 +56,9 @@ async def test_ssrf_validation_blocks_malicious_urls() -> None:
 
     # Cloud metadata host
     with pytest.raises(SSRFBlockedError):
-        validate_introspection_url("http://metadata.google.internal/computeMetadata/v1/", is_production=False)
+        validate_introspection_url(
+            "http://metadata.google.internal/computeMetadata/v1/", is_production=False
+        )
 
     # Loopback in production
     with pytest.raises(SSRFBlockedError):
@@ -270,7 +272,10 @@ async def test_token_exchange_missing_membership_rejected(
                 },
             )
             assert resp.status_code == 403
-            assert "no active" in resp.json()["detail"].lower() or "membership" in resp.json()["detail"].lower()
+            assert (
+                "no active" in resp.json()["detail"].lower()
+                or "membership" in resp.json()["detail"].lower()
+            )
 
 
 @pytest.mark.asyncio
@@ -367,16 +372,19 @@ async def test_cross_tenant_membership_isolation(
                 },
             )
             assert resp.status_code == 403
-            assert "no active" in resp.json()["detail"].lower() or "membership" in resp.json()["detail"].lower()
+            assert (
+                "no active" in resp.json()["detail"].lower()
+                or "membership" in resp.json()["detail"].lower()
+            )
 
     # Clean up secondary tenant
     async with session_factory() as session:
         await session.execute(
-            IdentityMembership.__table__.delete().where(IdentityMembership.tenant_id == other_tenant_id)
+            IdentityMembership.__table__.delete().where(
+                IdentityMembership.tenant_id == other_tenant_id
+            )
         )
-        await session.execute(
-            Tenant.__table__.delete().where(Tenant.id == other_tenant_id)
-        )
+        await session.execute(Tenant.__table__.delete().where(Tenant.id == other_tenant_id))
         await session.commit()
 
 
@@ -612,3 +620,59 @@ async def test_identity_exchange_fails_closed_when_provider_is_not_configured(
         },
     )
     assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_identity_exchange_hard_deleted_membership_fails_closed(
+    idp_settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    isolated_tenant: uuid.UUID,
+) -> None:
+    """Verifies that if an enterprise IdP user membership is deleted (not just deactivated),
+
+    subsequent requests with an oauth2_token_introspection token fail closed with HTTP 401.
+    """
+    app = create_app(idp_settings)
+
+    membership_id = uuid.uuid4()
+    async with session_factory() as session:
+        membership = IdentityMembership(
+            id=membership_id,
+            tenant_id=isolated_tenant,
+            idp_issuer="https://idp.opsblaze.corp",
+            idp_subject="sub:charlie_deleted",
+            actor_id="user-charlie",
+            actor_kind="HUMAN",
+            roles=[PrincipalRole.OPERATOR.value],
+            is_active=True,
+        )
+        session.add(membership)
+        await session.commit()
+
+    token = mint_principal_token(
+        actor_id="user-charlie",
+        actor_kind=ActorKind.HUMAN,
+        tenant_id=isolated_tenant,
+        roles=frozenset({PrincipalRole.OPERATOR.value}),
+        secret_key=idp_settings.auth_secret_key or "",
+        ttl_seconds=3600,
+        auth_mechanism="oauth2_token_introspection",
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Request 1: Valid while membership exists
+        resp = await client.get("/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["actor_id"] == "user-charlie"
+
+        # Hard delete Charlie's membership row
+        async with session_factory() as session:
+            m = await session.get(IdentityMembership, membership_id)
+            assert m is not None
+            await session.delete(m)
+            await session.commit()
+
+        # Request 2: Must fail closed with 401 Unauthorized immediately
+        resp2 = await client.get("/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert resp2.status_code == 401
+        assert "membership does not exist or is deactivated" in resp2.json()["detail"].lower()

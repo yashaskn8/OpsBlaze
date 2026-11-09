@@ -100,12 +100,22 @@ async def get_authenticated_principal(
                 )
 
             # Check server-managed membership state (0-second revocation guarantee)
-            mem_stmt = select(IdentityMembership.is_active).where(
-                IdentityMembership.tenant_id == principal.tenant_id,
-                IdentityMembership.actor_id == principal.actor_id,
-            ).limit(1)
+            mem_stmt = (
+                select(IdentityMembership.is_active)
+                .where(
+                    IdentityMembership.tenant_id == principal.tenant_id,
+                    IdentityMembership.actor_id == principal.actor_id,
+                )
+                .limit(1)
+            )
             is_active = (await session.execute(mem_stmt)).scalar_one_or_none()
-            if is_active is False:
+            if principal.auth_mechanism == "oauth2_token_introspection":
+                if is_active is not True:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail=f"Actor {principal.actor_id} membership does not exist or is deactivated for tenant {principal.tenant_id}.",
+                    )
+            elif is_active is False:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail=f"Actor {principal.actor_id} membership is deactivated or revoked for tenant {principal.tenant_id}.",

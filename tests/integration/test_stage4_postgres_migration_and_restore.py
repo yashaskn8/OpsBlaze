@@ -116,6 +116,7 @@ async def test_1_isolated_schema_alembic_full_upgrade_downgrade_reupgrade_cycle(
                 "s11_2_002_identity",
                 "stage11_2_001_outbox_identity",
                 "stage11_2_003_reconcile",
+                "stage12_001_e7_strategy_router",
             )
             assert t_base == {"alembic_version"}
             assert t_rehead == t_head

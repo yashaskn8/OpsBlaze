@@ -58,9 +58,17 @@ def _matches(actual: Any, exists: bool, operator: str, expected: Any) -> bool:
             return False
         return bool(expected in actual)
     if operator == "greater_than":
-        return isinstance(actual, (int, float)) and isinstance(expected, (int, float)) and actual > expected
+        return (
+            isinstance(actual, (int, float))
+            and isinstance(expected, (int, float))
+            and actual > expected
+        )
     if operator == "less_than":
-        return isinstance(actual, (int, float)) and isinstance(expected, (int, float)) and actual < expected
+        return (
+            isinstance(actual, (int, float))
+            and isinstance(expected, (int, float))
+            and actual < expected
+        )
     return False
 
 
@@ -112,7 +120,8 @@ def evaluate_bundle_shadow_policy(
             or len(path) > 256
             or operator not in {"exists", "equals", "contains", "greater_than", "less_than"}
             or decision not in {"HYPOTHESIS", "ABSTAIN"}
-            or not isinstance(hypothesis, str) and decision == "HYPOTHESIS"
+            or not isinstance(hypothesis, str)
+            and decision == "HYPOTHESIS"
             or not isinstance(rationale, str)
             or not isinstance(confidence, (int, float))
             or not 0.0 <= float(confidence) <= 1.0
@@ -192,11 +201,17 @@ class ShadowExecutor:
         async with self._session_factory() as session:
             release = await session.get(PolicyRelease, release_id)
             if release is None or release.tenant_id != tenant_id:
-                logger.warning("Shadow execution aborted: release %s not found in tenant %s.", release_id, tenant_id)
+                logger.warning(
+                    "Shadow execution aborted: release %s not found in tenant %s.",
+                    release_id,
+                    tenant_id,
+                )
                 return ShadowExecutionResult(status="ABORTED_RELEASE_NOT_FOUND")
 
             if release.kill_switch_active:
-                logger.info("Shadow execution aborted: kill switch active on release %s.", release_id)
+                logger.info(
+                    "Shadow execution aborted: kill switch active on release %s.", release_id
+                )
                 session.add(
                     ReleaseEventAudit(
                         id=uuid.uuid4(),
@@ -207,7 +222,10 @@ class ShadowExecutor:
                         to_state=release.state,
                         actor_id="shadow-executor",
                         actor_role="system",
-                        metadata_redacted={"incident_id": str(incident_id), "reason": "Kill switch active"},
+                        metadata_redacted={
+                            "incident_id": str(incident_id),
+                            "reason": "Kill switch active",
+                        },
                         created_at=now,
                     )
                 )
@@ -215,7 +233,11 @@ class ShadowExecutor:
                 return ShadowExecutionResult(status="ABORTED_KILL_SWITCH")
 
             if release.state != ReleaseState.SHADOW.value:
-                logger.info("Shadow execution aborted: release %s is in state '%s', not SHADOW.", release_id, release.state)
+                logger.info(
+                    "Shadow execution aborted: release %s is in state '%s', not SHADOW.",
+                    release_id,
+                    release.state,
+                )
                 session.add(
                     ReleaseEventAudit(
                         id=uuid.uuid4(),
@@ -237,8 +259,22 @@ class ShadowExecutor:
             inc_bundle = await session.get(PolicyBundle, release.incumbent_bundle_id)
             incident = await session.get(Incident, incident_id)
 
+            ev_stmt = (
+                select(EvidenceLedger)
+                .where(
+                    EvidenceLedger.incident_id == incident_id,
+                    EvidenceLedger.tenant_id == tenant_id,
+                )
+                .order_by(EvidenceLedger.observed_at.asc())
+            )
+            evidence_records = list((await session.execute(ev_stmt)).scalars().all())
+
         if incident is None or incident.tenant_id != tenant_id:
-            logger.warning("Shadow execution aborted: incident %s not found in tenant %s.", incident_id, tenant_id)
+            logger.warning(
+                "Shadow execution aborted: incident %s not found in tenant %s.",
+                incident_id,
+                tenant_id,
+            )
             return ShadowExecutionResult(status="ABORTED_INCIDENT_NOT_FOUND")
 
         if cand_bundle is None or inc_bundle is None:
@@ -247,9 +283,17 @@ class ShadowExecutor:
 
         # 2. Cryptographic bundle verification for both arms
         try:
-            await self._bundle_service.verify_bundle_integrity(tenant_id=tenant_id, bundle=cand_bundle)
-            await self._bundle_service.verify_bundle_integrity(tenant_id=tenant_id, bundle=inc_bundle)
-        except (BundleNotSealedError, BundleDigestMismatchError, BundleSignatureInvalidError) as integ_err:
+            await self._bundle_service.verify_bundle_integrity(
+                tenant_id=tenant_id, bundle=cand_bundle
+            )
+            await self._bundle_service.verify_bundle_integrity(
+                tenant_id=tenant_id, bundle=inc_bundle
+            )
+        except (
+            BundleNotSealedError,
+            BundleDigestMismatchError,
+            BundleSignatureInvalidError,
+        ) as integ_err:
             logger.critical(
                 "Class 1 Invariant: Shadow bundle integrity failure on release %s: %s",
                 release_id,
@@ -266,18 +310,29 @@ class ShadowExecutor:
             return ShadowExecutionResult(status="ABORTED_INTEGRITY_FAILURE", detail=str(integ_err))
 
         # 3. Snapshot evaluation (identical evidence for both arms)
+        cand_eval = evaluate_bundle_shadow_policy(cand_bundle, evidence_records)
+        inc_eval = evaluate_bundle_shadow_policy(inc_bundle, evidence_records)
+
         inc_action = "observe_and_mitigate"
         cand_action = "observe_and_mitigate"
 
-        if inc_bundle.prompt_templates and "default_action" in inc_bundle.prompt_templates:
+        if inc_eval.get("status") == "EVALUATED":
+            inc_action = (
+                inc_eval.get("hypothesis") or inc_eval.get("decision") or "observe_and_mitigate"
+            )
+        elif inc_bundle.prompt_templates and "default_action" in inc_bundle.prompt_templates:
             inc_action = str(inc_bundle.prompt_templates["default_action"])
 
-        if cand_bundle.proposal_diff and "proposed_action" in cand_bundle.proposal_diff:
+        if cand_eval.get("status") == "EVALUATED":
+            cand_action = (
+                cand_eval.get("hypothesis") or cand_eval.get("decision") or "observe_and_mitigate"
+            )
+        elif cand_bundle.proposal_diff and "proposed_action" in cand_bundle.proposal_diff:
             cand_action = str(cand_bundle.proposal_diff["proposed_action"])
         elif cand_bundle.prompt_templates and "default_action" in cand_bundle.prompt_templates:
             cand_action = str(cand_bundle.prompt_templates["default_action"])
 
-        divergence = (cand_action != inc_action)
+        divergence = cand_action != inc_action
 
         # 4. Mid-flight CAS Check: verify release kill switch was NOT activated while running
         async with self._session_factory() as session:
@@ -287,7 +342,8 @@ class ShadowExecutor:
             if (
                 locked_release is None
                 or locked_release.kill_switch_active
-                or locked_release.state in (ReleaseState.ROLLED_BACK.value, ReleaseState.REVOKED.value)
+                or locked_release.state
+                in (ReleaseState.ROLLED_BACK.value, ReleaseState.REVOKED.value)
             ):
                 logger.warning(
                     "Shadow candidate findings discarded mid-flight on release %s: kill switch or rollback active.",

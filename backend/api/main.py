@@ -24,6 +24,7 @@ from backend.api.incidents import router as incidents_router
 from backend.api.lessons import router as lessons_router
 from backend.api.outcomes import router as outcomes_router
 from backend.api.releases import router as releases_router
+from backend.api.strategies import router as strategies_router
 from backend.api.trace import router as trace_router
 from backend.api.workbench import router as workbench_router
 from backend.config import Settings, get_settings
@@ -61,6 +62,7 @@ def _ensure_app_engine(app_instance: FastAPI, settings: Settings | None = None) 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
     import asyncio
+
     engine = _ensure_app_engine(app_instance)
     cfg: Settings = getattr(app_instance.state, "settings", None) or get_settings()
     session_factory = app_instance.state.session_factory
@@ -241,6 +243,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app_instance.include_router(lessons_router, prefix="/v1")
     app_instance.include_router(evaluations_router, prefix="/v1")
     app_instance.include_router(releases_router)
+    app_instance.include_router(strategies_router)
     return app_instance
 
 

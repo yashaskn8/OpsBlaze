@@ -42,6 +42,8 @@ class Tenant(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
 class Incident(Base):
     __tablename__ = "incident"
     __table_args__ = (
@@ -89,7 +91,7 @@ class Outbox(Base):
             "id",
             postgresql_where=text("delivered_at IS NULL"),
         ),
-Index(
+        Index(
             "ix_outbox_kind_pending",
             "kind",
             "available_at",
@@ -195,6 +197,8 @@ class ResourceReservation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
 class EffectReceipt(Base):
     """Durable external effect receipt and reconciliation table for Feature B3."""
 
@@ -315,6 +319,8 @@ class ToolCatalog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
 class CapabilityGrant(Base):
     """A2 Tenant and Target-Scoped Tool Capability Grant."""
 
@@ -339,7 +345,9 @@ class CapabilityGrant(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     incident_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     tool_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    tool_version: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'v1'"))
+    tool_version: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'v1'")
+    )
     target_id: Mapped[str] = mapped_column(String(64), nullable=False)
     granted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -374,7 +382,9 @@ class ToolCall(Base):
     step_no: Mapped[int] = mapped_column(Integer, nullable=False)
     grant_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     tool_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    tool_version: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'v1'"))
+    tool_version: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'v1'")
+    )
     target_id: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     args_digest: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -386,6 +396,8 @@ class ToolCall(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
 class EvidenceLedger(Base):
     """A3 Versioned, Immutable, Attributable Evidence Record."""
 
@@ -464,6 +476,8 @@ class InvestigationStep(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
 class BudgetLedger(Base):
     """B4 Durable Budget & Capacity Reservation Ledger."""
 
@@ -503,9 +517,7 @@ class BudgetLedger(Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    status: Mapped[str] = mapped_column(
-        String(32), nullable=False, server_default=text("'ACTIVE'")
-    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'ACTIVE'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -566,9 +578,7 @@ class ApprovalRequest(Base):
     target_id: Mapped[str] = mapped_column(String(128), nullable=False)
     expected_resource_version: Mapped[str] = mapped_column(String(64), nullable=False)
     policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
-    state: Mapped[str] = mapped_column(
-        String(32), nullable=False, server_default=text("'PENDING'")
-    )
+    state: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'PENDING'"))
     reviewer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     reviewer_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -638,9 +648,7 @@ class EvaluationManifest(Base):
     budget_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     oracle_version: Mapped[str] = mapped_column(String(64), nullable=False)
     random_seed: Mapped[int] = mapped_column(Integer, nullable=False)
-    split: Mapped[str] = mapped_column(
-        String(32), nullable=False, server_default=text("'DEV'")
-    )
+    split: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'DEV'"))
     frozen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -691,7 +699,6 @@ class EvaluationTrial(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
 
 
 class ConsentEpoch(Base):
@@ -820,7 +827,9 @@ class OutcomeObservation(Base):
             name="fk_outcome_obs_incident",
             ondelete="CASCADE",
         ),
-        UniqueConstraint("tenant_id", "incident_id", "idempotency_key", name="uq_outcome_obs_idempotency"),
+        UniqueConstraint(
+            "tenant_id", "incident_id", "idempotency_key", name="uq_outcome_obs_idempotency"
+        ),
         Index("ix_outcome_obs_lookup", "tenant_id", "incident_id", "observed_at"),
         CheckConstraint(
             "source_kind IN ('INDEPENDENT_WORKLOAD_CHECK', 'TARGET_READBACK', 'DELAYED_MONITOR', 'OPERATOR_FEEDBACK', 'ADAPTER_ACK', 'MODEL_ANNOTATION')",
@@ -845,6 +854,8 @@ class OutcomeObservation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
 class OutcomeRevision(Base):
     """E2 Immutable Outcome Adjudication Revision."""
 
@@ -895,6 +906,8 @@ class OutcomeRevision(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
 class FailureCluster(Base):
     """E3 Grouping of recurring failure cases sharing a deterministic signature."""
 
@@ -1036,9 +1049,7 @@ class ImprovementProposal(Base):
     expected_benefit: Mapped[str] = mapped_column(Text, nullable=False)
     risk_assessment: Mapped[str] = mapped_column(Text, nullable=False)
     evaluation_plan: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(
-        String(32), nullable=False, server_default=text("'DRAFT'")
-    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'DRAFT'"))
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     drafter_kind: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default=text("'MODEL'")
@@ -1209,7 +1220,11 @@ class CandidateEvaluationManifest(Base):
             name="chk_candidate_eval_provenance",
         ),
         Index("ix_candidate_eval_manifest_tenant", "tenant_id", "lifecycle_state"),
-        Index("ix_candidate_eval_manifest_outcome_ids", "source_outcome_revision_ids", postgresql_using="gin"),
+        Index(
+            "ix_candidate_eval_manifest_outcome_ids",
+            "source_outcome_revision_ids",
+            postgresql_using="gin",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1322,7 +1337,9 @@ class CandidateEvaluationTrial(Base):
     )
     safety_violation_details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     raw_artifact_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -1368,7 +1385,9 @@ class CandidateEvaluationReport(Base):
     invalidation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     total_pairs_planned: Mapped[int] = mapped_column(Integer, nullable=False)
     total_pairs_completed: Mapped[int] = mapped_column(Integer, nullable=False)
-    invalid_pairs_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    invalid_pairs_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     metrics_summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     mcnemar_statistic: Mapped[float | None] = mapped_column(Float, nullable=True)
     mcnemar_p_value: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -1380,7 +1399,9 @@ class CandidateEvaluationReport(Base):
     cost_per_verified_incumbent: Mapped[float] = mapped_column(Float, nullable=False)
     cost_per_verified_candidate: Mapped[float | None] = mapped_column(Float, nullable=True)
     negative_control_pass_rate: Mapped[float] = mapped_column(Float, nullable=False)
-    unsafe_action_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    unsafe_action_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     gate_verdicts: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     reviewer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -1401,7 +1422,9 @@ class CandidateEvaluationReport(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     superseded_by_report_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("candidate_evaluation_report.id", ondelete="SET NULL"), nullable=True
+        Uuid(as_uuid=True),
+        ForeignKey("candidate_evaluation_report.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
 
@@ -1412,7 +1435,9 @@ class PolicyBundle(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "id", name="uq_policy_bundle_tenant"),
         UniqueConstraint("tenant_id", "bundle_sha256", name="uq_policy_bundle_digest"),
-        CheckConstraint("status IN ('DRAFT', 'SEALED', 'ARCHIVED')", name="chk_policy_bundle_status"),
+        CheckConstraint(
+            "status IN ('DRAFT', 'SEALED', 'ARCHIVED')", name="chk_policy_bundle_status"
+        ),
         Index("idx_policy_bundle_target", "tenant_id", "target_component", "status"),
     )
 
@@ -1435,10 +1460,14 @@ class PolicyBundle(Base):
     tool_catalog_version: Mapped[str] = mapped_column(String(64), nullable=False)
     a2_grant_version: Mapped[str] = mapped_column(String(64), nullable=False)
     source_manifest_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("candidate_evaluation_manifest.id", ondelete="RESTRICT"), nullable=True
+        Uuid(as_uuid=True),
+        ForeignKey("candidate_evaluation_manifest.id", ondelete="RESTRICT"),
+        nullable=True,
     )
     source_report_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("candidate_evaluation_report.id", ondelete="RESTRICT"), nullable=True
+        Uuid(as_uuid=True),
+        ForeignKey("candidate_evaluation_report.id", ondelete="RESTRICT"),
+        nullable=True,
     )
     source_provenance_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'DRAFT'"))
@@ -1497,15 +1526,21 @@ class PolicyRelease(Base):
     bundle_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     incumbent_bundle_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'DRAFT'"))
-    canary_percentage: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    canary_percentage: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     rollout_salt: Mapped[str] = mapped_column(String(64), nullable=False)
     drafter_id: Mapped[str] = mapped_column(String(128), nullable=False)
     reviewer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     reviewer_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
     decision_comments: Mapped[str | None] = mapped_column(String(2000), nullable=True)
-    kill_switch_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    kill_switch_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     kill_switch_triggered_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    kill_switch_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    kill_switch_triggered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     rollback_reason: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -1522,9 +1557,7 @@ class ReleaseEventAudit(Base):
     """E6 Append-only audit trail for policy releases."""
 
     __tablename__ = "release_event_audit"
-    __table_args__ = (
-        Index("idx_release_audit_release", "tenant_id", "release_id", "created_at"),
-    )
+    __table_args__ = (Index("idx_release_audit_release", "tenant_id", "release_id", "created_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -1572,8 +1605,12 @@ class IdentityMembership(Base):
             "tenant_id", "idp_issuer", "idp_subject", name="uq_identity_membership_tenant_idp"
         ),
         UniqueConstraint("tenant_id", "actor_id", name="uq_identity_membership_tenant_actor"),
-        CheckConstraint("actor_kind IN ('HUMAN', 'SYSTEM', 'BOT')", name="chk_membership_actor_kind"),
-        Index("idx_identity_membership_lookup", "tenant_id", "idp_issuer", "idp_subject", "is_active"),
+        CheckConstraint(
+            "actor_kind IN ('HUMAN', 'SYSTEM', 'BOT')", name="chk_membership_actor_kind"
+        ),
+        Index(
+            "idx_identity_membership_lookup", "tenant_id", "idp_issuer", "idp_subject", "is_active"
+        ),
         Index("idx_identity_membership_tenant_actor", "tenant_id", "actor_id", "is_active"),
     )
 
@@ -1590,9 +1627,7 @@ class IdentityMembership(Base):
     roles: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, server_default=text("'[]'::json")
     )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("true")
-    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -1618,3 +1653,64 @@ class IdentityMembership(Base):
     @subject.setter
     def subject(self, val: str) -> None:
         self.idp_subject = val
+
+
+class StrategyRoute(Base):
+    """Pre-approved investigative strategy route catalog for Capability E7."""
+
+    __tablename__ = "strategy_route"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "route_key", name="uq_strategy_route_tenant_key"),
+        Index("ix_strategy_route_tenant_active", "tenant_id", "is_active", "priority"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenant.id", ondelete="CASCADE"), nullable=True
+    )
+    route_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_tier: Mapped[str] = mapped_column(String(32), nullable=False)
+    allowed_tool_capabilities: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, server_default=text("'[]'::json")
+    )
+    max_cost_micros: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    risk_ceiling: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class StrategyDecision(Base):
+    """Append-only strategy decision and propensity ledger for Capability E7."""
+
+    __tablename__ = "strategy_decision"
+    __table_args__ = (
+        Index("ix_strategy_decision_incident", "tenant_id", "incident_id", "created_at"),
+        Index("ix_strategy_decision_route", "tenant_id", "route_key", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenant.id", ondelete="CASCADE"), nullable=False
+    )
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id", ondelete="CASCADE"), nullable=False
+    )
+    route_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_tier: Mapped[str] = mapped_column(String(32), nullable=False)
+    allowed_tool_capabilities: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, server_default=text("'[]'::json")
+    )
+    propensity: Mapped[float] = mapped_column(Float, nullable=False)
+    budget_snapshot_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, server_default=text("'{}'::json")
+    )
+    estimated_cost_micros: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    actual_cost_micros: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    fallback_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

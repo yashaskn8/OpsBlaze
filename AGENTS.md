@@ -287,7 +287,7 @@ Use the blueprint's dependency gates rather than promising a calendar deadline. 
 9. Diagnosis/memory: E3 taxonomy/proposals and E4 validated lessons; test source outcome reversal invalidates retrieval.
 10. Candidate evaluation: E5 frozen manifest, paired trials, protected holdout, safety gates.
 11. Release control: E6 signed immutable bundle, assignment, shadow/canary, concurrent admission/rollback and kill-switch tests (Stage 11, 11.1, and 11.2 complete: production RFC 7662 identity exchange, durable outbox guardrails, isolated dual-bundle shadow evaluation; ADR-0013, Alembic linear DAG migrations 0009–0013 at head `stage11_2_003_reconcile`).
-12. Adaptive routing: E7 pre-approved strategy policy and cost ledger; compare no-memory/fixed-runbook baselines.
+12. Adaptive routing: E7 pre-approved strategy policy and cost ledger; compare no-memory/fixed-runbook baselines (Stage 12 complete: pre-approved strategy routes, Class 1 tool capability subsetting invariant, two-phase budget reservation, propensity logging, and fail-closed fallback; ADR-0014, Alembic linear DAG migration 0014 at head `stage12_001_e7_strategy_router`).
 13. Security hardening: tenant fuzzing, injection, secret handling, role/revocation races, SSRF/output bounds.
 14. Reliability and scale: Locust profiles, fault proxy, PostgreSQL/Temporal outage tests, queue and UNKNOWN alerts.
 15. Operations: backups/PITR, restore and degraded-mode drills, runbooks, owners, release gates.
@@ -446,7 +446,7 @@ If the service name, version, port, or PATH differs, inspect and report the actu
 - Do not run destructive database commands, drop schemas, reset volumes, truncate user data, delete fixtures, or overwrite local configuration without explicit approval and a verified backup.
 - Do not edit .env, credentials, API keys, tokens, or machine-level environment settings unless explicitly asked. Never print secrets into logs, test output, commits, or final reports.
 - Do not commit, push, create releases, deploy, or modify remote infrastructure unless the user explicitly instructs you to do so in the current task.
-- Do not create branches, worktrees, backup copies, or repository-wide formatting churn unless required by the user's explicit request or existing project policy.
+- When instructed by the user to commit and push changes, commit directly to the local main branch and push normally to origin main. It is strictly forbidden to create new branches, worktrees, clones, or backup copies. Never force-push or execute git reset --hard or git clean -fd.
 - Never use `git reset --hard`, `git clean -fd`, force-push, or destructive checkout operations as a shortcut. Preserve uncommitted user work.
 - Before any command that modifies many files or persistent state, explain its scope and inspect the target paths.
 
@@ -496,11 +496,17 @@ When a task uses the blueprint, locate the uploaded/canonical copy through the r
 If the original blueprint is not present in the repository, do not invent a path or claim to have re-opened it. Use this file's extracted project contracts and ask for the source again only when an implementation detail genuinely requires information not captured here.
 
 Key milestone evidence and architectural records:
+- 20-Capability Architecture Matrix: `docs/evidence/2026-11-09_TITAN20_20_CAPABILITY_MATRIX.md` (20 of 20 capabilities complete)
+- Stage 12 ADR: `docs/adr/0014-stage12-e7-budgeted-strategy-router.md`
+- Stage 12 Acceptance Report: `docs/evidence/2026-11-09_STAGE12_E7_ACCEPTANCE_REPORT.md`
+- Stage 12 Spec Drift Report: `docs/evidence/2026-11-09_STAGE12_E7_DRIFT_REPORT.md`
+- Stage 12 Runbook: `docs/runbooks/strategy-routing-and-budget-control.md`
+- Stage 11.1 / 11.2 Residual Security Gate Report: `docs/evidence/2026-11-09_STAGE11_1_STAGE11_2_RESIDUAL_SECURITY_GATE_REPORT.md`
 - Stage 11.2 ADR: `docs/adr/0013-stage11.2-production-identity-durable-guardrails-shadow-execution.md`
 - Stage 11.2 Acceptance Report: `docs/evidence/2026-11-09_STAGE11_2_ACCEPTANCE_REPORT.md`
 - Stage 11.2 Spec Drift Report: `docs/evidence/2026-11-09_STAGE11_2_DRIFT_REPORT.md`
 - Stage 11.2 Runbooks: `docs/runbooks/identity-membership-provisioning.md`, `docs/runbooks/durable-guardrail-operations.md`, `docs/runbooks/shadow-evaluation-operations.md`
-- Reconciled Remote Baseline: `origin/main` merged cleanly into `main` via merge commit `0c6e8c0` with 304 passing automated tests and linear Alembic head `stage11_2_003_reconcile`.
+- Linear Alembic DAG Head: `stage12_001_e7_strategy_router` (332 passing automated tests with 0 failures).
 
 The installed skill packs are independently maintained. Read the actual installed versions rather than copying remembered command syntax:
 - Ponytail: https://github.com/DietrichGebert/ponytail

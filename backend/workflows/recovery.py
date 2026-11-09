@@ -81,7 +81,7 @@ class CrossStoreRecoveryCoordinator:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         *,
-        expected_alembic_head: str = "stage11_2_003_reconcile",
+        expected_alembic_head: str = "stage12_001_e7_strategy_router",
     ) -> None:
         self._session_factory = session_factory
         self._expected_alembic_head = expected_alembic_head
@@ -151,6 +151,7 @@ class CrossStoreRecoveryCoordinator:
                     "s11_2_002_identity",
                     "stage11_2_001_outbox_identity",
                     "stage11_2_003_reconcile",
+                    "stage12_001_e7_strategy_router",
                 }
                 if rev_row not in valid_heads:
                     raise RuntimeError(
