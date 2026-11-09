@@ -286,7 +286,7 @@ Use the blueprint's dependency gates rather than promising a calendar deadline. 
 8. Capture/outcomes: E1 consent capsule and E2 adjudication; test revocation and false-success.
 9. Diagnosis/memory: E3 taxonomy/proposals and E4 validated lessons; test source outcome reversal invalidates retrieval.
 10. Candidate evaluation: E5 frozen manifest, paired trials, protected holdout, safety gates.
-11. Release control: E6 signed immutable bundle, assignment, shadow/canary, concurrent admission/rollback and kill-switch tests (Stage 11, 11.1, and 11.2 complete: production RFC 7662 identity exchange, durable outbox guardrails, isolated dual-bundle shadow evaluation; ADR-0013, Alembic migration 0009).
+11. Release control: E6 signed immutable bundle, assignment, shadow/canary, concurrent admission/rollback and kill-switch tests (Stage 11, 11.1, and 11.2 complete: production RFC 7662 identity exchange, durable outbox guardrails, isolated dual-bundle shadow evaluation; ADR-0013, Alembic linear DAG migrations 0009–0013 at head `stage11_2_003_reconcile`).
 12. Adaptive routing: E7 pre-approved strategy policy and cost ledger; compare no-memory/fixed-runbook baselines.
 13. Security hardening: tenant fuzzing, injection, secret handling, role/revocation races, SSRF/output bounds.
 14. Reliability and scale: Locust profiles, fault proxy, PostgreSQL/Temporal outage tests, queue and UNKNOWN alerts.
@@ -500,6 +500,7 @@ Key milestone evidence and architectural records:
 - Stage 11.2 Acceptance Report: `docs/evidence/2026-11-09_STAGE11_2_ACCEPTANCE_REPORT.md`
 - Stage 11.2 Spec Drift Report: `docs/evidence/2026-11-09_STAGE11_2_DRIFT_REPORT.md`
 - Stage 11.2 Runbooks: `docs/runbooks/identity-membership-provisioning.md`, `docs/runbooks/durable-guardrail-operations.md`, `docs/runbooks/shadow-evaluation-operations.md`
+- Reconciled Remote Baseline: `origin/main` merged cleanly into `main` via merge commit `0c6e8c0` with 304 passing automated tests and linear Alembic head `stage11_2_003_reconcile`.
 
 The installed skill packs are independently maintained. Read the actual installed versions rather than copying remembered command syntax:
 - Ponytail: https://github.com/DietrichGebert/ponytail
