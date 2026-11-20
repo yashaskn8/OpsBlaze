@@ -32,6 +32,7 @@ class Principal:
     tenant_id: str
     subject: str  # Stable non-reversible audit pseudonym, never a raw email.
     roles: frozenset[str]
+    expires_at: int | None = None  # Signed access-token expiry, for live streams.
 
 
 @lru_cache(maxsize=8)
@@ -96,7 +97,7 @@ def verify_bearer(token: str, settings: Settings) -> Principal:
     pseudonym = hashlib.sha256(
         f"{settings.oidc_issuer}|{subject}".encode()
     ).hexdigest()[:32]
-    return Principal(tenant_id, f"oidc:{pseudonym}", frozenset(roles))
+    return Principal(tenant_id, f"oidc:{pseudonym}", frozenset(roles), expires)
 
 
 async def get_principal(
