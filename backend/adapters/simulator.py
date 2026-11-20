@@ -40,6 +40,21 @@ def utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
+def observed_healthy_at_version(
+    observation: object, expected_version: int | None,
+) -> bool:
+    """Never accept Boolean/float coercion as an independent version witness."""
+    return (
+        type(expected_version) is int
+        and isinstance(observation, tuple)
+        and len(observation) == 2
+        and type(observation[0]) is int
+        and type(observation[1]) is bool
+        and observation[0] == expected_version
+        and observation[1] is True
+    )
+
+
 def permit_digest(permit: Permit) -> str:
     """Bind a reused effect identity to its exact original permit."""
     data = {
