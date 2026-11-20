@@ -13,6 +13,7 @@ from backend.adapters.simulator import SimulatorAdapter
 from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
 from backend.models import EffectReceipt, Incident, IncidentPlan, OutboxEntry, SimulatorTarget
+from backend.outcomes import adjudicate_simulator
 
 
 class PlanConflict(Exception):
@@ -139,7 +140,8 @@ async def execute_approved_simulator_plan(
         )
     adapter = SimulatorAdapter(sessions)
     if existing is not None:
-        return await reconcile_effect(sessions, adapter, existing.id)
+        state = await reconcile_effect(sessions, adapter, existing.id)
+        return (await adjudicate_simulator(sessions, adapter, tenant_id, incident_id, existing.id)) if state == "VERIFIED" else state
     try:
         permit = await reserve_simulator_target(
             sessions, tenant_id, target_id, incident_id, digest
@@ -148,4 +150,18 @@ async def execute_approved_simulator_plan(
         return "NEEDS_REVIEW"
     if permit.expected_version != target_version:
         return "NEEDS_REVIEW"
-    return await execute_simulator_effect(sessions, adapter, permit)
+
+    state = await execute_simulator_effect(sessions, adapter, permit)
+    if state != "VERIFIED":
+        return state
+    async with sessions() as session:
+        receipt = await session.scalar(
+            select(EffectReceipt).where(
+                EffectReceipt.tenant_id == tenant_id,
+                EffectReceipt.incident_id == incident_id,
+                EffectReceipt.plan_digest == digest,
+            )
+        )
+    return await adjudicate_simulator(
+        sessions, adapter, tenant_id, incident_id, receipt.id
+    )

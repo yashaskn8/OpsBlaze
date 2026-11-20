@@ -152,3 +152,15 @@ target version and final workflow projection, then downgrades migrations.
 This proves the **isolated lab path**, not multi-host resilience or
 production-target safety. Integration tests are separated from fast unit
 tests by pytest markers.
+
+## E2 observed outcome ledger
+
+Simulator effects now require a separate postcondition witness before the
+workflow can return VERIFIED. The witness is persisted as an append-only outcome
+revision. A development operator can append a DISPUTED correction via
+POST /v1/outcomes/{id}/feedback with a version-bound If-Match; automatic
+reconciliation never silently overwrites that human dispute. GET
+/v1/incidents/{id}/outcomes exposes the revision chain.
+
+This witness is independent of the investigator's decision but still relies on
+the local simulator, not an external production-grade oracle.

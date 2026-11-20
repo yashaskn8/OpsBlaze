@@ -294,3 +294,64 @@ async def simulator_target_view(
         raise HTTPException(404, "simulator target not found")
     return {"target_id": target.target_id, "version": target.version,
             "healthy": target.healthy, "adapter": "simulator"}
+
+
+from pydantic import Field
+
+
+class OutcomeFeedback(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=8, max_length=256)
+
+
+@app.get("/v1/incidents/{incident_id}/outcomes")
+async def incident_outcomes(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    from sqlalchemy import select
+    from backend.models import OutcomeRevision
+
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    rows = (await session.scalars(
+        select(OutcomeRevision)
+        .where(
+            OutcomeRevision.tenant_id == tenant_id,
+            OutcomeRevision.incident_id == incident_id,
+        )
+        .order_by(OutcomeRevision.revision)
+        .limit(50)
+    )).all()
+    return [
+        {"id": str(row.id), "revision": row.revision,
+         "label": row.label, "witness_source": row.witness_source,
+         "observed_version": row.observed_version, "reason": row.reason,
+         "created_at": row.created_at.isoformat()}
+        for row in rows
+    ]
+
+
+@app.post("/v1/outcomes/{outcome_id}/feedback", status_code=202)
+async def report_outcome_dispute(
+    outcome_id: UUID,
+    payload: OutcomeFeedback,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.outcomes import OutcomeConflict, dispute_outcome
+
+    revision = if_match.strip('"')
+    if not revision.isdecimal():
+        raise HTTPException(400, "If-Match must be the outcome revision")
+    try:
+        row = await dispute_outcome(
+            session, tenant_id, outcome_id, int(revision), payload.reason
+        )
+    except OutcomeConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if row is None:
+        raise HTTPException(404, "outcome not found")
+    return {"id": str(row.id), "revision": row.revision, "label": row.label}
