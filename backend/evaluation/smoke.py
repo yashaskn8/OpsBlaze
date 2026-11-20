@@ -13,6 +13,7 @@ from backend.evaluation.fixtures import (
     evaluate_strategy, fixture_digest, oracle_expected,
 )
 from backend.learning.failures import validate_change
+from backend.evaluation.stats import paired_smoke_statistics
 from backend.models import (
     EvaluationGate, EvaluationManifest, EvaluationTrial,
     ImprovementCandidate,
@@ -155,8 +156,13 @@ async def report(session: AsyncSession, tenant_id: str, manifest_id: UUID):
         select(EvaluationTrial).where(EvaluationTrial.manifest_id == manifest_id)
         .order_by(EvaluationTrial.pair_id, EvaluationTrial.arm)
     )).all()
+    statistics = paired_smoke_statistics(
+        trials, [fixture.id for fixture in FIXTURES]
+    )
     return {
         "id": str(manifest.id),
+        "integrity": statistics["integrity"],
+        "statistics": statistics,
         "candidate_id": str(manifest.candidate_id),
         "candidate_version": manifest.candidate_version,
         "state": manifest.state,

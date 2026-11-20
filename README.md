@@ -126,3 +126,11 @@ backup/restore purge verification remain separate operational gates.
 The CI backend job also runs a narrow Ruff undefined-name check
 (`F821,F822,F823`) before tests. This intentionally avoids an
 unrelated repository-wide style rewrite.
+
+E5 reports now expose paired correctness wins/losses/ties, candidate
+and incumbent probe-cost units, and a deliberately conservative
+Hoeffding interval for paired binary correctness differences. If a
+frozen trial pair is missing, report integrity becomes `INCOMPLETE`
+without granting promotion. These are six public deterministic smoke
+fixtures, **not** held-out production results: verified recovery per
+cost remains explicitly `null` and promotion stays disabled.
