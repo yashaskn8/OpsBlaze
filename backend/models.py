@@ -463,3 +463,45 @@ class AdapterConformanceRun(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class PolicyBundle(Base):
+    __tablename__ = "policy_bundle"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "content_digest", name="uq_policy_content"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    candidate_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("improvement_candidate.id"), nullable=False
+    )
+    evaluation_manifest_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("evaluation_manifest.id"), nullable=False
+    )
+    content_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[dict] = mapped_column(JSON, nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PolicyRollout(Base):
+    __tablename__ = "policy_rollout"
+    __table_args__ = (
+        Index("ix_rollout_tenant_state", "tenant_id", "state"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    bundle_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("policy_bundle.id"), nullable=False
+    )
+    cohort_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    salt: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

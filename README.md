@@ -254,3 +254,16 @@ report. The lab fixture data is deleted, leaving only the report.
 **LAB_PASS is not external-adapter certification or production enablement.**
 No production adapter registry, release-owner approval, or long-horizon
 retention validation is present. Only the isolated simulator can mutate.
+
+## E6 immutable policy drafts and disabled rollout previews
+
+A candidate with an E5 SMOKE_PASS report can be frozen into a
+content-digested policy DRAFT (POST /v1/policies); its tool catalog remains
+the fixed read-only simulator catalog and model_id=none. Rollout DRAFT
+records can preview deterministic 1–5% cohorts but are never referenced
+by B1 admission or E7 routing. Pause and rollback transitions use If-Match.
+Approval always returns 409 because a smoke run is insufficient.
+
+No live canary, signed bundle attestation, true evaluation PASS, independent
+release identity, or policy exposure is enabled. This prevents unreviewed
+self-modification and makes incomplete gates explicit.

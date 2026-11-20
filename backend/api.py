@@ -781,3 +781,111 @@ async def simulator_conformance_results(
         "code_digest": row.code_digest, "suite_version": row.suite_version,
         "results": row.results, "production_enablement": False,
     }
+
+
+class PolicyDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    candidate_id: UUID
+    evaluation_manifest_id: UUID
+
+
+class RolloutDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    bundle_id: UUID
+    cohort_percent: int = Field(ge=1, le=5)
+
+
+@app.post("/v1/policies", status_code=201)
+async def create_policy_draft(
+    payload: PolicyDraftRequest,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.policy.registry import PolicyConflict, register_bundle
+    from backend.learning.failures import FailureConflict
+
+    try:
+        bundle = await register_bundle(
+            session, tenant_id, payload.candidate_id,
+            payload.evaluation_manifest_id,
+        )
+    except (PolicyConflict, FailureConflict) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"id": str(bundle.id), "content_digest": bundle.content_digest,
+            "state": bundle.state, "promotion_eligible": False}
+
+
+@app.post("/v1/rollouts", status_code=201)
+async def create_rollout_draft(
+    payload: RolloutDraftRequest,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.policy.registry import PolicyConflict, create_rollout
+
+    try:
+        rollout = await create_rollout(
+            session, tenant_id, payload.bundle_id, payload.cohort_percent
+        )
+    except PolicyConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"id": str(rollout.id), "state": rollout.state,
+            "version": rollout.version, "exposure_enabled": False}
+
+
+@app.post("/v1/rollouts/{rollout_id}/approve")
+async def deny_unvalidated_rollout(
+    rollout_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+) -> dict:
+    raise HTTPException(
+        409,
+        "release gate closed: independent E5 PASS, signer verification, and "
+        "release-owner approval are not implemented",
+    )
+
+
+@app.post("/v1/rollouts/{rollout_id}/{action}", status_code=202)
+async def stop_policy_rollout(
+    rollout_id: UUID,
+    action: Literal["pause", "rollback"],
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.policy.registry import PolicyConflict, stop_rollout
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be the rollout version")
+    try:
+        rollout = await stop_rollout(
+            session, tenant_id, rollout_id, int(version),
+            "PAUSED" if action == "pause" else "ROLLED_BACK",
+        )
+    except PolicyConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if rollout is None:
+        raise HTTPException(404, "rollout not found")
+    return {"id": str(rollout.id), "state": rollout.state,
+            "version": rollout.version, "exposure_enabled": False}
+
+
+@app.get("/v1/rollouts/{rollout_id}/preview")
+async def preview_policy_rollout(
+    rollout_id: UUID,
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.models import PolicyRollout
+    from backend.policy.registry import dry_run_assignment
+
+    rollout = await session.get(PolicyRollout, rollout_id)
+    if rollout is None or rollout.tenant_id != tenant_id:
+        raise HTTPException(404, "rollout not found")
+    return {
+        "rollout_id": str(rollout.id),
+        "would_assign": dry_run_assignment(rollout, tenant_id, incident_id),
+        "preview_only": True, "exposure_enabled": False,
+    }
