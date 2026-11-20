@@ -1046,6 +1046,8 @@ async def preview_policy_rollout(
     rollout = await session.get(PolicyRollout, rollout_id)
     if rollout is None or rollout.tenant_id != tenant_id:
         raise HTTPException(404, "rollout not found")
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
     return {
         "rollout_id": str(rollout.id),
         "would_assign": dry_run_assignment(rollout, tenant_id, incident_id),
