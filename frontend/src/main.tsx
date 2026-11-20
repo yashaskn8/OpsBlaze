@@ -186,54 +186,101 @@ function App() {
     setConnection("SYNCING");
   }
 
+
   useEffect(() => {
     const selectedId = incident?.id;
     if (!selectedId || !token || !tenant) return;
-    let disposed = false;
-    let afterId = 0;
+
+    const controller = new AbortController();
+    const auth = { "X-Tenant-Id": tenant, "X-OpsBlaze-Token": token };
+    const url = "/v1/incidents/" + selectedId;
+    let cursor = 0;
     setConnection("SYNCING");
 
-    async function pollEvents() {
-      try {
-        const response = await fetch(
-          "/v1/incidents/" + selectedId + "/events?after_id=" + afterId,
-          { headers: { "X-Tenant-Id": tenant, "X-OpsBlaze-Token": token } }
-        );
-        const data: unknown = await response.json();
-        if (!response.ok) throw new Error(detail(data));
-        if (disposed) return;
-        const page = data as UIEventPage;
-        afterId = page.last_id;
-        if (page.events.length) {
-          setEvents(previous => [...previous, ...page.events].slice(-20));
-          // Notifications cannot authorize actions; fetch fresh server truth.
-          const snapshot = await fetch(
-            "/v1/incidents/" + selectedId,
-            { headers: { "X-Tenant-Id": tenant, "X-OpsBlaze-Token": token } }
-          );
-          const current: unknown = await snapshot.json();
-          if (!snapshot.ok) throw new Error(detail(current));
-          if (!disposed) {
-            const incoming = current as Incident;
-            setIncident(previous =>
-              previous && previous.id === incoming.id
-                && previous.status_version > incoming.status_version
-                  ? previous : incoming
-            );
+    async function refreshSnapshot() {
+      const response = await fetch(url, { headers: auth, signal: controller.signal });
+      const body: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(body));
+      if (controller.signal.aborted) return;
+      const incoming = body as Incident;
+      setIncident(previous =>
+        previous && previous.id === incoming.id
+          && previous.status_version > incoming.status_version
+          ? previous : incoming
+      );
+    }
+
+    async function recordEvents(incoming: UIEvent[]) {
+      const unseen = incoming.filter(event => event.id > cursor);
+      if (unseen.length === 0 || controller.signal.aborted) return;
+      cursor = unseen[unseen.length - 1].id;
+      setEvents(previous => [...previous, ...unseen].slice(-20));
+      // Event payloads never authorize controls; always fetch current truth.
+      await refreshSnapshot();
+    }
+
+    async function pollFallback() {
+      const response = await fetch(url + "/events?after_id=" + cursor, {
+        headers: auth, signal: controller.signal
+      });
+      const body: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(body));
+      const page = body as UIEventPage;
+      await recordEvents(page.events);
+      cursor = Math.max(cursor, page.last_id);
+      if (!controller.signal.aborted) setConnection("LIVE");
+    }
+
+    async function subscribe() {
+      while (!controller.signal.aborted) {
+        try {
+          const response = await fetch(url + "/stream?after_id=" + cursor, {
+            headers: { ...auth, "Accept": "text/event-stream" },
+            signal: controller.signal
+          });
+          if (!response.ok || !response.body) throw new Error("stream unavailable");
+          setConnection("LIVE");
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let pending = "";
+          while (!controller.signal.aborted) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            pending += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n");
+            let boundary = pending.indexOf("\n\n");
+            while (boundary !== -1) {
+              const frame = pending.slice(0, boundary);
+              pending = pending.slice(boundary + 2);
+              const data = frame.split("\n").find(line => line.startsWith("data: "));
+              if (data) {
+                const event = JSON.parse(data.slice(6)) as UIEvent;
+                if (Number.isSafeInteger(event.id) && event.id > cursor) {
+                  await recordEvents([event]);
+                }
+              }
+              boundary = pending.indexOf("\n\n");
+            }
+            // A malformed or oversized frame must not consume unbounded memory.
+            if (pending.length > 16384) throw new Error("invalid event stream");
+          }
+        } catch {
+          if (controller.signal.aborted) break;
+          setConnection("STALE");
+          try {
+            await pollFallback();
+          } catch {
+            if (controller.signal.aborted) break;
+            setConnection("STALE");
           }
         }
-        if (!disposed) setConnection("LIVE");
-      } catch {
-        if (!disposed) setConnection("STALE");
+        if (!controller.signal.aborted) {
+          await new Promise(resolve => window.setTimeout(resolve, 2000));
+        }
       }
     }
 
-    void pollEvents();
-    const timer = window.setInterval(() => { void pollEvents(); }, 4000);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-    };
+    void subscribe();
+    return () => controller.abort();
   }, [incident?.id, tenant, token]);
 
   async function decide(action: "cancel" | "acknowledge") {
@@ -337,7 +384,7 @@ function App() {
         <section aria-live="polite">
           <h2>Incident snapshot</h2>
           <p className={"connection " + connection.toLowerCase()}>
-            {connection === "LIVE" ? "Live polling — server snapshot authoritative"
+            {connection === "LIVE" ? "Live updates — server snapshot authoritative"
               : connection === "STALE" ? "Connection stale — action controls disabled"
               : "Synchronizing incident events"}
           </p>

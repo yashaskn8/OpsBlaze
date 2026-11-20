@@ -49,7 +49,7 @@ Open `http://127.0.0.1:5173` and supply the **local** API token from your `.env`
 2. The database commits an incident and a workflow-start outbox event together. A separate dispatcher starts the stable Temporal workflow. The worker probes simulator health/version and records evidence and a bounded decision assessment.
 3. Refresh the UI. At `AWAITING_APPROVAL`, examine the proposed exact simulator plan. Approval/rejection uses the plan's current numeric `If-Match` version. Acknowledgment and cancellation are separate flows.
 4. If approved and all fences, evidence checks, and current adapter conformance pass, the worker applies **only** `SIMULATOR_MARK_HEALTHY`. It reconciles its effect receipt and requires an independent simulator postcondition observation before setting `VERIFIED`.
-5. The UI can show evidence, effect receipts, trace lineage, recent incidents, sequenced event notifications, and isolated paired-replay results. These notifications never authorize actions; decisions rely on authoritative snapshots and server-side version checks.
+5. The UI can show evidence, effect receipts, trace lineage, recent incidents, sequenced SSE event notifications with a polling fallback, and isolated paired-replay results. These notifications never authorize actions; decisions rely on authoritative snapshots and server-side version checks.
 
 The local token is **not** reviewer authentication or a real multi-tenant security system. The API deliberately rejects tenant requests when `OPSBLAZE_ENVIRONMENT=production`. **Do not expose this application publicly or connect it to real infrastructure.**
 
@@ -84,3 +84,12 @@ The model may suggest only the allowlisted `simulator.version` probe or abstenti
 - Safety evidence is required at **approval and execution**, not just at proposal creation. `NEEDS_REVIEW` is preferable to invented recovery.
 - Experience capture requires consent; lessons recheck current lineage and remain inactive. E5 smoke evaluations **never** promote policy. Live rollout is deliberately closed.
 - All development occurs directly on `main`, without branches, pull requests, or Docker.
+
+The authorized operator stream at `GET /v1/incidents/{id}/stream` accepts
+`after_id` and `Last-Event-ID`, replays up to 100 durable status events per
+tick, sends keepalives, and closes after a bounded lifetime. The browser
+uses an authenticated fetch stream (credentials never enter query strings),
+reconnects with its last event ID, and falls back to JSON polling. Event
+payloads are advisory only; the UI always refreshes the authoritative
+versioned snapshot before acting. The SSE path remains a development-only
+interface until production identity and load/concurrency testing exist.

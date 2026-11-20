@@ -3,7 +3,8 @@ import secrets
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_session
@@ -1067,3 +1068,36 @@ async def incident_decision_assessments(
          "reason": row.reason, "outcome": row.outcome}
         for row in rows
     ]
+
+
+@app.get("/v1/incidents/{incident_id}/stream")
+async def stream_incident_updates(
+    incident_id: UUID,
+    request: Request,
+    after_id: int = 0,
+    last_event_id: Annotated[str | None, Header()] = None,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    from backend.database import get_session_maker
+    from backend.events import stream_incident_events
+
+    if after_id < 0:
+        raise HTTPException(400, "after_id cannot be negative")
+    if last_event_id is not None:
+        if not last_event_id.isdecimal():
+            raise HTTPException(400, "Last-Event-ID must be a nonnegative integer")
+        after_id = max(after_id, int(last_event_id))
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    return StreamingResponse(
+        stream_incident_events(
+            get_session_maker(), tenant_id, incident_id, after_id,
+            request.is_disconnected,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )

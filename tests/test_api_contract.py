@@ -62,7 +62,7 @@ async def test_isolation_across_snapshot_lists_events_and_lineage(api_client):
     assert other_listing.status_code == 200 and other_listing.json() == []
 
     for suffix in ("", "/evidence", "/hypotheses", "/effects", "/outcomes",
-                   "/plans", "/assessments", "/events", "/lineage", "/route"):
+                   "/plans", "/assessments", "/events", "/stream", "/lineage", "/route"):
         hidden = await api_client.get(path + suffix, headers=headers("beta"))
         assert hidden.status_code == 404, (suffix, hidden.text)
 
@@ -141,3 +141,20 @@ async def test_production_mode_and_unvalidated_release_fail_closed(api_client):
     )
     production = await api_client.get("/v1/incidents", headers=headers("alpha"))
     assert production.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_stream_rejects_invalid_resume_cursor_before_open(api_client):
+    created = await api_client.post(
+        "/v1/incidents",
+        json={"target_id": "checkout"},
+        headers=headers("alpha", **{"Idempotency-Key": "cursor"}),
+    )
+    incident_id = created.json()["id"]
+    path = f"/v1/incidents/{incident_id}/stream"
+    negative = await api_client.get(path + "?after_id=-1", headers=headers("alpha"))
+    assert negative.status_code == 400
+    malformed = await api_client.get(
+        path, headers=headers("alpha", **{"Last-Event-ID": "nope"})
+    )
+    assert malformed.status_code == 400
