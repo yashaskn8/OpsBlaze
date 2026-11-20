@@ -66,6 +66,18 @@ async def current_plan_evidence_is_intact(
     )
     if plan.plan_digest != expected_digest:
         return False
+    incident = await session.scalar(
+        select(Incident).where(
+            Incident.id == plan.incident_id,
+            Incident.tenant_id == plan.tenant_id,
+        )
+    )
+    if incident is None or incident.target_id != plan.target_id:
+        return False
+    if incident.created_by is not None and await session.get(
+        RevokedIdentity, (plan.tenant_id, incident.created_by)
+    ) is not None:
+        return False
     evidence_snapshot = hashlib.sha256(
         json.dumps(ids, separators=(",", ":"), sort_keys=False).encode()
     ).hexdigest()
