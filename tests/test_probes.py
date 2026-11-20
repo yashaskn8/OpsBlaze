@@ -1,3 +1,6 @@
+import hashlib
+from uuid import UUID
+
 import pytest
 from sqlalchemy import select
 
@@ -62,3 +65,91 @@ async def test_missing_simulator_target_abstains(sessions_fixture) -> None:
     async with sessions_fixture() as session:
         incident = await admit_incident(session, "t1", "k1", IncidentCreate(target_id="missing"))
     assert await inspect(sessions_fixture, "t1", incident.id) == "ABSTAINED"
+
+
+@pytest.mark.asyncio
+async def test_new_probe_steps_are_monotonic_without_spending_on_gaps(sessions_fixture):
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "t1", "step-gap", IncidentCreate(target_id="checkout")
+        )
+    with pytest.raises(ProbeDenied, match="sequential"):
+        await invoke_probe(
+            sessions_fixture, "t1", incident.id, 2, "simulator.health"
+        )
+    async with sessions_fixture() as session:
+        incident_row = await session.get(Incident, incident.id)
+        assert incident_row.probe_used == 0
+        assert (await session.scalars(select(ProbeCall))).all() == []
+    first = await invoke_probe(
+        sessions_fixture, "t1", incident.id, 1, "simulator.health"
+    )
+    assert first.outcome == "UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", ["hash", "source", "tenant", "schema"])
+async def test_replayed_probe_rejects_tampered_evidence(sessions_fixture, damage):
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(
+                SimulatorTarget(
+                    tenant_id="t1", target_id="checkout",
+                    version=3, healthy=False, last_fence=0,
+                )
+            )
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "t1", f"tamper-{damage}", IncidentCreate(target_id="checkout")
+        )
+    first = await invoke_probe(
+        sessions_fixture, "t1", incident.id, 1, "simulator.health"
+    )
+    assert first.outcome == "OK"
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            evidence = await session.get(Evidence, first.evidence_id)
+            if damage == "hash":
+                evidence.redacted_excerpt = '{"healthy":true}'
+            elif damage == "source":
+                evidence.source = "simulator.version"
+            elif damage == "tenant":
+                evidence.tenant_id = "other"
+            else:
+                evidence.redacted_excerpt = '{"healthy":"false"}'
+                evidence.sha256 = hashlib.sha256(
+                    evidence.redacted_excerpt.encode()
+                ).hexdigest()
+
+    with pytest.raises(ProbeDenied, match="recorded probe"):
+        await invoke_probe(
+            sessions_fixture, "t1", incident.id, 1, "simulator.health"
+        )
+    async with sessions_fixture() as session:
+        incident_row = await session.get(Incident, incident.id)
+        assert incident_row.probe_used == 1
+
+
+@pytest.mark.asyncio
+async def test_replay_rejects_cross_incident_evidence_link(sessions_fixture):
+    async with sessions_fixture() as session:
+        first = await admit_incident(
+            session, "t", "probe-a", IncidentCreate(target_id="checkout")
+        )
+    async with sessions_fixture() as session:
+        second = await admit_incident(
+            session, "t", "probe-b", IncidentCreate(target_id="checkout")
+        )
+    await invoke_probe(sessions_fixture, "t", first.id, 1, "simulator.health")
+    other_result = await invoke_probe(
+        sessions_fixture, "t", second.id, 1, "simulator.health"
+    )
+    async with sessions_fixture() as session:
+        async with session.begin():
+            row = await session.scalar(
+                select(ProbeCall).where(ProbeCall.incident_id == first.id)
+            )
+            row.evidence_id = other_result.evidence_id
+    with pytest.raises(ProbeDenied, match="integrity"):
+        await invoke_probe(sessions_fixture, "t", first.id, 1, "simulator.health")
