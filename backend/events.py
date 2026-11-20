@@ -6,6 +6,7 @@ Each tick owns a fresh database session; streaming never holds a transaction.
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from uuid import UUID
 from threading import Lock
@@ -112,9 +113,12 @@ async def stream_incident_events(
     poll_seconds: float = 2.0,
     max_ticks: int = 30,
     actor_id: str | None = None,
+    token_expires_at: int | None = None,
 ) -> AsyncIterator[str]:
     """Bound each stream lifetime so a reconnect can recover missed events."""
     for _ in range(max_ticks):
+        if token_expires_at is not None and time.time() >= token_expires_at:
+            return
         if await disconnected():
             return
         try:
@@ -133,6 +137,8 @@ async def stream_incident_events(
             return
         if rows:
             for event in rows:
+                if token_expires_at is not None and time.time() >= token_expires_at:
+                    return
                 if await disconnected():
                     return
                 after_id = event.id
