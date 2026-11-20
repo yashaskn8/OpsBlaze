@@ -19,7 +19,7 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 | E1 — Experience capture | Consent-scoped capsules with expiry scrubbing, incident-locked capture, outcome-reversal quarantine and dependent-lesson revocation | Cross-store deletion and approved classification/retention controls |
 | E2 — Outcome adjudication | Separate simulator witness, append-only outcomes, parent-row-serialized concurrent disputes | Independent real-world recovery oracle and delayed outcome reconciliation |
 | E3 — Failure learning | Fact-backed cases, concurrent outcome-revision and reviewer fencing, corrected taxonomy, candidate→rollout invalidation | Independent reviewers, causal attribution beyond typed simulator facts |
-| E4 — Validated memory | Typed lesson drafts, source/consent checks, validation/revoke | Release gate for activation, measured retrieval effect and revocation propagation |
+| E4 — Validated memory | Typed lesson drafts, incident-locked consent/outcome validation and revocation | Release gate for activation, measured retrieval effect and revocation propagation |
 | E5 — Evaluation | Frozen paired smoke manifest, integrity checks, negative controls, bounded costs and conservative uncertainty interval | Independent hidden-label store, measured recovery-cost outcomes, powered intervals and separate evaluator authority |
 | E6 — Policy rollout | Content-digested drafts, admission-time known-good pinning, cohort preview and disabled rollout | **Live rollout disabled** pending real E5 PASS, signed bundle and release authorization |
 | E7 — Strategy routing | Pinned tenant-scoped RUNBOOK/HANDOFF choice, deterministic cost cap | Evaluated contextual policies, measured route accuracy, memory/agent variants |

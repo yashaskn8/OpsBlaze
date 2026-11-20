@@ -71,6 +71,23 @@ async def create_draft(
     if rule_id not in LESSON_RULES:
         raise LessonConflict("lesson rule is not allowlisted")
     async with session.begin():
+        source_incident = await session.scalar(
+            select(ExperienceCapsule.incident_id).where(
+                ExperienceCapsule.id == capsule_id,
+                ExperienceCapsule.tenant_id == tenant_id,
+            )
+        )
+        if source_incident is None:
+            raise LessonConflict("source consent or outcome is not valid")
+        # Serialize with E1 consent revocation and E2 adjudication, which
+        # both lock the incident before invalidating derived artifacts.
+        incident = await session.scalar(
+            select(Incident.id).where(
+                Incident.id == source_incident, Incident.tenant_id == tenant_id,
+            ).with_for_update()
+        )
+        if incident is None:
+            raise LessonConflict("source incident missing")
         capsule = await valid_source(session, tenant_id, capsule_id)
         if capsule is None:
             raise LessonConflict("source consent or outcome is not valid")
@@ -105,11 +122,34 @@ async def validate_draft(
     expected_version: int,
 ) -> OperationalLesson | None:
     async with session.begin():
+        # Read the source first but never lock the lesson ahead of Incident:
+        # E1/E2 would otherwise lock Incident then wait for Lesson, deadlocking.
+        source_incident = await session.scalar(
+            select(ExperienceCapsule.incident_id)
+            .join(
+                OperationalLesson,
+                OperationalLesson.source_capsule_id == ExperienceCapsule.id,
+            )
+            .where(
+                OperationalLesson.id == lesson_id,
+                OperationalLesson.tenant_id == tenant_id,
+                ExperienceCapsule.tenant_id == tenant_id,
+            )
+        )
+        if source_incident is None:
+            return None
+        incident = await session.scalar(
+            select(Incident.id).where(
+                Incident.id == source_incident, Incident.tenant_id == tenant_id,
+            ).with_for_update()
+        )
+        if incident is None:
+            raise LessonConflict("source incident missing")
         lesson = await session.scalar(
             select(OperationalLesson).where(
                 OperationalLesson.id == lesson_id,
                 OperationalLesson.tenant_id == tenant_id,
-            ).with_for_update()
+            ).with_for_update().execution_options(populate_existing=True)
         )
         if lesson is None:
             return None

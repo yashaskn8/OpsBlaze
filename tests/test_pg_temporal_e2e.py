@@ -1015,3 +1015,75 @@ async def test_postgres_racing_sent_checkpoint_only_calls_adapter_once(monkeypat
         assert await adapter.observe(tenant, "checkout") == (2, True)
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_lesson_validation_cannot_outlive_concurrent_outcome_reversal():
+    """E4 approval is either rejected or transactionally revoked after E2 correction."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.experiences import capture_capsule, set_consent
+    from backend.memory.lessons import LessonConflict, create_draft, validate_draft
+    from backend.models import OperationalLesson, OutcomeRevision
+    from backend.outcomes import dispute_outcome
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "lesson-race-" + uuid4().hex[:12]
+    source_id = uuid4()
+    try:
+        async with sessions() as session:
+            incident = await admit_incident(
+                session, tenant, "lesson",
+                IncidentCreate(target_id="checkout"),
+            )
+        async with sessions() as session:
+            await set_consent(session, tenant, incident.id, 0, True)
+        async with sessions() as session:
+            async with session.begin():
+                session.add(OutcomeRevision(
+                    id=source_id, tenant_id=tenant, incident_id=incident.id,
+                    effect_id=None, revision=1, label="VERIFIED",
+                    witness_source="SIMULATOR_WITNESS",
+                    observed_version=1, reason="isolated valid source fixture",
+                ))
+        async with sessions() as session:
+            capsule = await capture_capsule(session, tenant, incident.id)
+        async with sessions() as session:
+            lesson = await create_draft(
+                session, tenant, capsule.id, "CHECK_VERSION",
+            )
+
+        async def validate():
+            async with sessions() as session:
+                try:
+                    return await validate_draft(
+                        session, tenant, lesson.id, 1,
+                    )
+                except LessonConflict:
+                    return None
+
+        async def reverse():
+            async with sessions() as session:
+                return await dispute_outcome(
+                    session, tenant, source_id, 1,
+                    "independent source contradicted validated memory",
+                )
+
+        validated, disputed = await asyncio.gather(validate(), reverse())
+        assert disputed.revision == 2
+        async with sessions() as session:
+            stored = await session.get(OperationalLesson, lesson.id)
+            assert stored.status != "VALIDATED"
+            assert stored.status != "ACTIVE"
+            if validated is not None:
+                assert stored.status == "REVOKED"
+                assert stored.version == 3
+            else:
+                assert stored.status in {"DRAFT", "REVOKED"}
+    finally:
+        await engine.dispose()
