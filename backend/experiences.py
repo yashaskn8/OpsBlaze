@@ -117,8 +117,16 @@ async def capture_capsule(
             )
         )
         if existing is not None:
-            if existing.status != "VALID":
-                raise ConsentConflict("revoked or quarantined capsule cannot be restored")
+            if (
+                existing.status != "VALID"
+                or existing.tenant_id != tenant_id
+                or existing.consent_epoch != consent.epoch
+                or existing.target_digest != hashlib.sha256(
+                    f"{tenant_id}:{incident.target_id}".encode("utf-8")
+                ).hexdigest()
+                or existing.expires_at <= now
+            ):
+                raise ConsentConflict("stale, altered or revoked capsule cannot be reused")
             return existing
         evidence = (await session.scalars(
             select(Evidence.id)
@@ -156,11 +164,15 @@ async def list_capsules(session: AsyncSession, tenant_id: str) -> list[Experienc
         .correlate(ExperienceCapsule)
         .scalar_subquery()
     )
-    rows = (await session.scalars(
-        select(ExperienceCapsule)
+    rows = (await session.execute(
+        select(ExperienceCapsule, Incident.target_id)
         .join(
             ExperienceConsent,
             ExperienceConsent.incident_id == ExperienceCapsule.incident_id,
+        )
+        .join(
+            Incident,
+            Incident.id == ExperienceCapsule.incident_id,
         )
         .join(
             OutcomeRevision,
@@ -168,6 +180,7 @@ async def list_capsules(session: AsyncSession, tenant_id: str) -> list[Experienc
         )
         .where(
             ExperienceCapsule.tenant_id == tenant_id,
+            Incident.tenant_id == tenant_id,
             ExperienceConsent.tenant_id == tenant_id,
             ExperienceConsent.allowed.is_(True),
             ExperienceCapsule.consent_epoch == ExperienceConsent.epoch,
@@ -179,4 +192,9 @@ async def list_capsules(session: AsyncSession, tenant_id: str) -> list[Experienc
         )
         .limit(50)
     )).all()
-    return list(rows)
+    return [
+        capsule for capsule, target_id in rows
+        if capsule.target_digest == hashlib.sha256(
+            f"{tenant_id}:{target_id}".encode("utf-8")
+        ).hexdigest()
+    ]
