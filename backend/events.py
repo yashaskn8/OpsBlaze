@@ -41,7 +41,11 @@ STREAM_CAPACITY = StreamCapacity()
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.models import UIEvent, UIEventWatermark
+from backend.models import RevokedIdentity, UIEvent, UIEventWatermark
+
+
+class StreamAccessRevoked(Exception):
+    """Stop an established stream when its bearer identity is revoked."""
 
 
 class ExpiredCursor(Exception):
@@ -65,8 +69,14 @@ async def read_event_batch(
     tenant_id: str,
     incident_id: UUID,
     after_id: int,
+    *,
+    actor_id: str | None = None,
 ) -> list[UIEvent]:
     async with sessions() as session:
+        if actor_id is not None and await session.get(
+            RevokedIdentity, (tenant_id, actor_id)
+        ) is not None:
+            raise StreamAccessRevoked()
         await validate_event_cursor(session, tenant_id, incident_id, after_id)
         return list((await session.scalars(
             select(UIEvent)
@@ -101,13 +111,18 @@ async def stream_incident_events(
     disconnected: Callable[[], Awaitable[bool]],
     poll_seconds: float = 2.0,
     max_ticks: int = 30,
+    actor_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Bound each stream lifetime so a reconnect can recover missed events."""
     for _ in range(max_ticks):
         if await disconnected():
             return
         try:
-            rows = await read_event_batch(sessions, tenant_id, incident_id, after_id)
+            rows = await read_event_batch(
+                sessions, tenant_id, incident_id, after_id, actor_id=actor_id,
+            )
+        except StreamAccessRevoked:
+            return
         except ExpiredCursor as expired:
             yield (
                 "event: gap\n"
