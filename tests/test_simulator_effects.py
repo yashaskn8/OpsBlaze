@@ -244,3 +244,60 @@ async def test_sent_transition_may_only_be_claimed_once(lab):
         assert receipt.state == "SENT"
         assert receipt.attempt_count == 1
     assert await adapter.observe("a", "checkout") == (1, False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("starting_state", ["PREPARED", "SENT", "UNKNOWN"])
+async def test_redteam_impossible_remote_status_never_confirms_effect(lab, starting_state):
+    """No dispatch, retention gap or status jump may invent a verified effect."""
+    from backend.effects.gateway import set_state
+
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "3" * 64,
+    )
+    effect_id = await prepare_receipt(sessions, permit)
+    if starting_state == "SENT":
+        await set_state(sessions, effect_id, "SENT")
+    elif starting_state == "UNKNOWN":
+        await set_state(sessions, effect_id, "UNKNOWN")
+
+    class ContradictoryRemoteStatus(SimulatorAdapter):
+        async def query_effect(self, _effect_id):
+            return permit.expected_version + 50
+
+    assert await reconcile_effect(
+        sessions, ContradictoryRemoteStatus(sessions), effect_id
+    ) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        assert receipt.state == "NEEDS_REVIEW"
+        assert receipt.observed_version is None
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert target.version == permit.expected_version and not target.healthy
+        assert (await session.scalars(select(SimulatorAppliedEffect))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_redteam_wrong_confirmed_version_cannot_be_verified(lab):
+    from backend.effects.gateway import set_state
+
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "4" * 64,
+    )
+    effect_id = await prepare_receipt(sessions, permit)
+    await set_state(sessions, effect_id, "SENT")
+    await set_state(sessions, effect_id, "CONFIRMED", permit.expected_version + 7)
+
+    class FalseWitness(SimulatorAdapter):
+        async def observe(self, tenant_id, target_id):
+            return (permit.expected_version + 7, True)
+
+    assert await reconcile_effect(
+        sessions, FalseWitness(sessions), effect_id
+    ) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        assert receipt.state == "NEEDS_REVIEW"
+        assert (await session.scalars(select(SimulatorAppliedEffect))).all() == []
