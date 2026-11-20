@@ -1296,6 +1296,7 @@ async def stream_incident_updates(
                 get_session_maker(), tenant_id, incident_id, after_id,
                 request.is_disconnected,
                 actor_id=principal.subject if principal.subject.startswith("oidc:") else None,
+                token_expires_at=principal.expires_at,
             ):
                 yield frame
         finally:
