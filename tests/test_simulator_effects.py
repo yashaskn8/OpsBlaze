@@ -301,3 +301,28 @@ async def test_redteam_wrong_confirmed_version_cannot_be_verified(lab):
         receipt = await session.get(EffectReceipt, effect_id)
         assert receipt.state == "NEEDS_REVIEW"
         assert (await session.scalars(select(SimulatorAppliedEffect))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_redteam_modified_permit_cannot_bypass_reserved_target_version(lab):
+    sessions, incident_id, adapter = lab
+    original = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "5" * 64,
+    )
+    async with sessions() as session:
+        async with session.begin():
+            target = await session.get(SimulatorTarget, ("a", "checkout"))
+            target.version += 1
+
+    # An attacker-controlled permit cannot silently follow the external edit:
+    # it must remain bound to the version in the durable reservation.
+    forged = Permit(**{
+        **original.__dict__,
+        "expected_version": original.expected_version + 1,
+    })
+    with pytest.raises(TargetVersionConflict):
+        await adapter.apply(uuid4(), forged)
+    async with sessions() as session:
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert target.version == 2 and not target.healthy
+        assert (await session.scalars(select(SimulatorAppliedEffect))).all() == []
