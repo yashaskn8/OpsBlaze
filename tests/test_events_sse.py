@@ -59,3 +59,18 @@ async def test_stream_yields_bounded_frames_and_respects_disconnect(sessions_fix
     )
     with pytest.raises(StopAsyncIteration):
         await iterator.__anext__()
+
+
+def test_per_process_stream_capacity_is_bounded_and_released():
+    from backend.events import StreamCapacity
+
+    cap = StreamCapacity(maximum=1)
+    assert cap.claim()
+    assert cap.active == 1
+    assert not cap.claim()
+    cap.release()
+    assert cap.active == 0
+    assert cap.claim()
+    cap.release()
+    with pytest.raises(RuntimeError):
+        cap.release()

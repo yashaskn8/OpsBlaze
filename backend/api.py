@@ -1127,7 +1127,7 @@ async def stream_incident_updates(
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
     from backend.database import get_session_maker
-    from backend.events import stream_incident_events
+    from backend.events import STREAM_CAPACITY, stream_incident_events
 
     if after_id < 0:
         raise HTTPException(400, "after_id cannot be negative")
@@ -1137,11 +1137,28 @@ async def stream_incident_updates(
         after_id = max(after_id, int(last_event_id))
     if await find_incident(session, tenant_id, incident_id) is None:
         raise HTTPException(404, "incident not found")
+
+    # The request dependency may outlive StreamingResponse. Release its read
+    # transaction before the long-lived stream starts.
+    await session.rollback()
+    if not STREAM_CAPACITY.claim():
+        raise HTTPException(
+            503, "incident event stream capacity exhausted",
+            headers={"Retry-After": "3"},
+        )
+
+    async def bounded_events():
+        try:
+            async for frame in stream_incident_events(
+                get_session_maker(), tenant_id, incident_id, after_id,
+                request.is_disconnected,
+            ):
+                yield frame
+        finally:
+            STREAM_CAPACITY.release()
+
     return StreamingResponse(
-        stream_incident_events(
-            get_session_maker(), tenant_id, incident_id, after_id,
-            request.is_disconnected,
-        ),
+        bounded_events(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

@@ -225,3 +225,24 @@ async def test_review_actions_require_separate_local_reviewer(api_client):
             json=body,
         )
         assert granted.status_code == 404, (path, granted.text)
+
+
+@pytest.mark.asyncio
+async def test_sse_overload_returns_retryable_status(api_client, monkeypatch):
+    from backend.events import StreamCapacity
+
+    created = await api_client.post(
+        "/v1/incidents", json={"target_id": "checkout"},
+        headers=headers("alpha", **{"Idempotency-Key": "capacity-sse"}),
+    )
+    assert created.status_code == 202
+    limit = StreamCapacity(maximum=1)
+    assert limit.claim()
+    monkeypatch.setattr("backend.events.STREAM_CAPACITY", limit)
+    result = await api_client.get(
+        f"/v1/incidents/{created.json()['id']}/stream",
+        headers=headers("alpha"),
+    )
+    assert result.status_code == 503
+    assert result.headers["retry-after"] == "3"
+    limit.release()

@@ -8,6 +8,35 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from uuid import UUID
+from threading import Lock
+
+
+class StreamCapacity:
+    """Per-process stream cap; a durable cursor survives rejected reconnects."""
+
+    def __init__(self, maximum: int = 32):
+        if maximum < 1:
+            raise ValueError("stream limit must be positive")
+        self.maximum = maximum
+        self.active = 0
+        self._lock = Lock()
+
+    def claim(self) -> bool:
+        with self._lock:
+            if self.active >= self.maximum:
+                return False
+            self.active += 1
+            return True
+
+    def release(self) -> None:
+        with self._lock:
+            if self.active < 1:
+                raise RuntimeError("stream capacity over-released")
+            self.active -= 1
+
+
+STREAM_CAPACITY = StreamCapacity()
+
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

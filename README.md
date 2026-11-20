@@ -199,3 +199,10 @@ older approved plans fail closed to NEEDS_REVIEW. Existing effect
 receipts remain reconcilable to avoid inventing outcomes. This is a
 coarse developer-mode revocation checkpoint, **not** real per-user
 revocation or an atomic distributed cancellation protocol.
+
+P1 SSE now has a per-process concurrency cap of 32 streams. When it
+is exhausted, new subscriptions receive 503 with Retry-After, and
+their durable event cursor remains usable on reconnect. The
+preflight query releases its database transaction before the
+stream runs; each tick uses a short-lived read session. This
+per-process limit is not a multi-replica load test or global quota.
