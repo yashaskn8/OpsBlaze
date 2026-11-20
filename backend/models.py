@@ -74,3 +74,70 @@ class OutboxEntry(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+# B2/B3 simulator and effect records. No production target connector is enabled.
+from sqlalchemy import Boolean
+
+
+class ResourceEpoch(Base):
+    __tablename__ = "resource_epoch"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    target_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    latest_fence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    version_seen: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+
+class ResourceReservation(Base):
+    __tablename__ = "resource_reservation"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    target_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    holder_incident: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    action_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    fence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class SimulatorTarget(Base):
+    __tablename__ = "simulator_target"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    target_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    healthy: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_fence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+
+class SimulatorAppliedEffect(Base):
+    __tablename__ = "simulator_applied_effect"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    observed_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class EffectReceipt(Base):
+    __tablename__ = "effect_receipt"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_effect_tenant_key"),
+        Index("ix_effect_incident", "tenant_id", "incident_id", "created_at"),
+        Index("ix_effect_unresolved", "state", "updated_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False)
+    plan_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    adapter_id: Mapped[str] = mapped_column(String(32), nullable=False, default="simulator")
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    fence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    expected_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    observed_version: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

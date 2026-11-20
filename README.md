@@ -81,3 +81,17 @@ Review acknowledgment is available at POST /v1/incidents/{id}/acknowledge
 with If-Match set to the latest status version while the state is
 AWAITING_APPROVAL. This closes the workflow as NEEDS_REVIEW and is NOT
 approval for a real mutation. The operator UI exposes this action and cancellation.
+
+## B2/B3 simulator correctness components
+
+The repository now includes resource epochs, reservation fencing, a local
+stateful simulator adapter, and durable effect receipts. The simulator checks
+its fence and target version immediately before applying a local state change.
+Receipts transition through PREPARED, SENT, UNKNOWN, CONFIRMED, and VERIFIED
+(or an explicit failure/review state). Reconciliation only queries the adapter;
+it does **not** blindly repeat an uncertain apply.
+
+These components are internal and are not connected to a public mutation API
+or to the incident workflow until exact-plan human approval (P2) is implemented.
+A simulator effect is **not** a real recovery. No infrastructure mutation
+connector is enabled or claimed conformant.
