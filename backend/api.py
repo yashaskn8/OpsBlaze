@@ -125,7 +125,7 @@ async def readiness(
         raise HTTPException(503, "production identity provider is not configured")
 
     try:
-        await session.execute(text("SELECT 1")
+        await session.execute(text("SELECT 1"))
         if settings.environment == "production":
             present = await present_workers(
                 session,
