@@ -150,7 +150,12 @@ async def assess_decision(
                         if (
                             len(evidence) != 2
                             or sources != {"simulator.health", "simulator.version"}
-                            or any(row.validity != "VALID" for row in evidence)
+                            or any(
+                                row.validity != "VALID"
+                                or row.source_version != "simulator-v1"
+                                or row.classification != "INTERNAL"
+                                for row in evidence
+                            )
                         ):
                             reason = "INVALID_EVIDENCE"
                         elif any(
