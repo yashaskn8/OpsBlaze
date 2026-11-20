@@ -328,3 +328,27 @@ async def test_approved_plan_rechecks_original_probe_evidence_links(proposed_lab
         assert (await session.scalars(select(EffectReceipt))).all() == []
         target = await session.get(SimulatorTarget, ("a", "checkout"))
         assert not target.healthy and target.version == 3
+
+
+@pytest.mark.asyncio
+async def test_forbidden_probe_after_approval_blocks_new_effect(proposed_lab):
+    from backend.probes.gateway import invoke_probe
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        approved = await decide_plan(session, "a", plan_id, 1, "APPROVE")
+        assert approved.status == "APPROVED"
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+
+    denied = await invoke_probe(
+        sessions, "a", incident_id, 3, "shell.exec"
+    )
+    assert denied.outcome == "DENIED"
+    assert await execute_approved_simulator_plan(
+        sessions, "a", incident_id, plan_id
+    ) == "NEEDS_REVIEW"
+
+    async with sessions() as session:
+        assert (await session.scalars(select(EffectReceipt))).all() == []
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert not target.healthy and target.version == 3
