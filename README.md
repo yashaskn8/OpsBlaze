@@ -141,3 +141,14 @@ to the local simulator, with fence/version CAS and an effect receipt. It
 projects VERIFIED only after independent simulator observation. The dev token
 is not production reviewer authentication. Never connect a real adapter
 without a separate role/approval and conformance gate.
+
+## Native integration verification
+
+GitHub Actions runs a PostgreSQL + Temporal integration job without Docker:
+install native PostgreSQL, apply all Alembic migrations, start the local
+Temporal test server, then run the actual FastAPI/dispatcher/worker approval
+flow against a local simulator target. The job checks evidence, receipt,
+target version and final workflow projection, then downgrades migrations.
+This proves the **isolated lab path**, not multi-host resilience or
+production-target safety. Integration tests are separated from fast unit
+tests by pytest markers.

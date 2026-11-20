@@ -32,5 +32,8 @@ include = ["backend*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-markers = ["integration: requires the native local Temporal test server"]
+markers = [
+    "integration: requires the native local Temporal test server",
+    "pg_e2e: requires a native PostgreSQL instance and migrated schema",
+]
 addopts = "-m 'not integration'"
