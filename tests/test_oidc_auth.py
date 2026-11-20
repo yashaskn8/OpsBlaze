@@ -99,6 +99,8 @@ def test_signed_claims_create_stable_pseudonym_not_raw_subject(signer):
 
 @pytest.mark.parametrize("override", [
     {"expires_in": -120},
+    {"expires_in": 7200},
+    {"audience": [AUDIENCE, "another-api"]},
     {"issuer": "https://impostor.example.test/"},
     {"audience": "wrong-service"},
     {"roles": ("root",)},
