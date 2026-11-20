@@ -16,7 +16,8 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import (
-    Permit, SimulatorAdapter, StaleFence, TargetVersionConflict,
+    EffectIdentityConflict, Permit, SimulatorAdapter, StaleFence,
+    TargetVersionConflict,
 )
 from backend.effects.reservations import reserve_simulator_target
 from backend.models import (
@@ -28,7 +29,7 @@ from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 from backend.settings import get_settings
 
-SUITE_VERSION = "simulator-conformance-v1"
+SUITE_VERSION = "simulator-conformance-v2"
 RETENTION_SECONDS = 3600
 
 
@@ -93,6 +94,24 @@ async def execute_suite(
             await adapter.query_effect(effect_one) == version,
             "lookup uses stable effect identity",
         )
+        try:
+            changed_permit = Permit(
+                tenant_id=permit.tenant_id,
+                target_id=permit.target_id,
+                incident_id=permit.incident_id,
+                action_digest="9" * 64,
+                fence=permit.fence,
+                expected_version=permit.expected_version,
+                expires_at=permit.expires_at,
+            )
+            await adapter.apply(effect_one, changed_permit)
+            outcome("effect-identity-binding", False, "permit mismatch was accepted")
+        except EffectIdentityConflict:
+            outcome(
+                "effect-identity-binding", True,
+                "effect ID cannot be reused with another action digest",
+            )
+
 
         try:
             await adapter.apply(uuid4(), permit)
@@ -249,5 +268,5 @@ async def current_simulator_is_conformant(
         and run.retention_seconds >= RETENTION_SECONDS
         and timedelta(0) <= age <= timedelta(days=7)
         and all(item.get("passed") is True for item in run.results)
-        and len(run.results) >= 8
+        and len(run.results) >= 9
     )

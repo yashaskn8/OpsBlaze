@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from backend.adapters.simulator import (
-    Permit, SimulatorAdapter, StaleFence, TargetVersionConflict
+    EffectIdentityConflict, Permit, SimulatorAdapter, StaleFence, TargetVersionConflict
 )
 from backend.effects.gateway import (
     EffectConflict, execute_simulator_effect, prepare_receipt, reconcile_effect
@@ -95,3 +95,26 @@ async def test_conflicting_effect_identity_rejected(lab):
     different = Permit(**{**permit.__dict__, "expected_version": 100})
     with pytest.raises(EffectConflict):
         await prepare_receipt(sessions, different)
+
+
+@pytest.mark.asyncio
+async def test_applied_effect_identity_rejects_different_permit(lab):
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "a" * 64
+    )
+    effect_id = uuid4()
+    assert await adapter.apply(effect_id, permit) == 2
+    changed = Permit(
+        tenant_id=permit.tenant_id,
+        target_id=permit.target_id,
+        incident_id=permit.incident_id,
+        action_digest="b" * 64,
+        fence=permit.fence,
+        expected_version=permit.expected_version,
+        expires_at=permit.expires_at,
+    )
+    with pytest.raises(EffectIdentityConflict):
+        await adapter.apply(effect_id, changed)
+    assert await adapter.apply(effect_id, permit) == 2
+    assert await adapter.observe("a", "checkout") == (2, True)

@@ -124,6 +124,7 @@ class SimulatorAppliedEffect(Base):
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
     target_id: Mapped[str] = mapped_column(String(256), nullable=False)
     observed_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    permit_digest: Mapped[str | None] = mapped_column(String(64))
 
 
 class EffectReceipt(Base):

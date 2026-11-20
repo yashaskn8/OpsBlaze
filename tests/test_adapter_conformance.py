@@ -17,6 +17,7 @@ async def test_adapter_conformance_is_isolated_and_persisted(sessions_fixture):
     assert names == {
         "first-apply", "duplicate-apply", "effect-status", "stale-fence",
         "version-cas", "lost-ack-lookup", "expired-lease", "missing-effect",
+        "effect-identity-binding",
     }
     assert all(scenario["passed"] for scenario in run.results)
     async with sessions_fixture() as session:

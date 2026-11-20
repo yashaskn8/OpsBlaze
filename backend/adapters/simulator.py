@@ -1,6 +1,8 @@
 """Conformant local-only simulator. It never touches real infrastructure."""
 
 from dataclasses import dataclass
+import hashlib
+import json
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -19,6 +21,10 @@ class TargetVersionConflict(Exception):
     pass
 
 
+class EffectIdentityConflict(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class Permit:
     tenant_id: str
@@ -34,6 +40,21 @@ def utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
+def permit_digest(permit: Permit) -> str:
+    """Bind a reused effect identity to its exact original permit."""
+    data = {
+        "tenant": permit.tenant_id,
+        "target": permit.target_id,
+        "incident": str(permit.incident_id),
+        "action": permit.action_digest,
+        "fence": permit.fence,
+        "expected_version": permit.expected_version,
+        "expires_at": utc(permit.expires_at).astimezone(timezone.utc).isoformat(),
+    }
+    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 class SimulatorAdapter:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]):
         self.sessions = sessions
@@ -43,9 +64,16 @@ class SimulatorAdapter:
         async with self.sessions() as session:
             async with session.begin():
                 prior = await session.get(SimulatorAppliedEffect, effect_id)
+                digest = permit_digest(permit)
                 if prior is not None:
-                    if prior.tenant_id != permit.tenant_id or prior.target_id != permit.target_id:
-                        raise ValueError("effect ID used for another target")
+                    if (
+                        prior.tenant_id != permit.tenant_id
+                        or prior.target_id != permit.target_id
+                        or prior.permit_digest != digest
+                    ):
+                        raise EffectIdentityConflict(
+                            "effect ID does not match its original permit"
+                        )
                     return prior.observed_version
 
                 key = (permit.tenant_id, permit.target_id)
@@ -76,6 +104,7 @@ class SimulatorAdapter:
                         tenant_id=permit.tenant_id,
                         target_id=permit.target_id,
                         observed_version=target.version,
+                        permit_digest=digest,
                     )
                 )
                 reservation.state = "RELEASED"
