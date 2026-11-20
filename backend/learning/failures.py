@@ -87,12 +87,15 @@ async def record_case(
 
 def validate_change(kind: str, spec: dict) -> None:
     # Deliberately no extensible code, SQL, URL, or tool-permission fields.
+    if not isinstance(spec, dict):
+        raise FailureConflict("change must be an object")
     valid = {
         "PROBE_ORDER": lambda: (
             set(spec) == {"order"}
             and isinstance(spec["order"], list)
             and 1 <= len(spec["order"]) <= 2
-            and len(spec["order"]) == len(set(map(str, spec["order"])))
+            and all(isinstance(item, str) for item in spec["order"])
+            and len(spec["order"]) == len(set(spec["order"]))
             and all(
                 item in {"simulator.health", "simulator.version"}
                 for item in spec["order"]

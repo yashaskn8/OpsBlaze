@@ -57,6 +57,7 @@ def test_change_validator_rejects_permission_or_code_edits():
         ("CONTEXT_LIMIT", {"max_context_tokens": 1000}),
         ("ROUTE_SWITCH", {"strategy": "autonomous", "permissions": ["admin"]}),
         ("MIGRATION", {"sql": "ALTER TABLE incident"}),
+        ("PROBE_ORDER", {"order": [{"tool": "simulator.health"}]}),
     ):
         with pytest.raises(FailureConflict):
             validate_change(kind, spec)

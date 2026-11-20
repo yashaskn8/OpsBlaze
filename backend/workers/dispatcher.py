@@ -5,7 +5,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
@@ -27,6 +28,17 @@ async def claim_intent(
     sessions: async_sessionmaker[AsyncSession],
 ) -> tuple[int, str, str, str, dict | None] | None:
     now = datetime.now(timezone.utc)
+    start = aliased(OutboxEntry)
+    start_delivered = (
+        select(start.id)
+        .where(
+            start.incident_id == OutboxEntry.incident_id,
+            start.kind == "START_WORKFLOW",
+            start.delivered_at.is_not(None),
+        )
+        .correlate(OutboxEntry)
+        .exists()
+    )
     async with sessions() as session:
         async with session.begin():
             stmt = (
@@ -35,6 +47,9 @@ async def claim_intent(
                 .where(
                     OutboxEntry.delivered_at.is_(None),
                     OutboxEntry.available_at <= now,
+                    # A signal may not overtake the stable workflow start,
+                    # even when another dispatcher leases the older row.
+                    or_(OutboxEntry.kind == "START_WORKFLOW", start_delivered),
                 )
                 .order_by(OutboxEntry.id)
                 .limit(1)

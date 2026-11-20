@@ -301,3 +301,12 @@ the per-arm traces, virtual time and oracle outcomes.
 This is an isolated **deterministic baseline**, not a real LLM run,
 statistically powered paired trial, hidden-label evaluation, or external
 service workload. There is no Docker and no connection to live targets.
+
+## Dispatcher ordering invariant
+
+The outbox dispatcher only claims a CANCEL_WORKFLOW, review acknowledgment,
+or plan-decision signal after the matching START_WORKFLOW intent has been
+acknowledged as delivered. This prevents concurrent dispatchers from
+signaling a workflow that another dispatcher has not finished starting.
+Lost acknowledgments remain recoverable through a stable Temporal
+workflow ID and replay of the pending start intent.
