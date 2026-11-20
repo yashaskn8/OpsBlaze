@@ -359,3 +359,58 @@ async def test_redteam_verified_receipt_requires_matching_confirmed_version(lab)
     async with sessions() as session:
         receipt = await session.get(EffectReceipt, effect_id)
         assert receipt.state == "CONFIRMED"
+
+
+@pytest.mark.asyncio
+async def test_redteam_never_sent_receipt_cannot_acquire_verified_status(lab):
+    from backend.effects.gateway import set_state
+
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "9" * 64,
+    )
+    effect_id = await prepare_receipt(sessions, permit)
+
+    # Querying an unsent receipt does not fabricate an unknown external effect.
+    assert await reconcile_effect(sessions, adapter, effect_id) == "PREPARED"
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        assert receipt.attempt_count == 0 and receipt.state == "PREPARED"
+
+    # Even a matching forged remote identity and positive oracle cannot
+    # upgrade UNKNOWN when no durable SEND has ever occurred.
+    await set_state(sessions, effect_id, "UNKNOWN")
+
+    class ForgedRemoteStatus(SimulatorAdapter):
+        async def query_effect(self, effect_id):
+            return permit.expected_version + 1
+
+        async def observe(self, tenant_id, target_id):
+            return permit.expected_version + 1, True
+
+    assert await reconcile_effect(
+        sessions, ForgedRemoteStatus(sessions), effect_id,
+    ) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        assert receipt.state == "NEEDS_REVIEW" and receipt.attempt_count == 0
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert target.version == permit.expected_version and not target.healthy
+
+
+@pytest.mark.asyncio
+async def test_redteam_corrupt_confirmation_without_send_is_quarantined(lab):
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "a" * 64,
+    )
+    effect_id = await prepare_receipt(sessions, permit)
+    async with sessions() as session:
+        async with session.begin():
+            receipt = await session.get(EffectReceipt, effect_id)
+            receipt.state = "CONFIRMED"
+            receipt.observed_version = permit.expected_version + 1
+    assert await reconcile_effect(sessions, adapter, effect_id) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        assert receipt.state == "NEEDS_REVIEW"
