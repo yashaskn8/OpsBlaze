@@ -181,13 +181,26 @@ async def reconcile_effect(
         tenant_id, target_id = receipt.tenant_id, receipt.target_id
         expected_observed = receipt.observed_version
         original_version = receipt.expected_version
+        attempts = receipt.attempt_count
 
     if state in {"VERIFIED", "FAILED", "NEEDS_REVIEW"}:
         return state
+    if state in {"SENT", "UNKNOWN", "CONFIRMED"} and attempts != 1:
+        # PREPARED/UNKNOWN must never turn into VERIFIED without the durable
+        # one-winner SENT transition. Invalid persisted send counts are
+        # evidence for manual review, not authority to trust remote status.
+        try:
+            await set_state(sessions, effect_id, "NEEDS_REVIEW")
+        except EffectConflict:
+            return await reconcile_effect(sessions, adapter, effect_id)
+        return "NEEDS_REVIEW"
     if state in {"SENT", "UNKNOWN", "PREPARED"}:
         try:
             observed_version = await adapter.query_effect(effect_id)
         except (TimeoutError, ConnectionError):
+            # A never-sent receipt has no uncertain outbound side effect.
+            if state == "PREPARED":
+                return "PREPARED"
             # Lookup failure is not proof of non-application. No blind retry.
             if state != "UNKNOWN":
                 try:
@@ -196,6 +209,8 @@ async def reconcile_effect(
                     return await reconcile_effect(sessions, adapter, effect_id)
             return "UNKNOWN"
         if observed_version is None:
+            if state == "PREPARED":
+                return "PREPARED"
             if state != "UNKNOWN":
                 try:
                     await set_state(sessions, effect_id, "UNKNOWN")
