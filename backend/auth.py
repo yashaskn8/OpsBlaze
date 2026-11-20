@@ -15,12 +15,16 @@ from urllib.parse import urlparse
 
 import jwt
 from fastapi import Depends, Header, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.database import get_session
+from backend.models import RevokedIdentity
 from jwt import PyJWKClient
 
 from backend.settings import Settings, get_settings
 
 TENANT_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
-ALLOWED_ROLES = frozenset({"viewer", "operator", "reviewer"})
+ALLOWED_ROLES = frozenset({"viewer", "operator", "reviewer", "security_admin"})
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,7 @@ async def get_principal(
     x_opsblaze_token: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
     settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
 ) -> Principal:
     if settings.environment == "production":
         if not configured_identity(settings):
@@ -112,6 +117,19 @@ async def get_principal(
             raise HTTPException(401, "invalid or expired bearer token") from exc
         if x_tenant_id is not None and x_tenant_id != actor.tenant_id:
             raise HTTPException(403, "requested tenant does not match token")
+        # A signed JWT can remain valid after role removal at the IdP.
+        # Recheck the authoritative DB deny-list on every production call,
+        # and close the read transaction before endpoint mutations begin.
+        try:
+            revoked = await session.get(
+                RevokedIdentity, (actor.tenant_id, actor.subject)
+            )
+        except Exception as exc:
+            raise HTTPException(503, "identity revocation store unavailable") from exc
+        finally:
+            await session.rollback()
+        if revoked is not None:
+            raise HTTPException(403, "identity access revoked")
         return actor
 
     if not settings.local_token:
@@ -162,3 +180,17 @@ def local_reviewer(
     ):
         raise HTTPException(403, "reviewer credential required")
     return "DEV_REVIEWER_CREDENTIAL"
+
+
+def local_security_admin(
+    actor: Principal = Depends(get_principal),
+    settings: Settings = Depends(get_settings),
+) -> str:
+    # A separate authority cannot also hold operator/reviewer capabilities.
+    if (
+        settings.environment != "production"
+        or "security_admin" not in actor.roles
+        or actor.roles.intersection({"operator", "reviewer"})
+    ):
+        raise HTTPException(403, "independent security administrator required")
+    return actor.subject

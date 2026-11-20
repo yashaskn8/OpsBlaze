@@ -6,7 +6,10 @@ This structural gate complements behavioral token and cross-tenant tests.
 from fastapi.routing import APIRoute
 
 from backend.api import app
-from backend.auth import get_principal, local_operator, local_reviewer, local_tenant
+from backend.auth import (
+    get_principal, local_operator, local_reviewer,
+    local_security_admin, local_tenant,
+)
 
 
 PUBLIC_GETS = frozenset({"/v1/health/ready"})
@@ -25,6 +28,7 @@ def test_api_authorization_matrix_is_exhaustive():
             assert local_tenant in direct, (route.path, methods)
             assert (
                 local_operator in direct or local_reviewer in direct
+                or local_security_admin in direct
             ), (route.path, methods)
         elif route.path not in PUBLIC_GETS:
             assert (

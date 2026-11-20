@@ -277,3 +277,25 @@ to enter the `SENT` checkpoint without an explicitly identified approved
 plan. This protects both the high-level execute helper and the lower-level
 receipt state transition; the direct permit-only path remains available
 solely in the isolated development simulator test harness.
+
+## Production identity revocation boundary
+
+A JWT can remain cryptographically valid after a human loses reviewer
+authority. Production mode now checks a tenant-scoped database deny-list
+on each authenticated request. A bearer token bearing only the
+`security_admin` role may call
+`POST /v1/security/identities/{actor_id}/revoke` with an audit reason.
+No local development token can do this. The actor ID is a hashed,
+non-reversible IdP subject identifier from `GET /v1/auth/me`, not a
+name or email. Revocation is persistent and currently cannot be
+undone from the API.
+
+The security transaction invalidates that actor's pending approvals;
+the B3 effect gateway additionally checks this deny-list before
+`PREPARED → SENT`. PostgreSQL advisory serialization prevents a
+reviewer grant from being created concurrently with its identity's
+revocation. Effects already consumed or committed remain visible for
+independent receipt reconciliation; revocation never fabricates a
+rollback. The identity provider still needs a trusted administrative
+workflow to publish role-removal events promptly; no external IdP
+integration or operational security certification is implied.

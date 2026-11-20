@@ -13,7 +13,7 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 | A3 — Evidence provenance | Evidence IDs, timestamps, source versions and SHA-256, hypothesis steps | Signed external telemetry attestation, robust retention/redaction review |
 | A4 — Safe abstention | Typed risk assessment, evidence integrity/freshness/target-version checks, fail-closed abstention | Empirical calibration with independent held-out families; current 0/100 is **not a probability** |
 | P1 — Operator workbench | React incident list and plan actions, ETag snapshots, resumable SSE, gap-resync watermark, scheduled bounded retention, 32-stream cap | Production RBAC, multi-replica stream limits, reconnect/load campaigns and accessibility audit |
-| P2 — Approval boundary | Exact-plan digest, identity-bound grant/expiry/revocation, reviewer epoch and atomic consume-on-send | Real-IdP browser callback testing, per-user revocation, independent authority and two-person release policy |
+| P2 — Approval boundary | Exact-plan digest, identity-bound grant/expiry/revocation, reviewer epoch, tenant-scoped security revocation and atomic consume-on-send | Real-IdP browser callback testing, external role-event ingestion, independent release authority and two-person release policy |
 | P3 — Forensic graph | Evidence→hypothesis→plan→effect→outcome lineage, explicitly missing refs | Comprehensive OpenTelemetry span linking and performance checks |
 | S1 — Paired replay | Isolated, time-sealed deterministic twin fixtures with an independent postcondition | Actual paired model-vs-runbook controlled trial, statistical inference |
 | E1 — Experience capture | Consent-scoped capsules with expiry scrubbing, incident-locked capture, outcome-reversal quarantine and dependent-lesson revocation | Cross-store deletion and approved classification/retention controls |
@@ -37,7 +37,7 @@ Implement real tenant identity, independently scoped operator/reviewer/release r
 
 ## Explicit release blockers
 
-- **Identity and governance:** Production token verification and tenant/role checks have code and mock-key tests, but need real IdP configuration and independent penetration review. Reviewer-policy epochs remain coarse simulator invalidation; least-privilege service identities and independent signing/release roles remain missing.
+- **Identity and governance:** Production token verification and tenant/role checks have code and mock-key tests, but need real IdP configuration and independent penetration review. Server-side security-admin revocation fences pending grants, but does not substitute for IdP role-change ingestion; least-privilege service identities and independent signing/release roles remain missing.
 - **Real-world capability:** No real target adapter is enabled. The simulator is the only effect destination; third-party idempotency/fencing, oracle isolation, audit retention and recovery under crashes are unproven.
 - **Measured intelligence:** The optional AI advisory is a constrained, off-by-default read-only prototype. E5 uses public deterministic fixtures, not blinded independent recovery trials; confidence calibration and regression evidence are missing.
 - **Operations:** Native PostgreSQL/Temporal CI passes basic migrations and simulator end-to-end flows but does not prove high availability, restore under corruption, multi-host load, penetration resistance, accessibility or disaster recovery.

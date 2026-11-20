@@ -4,6 +4,7 @@ All tokens are synthetic RSA-signed fixtures; no external IdP is contacted.
 """
 
 import time
+from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
@@ -252,3 +253,119 @@ async def test_authenticated_identity_returns_verified_roles_without_raw_sub(
         "/v1/auth/me", headers=bearer(token, tenant="beta"),
     )
     assert forged.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_security_admin_revokes_identity_and_all_its_pending_grants(
+    signer, production_client, sessions_fixture,
+):
+    from backend.models import (
+        ApprovalGrant, ApprovalRevocation, IncidentPlan, RevokedIdentity,
+    )
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+    from sqlalchemy import select
+    from uuid import uuid4
+
+    tenant = "alpha"
+    reviewer_token = signer(subject="reviewer-to-revoke", roles=("reviewer",))
+    reviewer_id = verify_bearer(reviewer_token, AUTH_SETTINGS).subject
+    admin_token = signer(subject="security-admin", roles=("security_admin",))
+    admin_id = verify_bearer(admin_token, AUTH_SETTINGS).subject
+    incident_id, plan_id, grant_id = None, uuid4(), uuid4()
+    async with sessions_fixture() as session:
+        admitted = await admit_incident(
+            session, tenant, "security-revoke",
+            IncidentCreate(target_id="checkout"),
+        )
+        incident_id = admitted.id
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(IncidentPlan(
+                id=plan_id, tenant_id=tenant, incident_id=incident_id,
+                target_id="checkout", action_id="SIMULATOR_MARK_HEALTHY",
+                plan_digest="a" * 64, expected_version=1,
+                evidence_ids=[], status="APPROVED", version=2,
+                decided_by=reviewer_id, review_epoch=1,
+            ))
+            await session.flush()
+            session.add(ApprovalGrant(
+                id=grant_id, tenant_id=tenant, plan_id=plan_id,
+                plan_digest="a" * 64, reviewer_id=reviewer_id,
+                scope="SIMULATOR_MARK_HEALTHY",
+                decision="APPROVE", state="APPROVED",
+                reason="approved isolated simulator fixture",
+                version=1, expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            ))
+
+    route = f"/v1/security/identities/{reviewer_id}/revoke"
+    denied = await production_client.post(
+        route, headers=bearer(reviewer_token),
+        json={"reason": "reviewer access withdrawn"},
+    )
+    assert denied.status_code == 403
+
+    forbidden_multi_role = await production_client.post(
+        route,
+        headers=bearer(signer(
+            subject="both-admin-reviewer", roles=("security_admin", "reviewer"),
+        )),
+        json={"reason": "reviewer access withdrawn"},
+    )
+    assert forbidden_multi_role.status_code == 403
+
+    revoked = await production_client.post(
+        route, headers=bearer(admin_token),
+        json={"reason": "reviewer permissions withdrawn by security authority"},
+    )
+    assert revoked.status_code == 202, revoked.text
+    assert revoked.json()["grants_revoked"] == 1
+    assert (
+        await production_client.get("/v1/auth/me", headers=bearer(reviewer_token))
+    ).status_code == 403
+    assert (
+        await production_client.get("/v1/auth/me", headers=bearer(admin_token))
+    ).status_code == 200
+
+    # Revocation is tenant-specific even when issuer + subject are identical.
+    beta_reviewer = signer(
+        tenant="beta", subject="reviewer-to-revoke", roles=("reviewer",),
+    )
+    assert (
+        await production_client.get(
+            "/v1/auth/me", headers=bearer(beta_reviewer, tenant="beta"),
+        )
+    ).status_code == 200
+
+    again = await production_client.post(
+        route, headers=bearer(admin_token),
+        json={"reason": "duplicate operator message with same identity"},
+    )
+    assert again.status_code == 202
+    assert again.json()["grants_revoked"] == 0
+
+    async with sessions_fixture() as session:
+        record = await session.get(RevokedIdentity, (tenant, reviewer_id))
+        grant = await session.get(ApprovalGrant, grant_id)
+        plan = await session.get(IncidentPlan, plan_id)
+        audits = (await session.scalars(select(ApprovalRevocation).where(
+            ApprovalRevocation.approval_id == grant_id
+        ))).all()
+        assert record.revoked_by == admin_id
+        assert grant.state == "REVOKED" and grant.version == 2
+        assert plan.status == "REVOKED" and plan.version == 3
+        assert len(audits) == 1 and audits[0].revoked_by == admin_id
+
+
+@pytest.mark.asyncio
+async def test_development_token_cannot_claim_security_admin(signer, production_client):
+    actor_id = verify_bearer(signer(), AUTH_SETTINGS).subject
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        environment="development", local_token="dev-key",
+    )
+    response = await production_client.post(
+        f"/v1/security/identities/{actor_id}/revoke",
+        json={"reason": "non-production attempt to revoke"},
+        headers={"X-Tenant-Id": "alpha", "X-OpsBlaze-Token": "dev-key"},
+    )
+    assert response.status_code == 403

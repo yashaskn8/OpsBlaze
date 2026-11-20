@@ -13,7 +13,7 @@ from backend.adapters.simulator import SimulatorAdapter, utc
 from backend.adapters.conformance import current_simulator_is_conformant
 from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
-from backend.models import ApprovalGrant, ApprovalRevocation, DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, SimulatorTarget, UIEvent
+from backend.models import ApprovalGrant, ApprovalRevocation, RevokedIdentity, DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, SimulatorTarget, UIEvent
 from backend.outcomes import adjudicate_simulator
 from backend.settings import get_settings
 
@@ -162,6 +162,14 @@ async def decide_plan(
     if not 1 <= ttl <= 3600:
         raise PlanConflict("approval TTL must be 1–3600 seconds")
     async with session.begin():
+        if decided_by.startswith("oidc:"):
+            from backend.security.revocation import lock_reviewer_subject
+
+            await lock_reviewer_subject(session, tenant_id, decided_by)
+            if await session.get(
+                RevokedIdentity, (tenant_id, decided_by)
+            ) is not None:
+                raise PlanConflict("reviewer identity has been revoked")
         plan = await session.scalar(
             select(IncidentPlan)
             .where(IncidentPlan.id == plan_id, IncidentPlan.tenant_id == tenant_id)

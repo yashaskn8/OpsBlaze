@@ -733,3 +733,17 @@ class UIEventWatermark(Base):
         Uuid(as_uuid=True), ForeignKey("incident.id"), primary_key=True
     )
     last_purged_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class RevokedIdentity(Base):
+    """Tenant-scoped permanent revocation; never store raw IdP subject."""
+
+    __tablename__ = "revoked_identity"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    actor_id: Mapped[str] = mapped_column(String(48), primary_key=True)
+    revoked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    revoked_by: Mapped[str] = mapped_column(String(48), nullable=False)
+    reason: Mapped[str] = mapped_column(String(256), nullable=False)

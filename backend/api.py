@@ -5,7 +5,10 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth import Principal, get_principal, local_operator, local_reviewer, local_tenant
+from backend.auth import (
+    Principal, get_principal, local_operator, local_reviewer,
+    local_security_admin, local_tenant,
+)
 from backend.database import get_session
 from backend.schemas import IncidentCreate, IncidentView
 from backend.services import IdempotencyConflict, RateLimited, admit_incident, find_incident
@@ -1329,4 +1332,35 @@ async def revoke_plan_approval(
         "id": str(approval.id),
         "state": approval.state,
         "version": approval.version,
+    }
+
+
+class RevokeIdentityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=8, max_length=256)
+
+
+@app.post("/v1/security/identities/{actor_id}/revoke", status_code=202)
+async def security_revoke_identity(
+    actor_id: str,
+    payload: RevokeIdentityRequest,
+    tenant_id: str = Depends(local_tenant),
+    security_admin: str = Depends(local_security_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    import re
+    from backend.security.revocation import revoke_identity
+
+    if not re.fullmatch(r"oidc:[0-9a-f]{32}", actor_id):
+        raise HTTPException(422, "invalid actor identifier")
+    try:
+        row, grants_revoked = await revoke_identity(
+            session, tenant_id, actor_id, security_admin, payload.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return {
+        "actor_id": row.actor_id, "tenant_id": row.tenant_id,
+        "revoked_at": row.revoked_at.isoformat(),
+        "grants_revoked": grants_revoked,
     }

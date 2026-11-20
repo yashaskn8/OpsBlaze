@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.adapters.simulator import (
     Permit, SimulatorAdapter, StaleFence, TargetVersionConflict, utc
 )
-from backend.models import ApprovalGrant, EffectReceipt, IncidentPlan
+from backend.models import ApprovalGrant, EffectReceipt, IncidentPlan, RevokedIdentity
 
 
 class EffectConflict(Exception):
@@ -113,6 +113,10 @@ async def set_state(
                 if (
                     approval is None or plan is None
                     or approval.state != "APPROVED"
+                    or await session.get(
+                        RevokedIdentity,
+                        (receipt.tenant_id, approval.reviewer_id),
+                    ) is not None
                     or approval.plan_digest != receipt.plan_digest
                     or approval.scope != "SIMULATOR_MARK_HEALTHY"
                     or utc(approval.expires_at) <= datetime.now(timezone.utc)
