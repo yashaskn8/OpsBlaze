@@ -141,3 +141,17 @@ def test_redteam_trial_mutation_changes_report_digest_without_leaking_labels():
     assert original["oracle_digest"] == altered["oracle_digest"]
     assert "cases" not in original
     assert original["promotion_eligible"] is False
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+def test_redteam_evaluation_json_rejects_nonstandard_numbers(tmp_path, literal):
+    path = tmp_path / "untrusted-evaluation.json"
+    path.write_text('{"score":' + literal + '}', encoding="utf-8")
+    with pytest.raises(ValueError, match="non-standard numeric"):
+        read_json(str(path))
+
+
+def test_redteam_evaluation_digest_never_accepts_nonfinite_values():
+    manifest, oracle, runs = fixture()
+    runs["candidate"][0]["optional_metric"] = float("nan")
+    assert evaluate_heldout(manifest, oracle, runs)["state"] == "INVALID"
