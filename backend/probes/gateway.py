@@ -92,6 +92,13 @@ async def invoke_probe(
                             catalog_id == "simulator.health"
                             and type(observation.get("healthy")) is not bool
                         )
+                        or (
+                            catalog_id == "simulator.version"
+                            and (
+                                not isinstance(observation, dict)
+                                or type(observation.get("version")) is not int
+                            )
+                        )
                     ):
                         raise ProbeDenied("recorded probe observation failed schema checks")
                 elif (
@@ -156,3 +163,25 @@ async def invoke_probe(
                           catalog_id=catalog_id, outcome=outcome, evidence_id=evidence_id)
             )
             return ProbeResult(outcome, evidence_id, excerpt)
+
+
+async def evidence_links_intact(
+    session: AsyncSession, incident_id: UUID, evidence_ids: list[UUID],
+) -> bool:
+    """A3: bind the exact assessment/plan evidence to its two authorized probe steps."""
+    if len(evidence_ids) != 2 or len(set(evidence_ids)) != 2:
+        return False
+    rows = (await session.scalars(
+        select(ProbeCall).where(
+            ProbeCall.incident_id == incident_id,
+            ProbeCall.step_no.in_((1, 2)),
+        )
+    )).all()
+    links = {
+        (row.step_no, row.catalog_id, row.outcome, row.evidence_id)
+        for row in rows
+    }
+    return links == {
+        (1, "simulator.health", "OK", evidence_ids[0]),
+        (2, "simulator.version", "OK", evidence_ids[1]),
+    }
