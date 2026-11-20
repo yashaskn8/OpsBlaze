@@ -369,3 +369,26 @@ async def test_development_token_cannot_claim_security_admin(signer, production_
         headers={"X-Tenant-Id": "alpha", "X-OpsBlaze-Token": "dev-key"},
     )
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_redteam_dual_operator_reviewer_role_cannot_approve(
+    signer, production_client,
+):
+    both = bearer(signer(roles=("operator", "reviewer")))
+    # A reviewer must not share operator authority, even for another
+    # operator's incident or a nonexistent plan.
+    denied = await production_client.post(
+        f"/v1/plans/{uuid4()}/decisions",
+        headers={**both, "If-Match": "1"},
+        json={"decision": "APPROVE"},
+    )
+    assert denied.status_code == 403
+
+    only_reviewer = bearer(signer(roles=("reviewer",)))
+    permitted_to_reach_plan_lookup = await production_client.post(
+        f"/v1/plans/{uuid4()}/decisions",
+        headers={**only_reviewer, "If-Match": "1"},
+        json={"decision": "APPROVE"},
+    )
+    assert permitted_to_reach_plan_lookup.status_code == 404
