@@ -78,8 +78,14 @@ def verify_bearer(token: str, settings: Settings) -> Principal:
     tenant_id = claims.get("tenant_id")
     subject = claims.get("sub")
     roles = claims.get("roles")
+    issued = claims.get("iat")
+    expires = claims.get("exp")
     if (
-        not isinstance(tenant_id, str)
+        claims.get("aud") != settings.oidc_audience
+        or type(issued) is not int
+        or type(expires) is not int
+        or not 0 < expires - issued <= 3600
+        or not isinstance(tenant_id, str)
         or TENANT_PATTERN.fullmatch(tenant_id) is None
         or not isinstance(subject, str) or not 1 <= len(subject) <= 256
         or not isinstance(roles, list)
