@@ -85,8 +85,8 @@ async def test_two_dispatchers_then_worker_handoff_preserves_one_effect():
             # The first worker performs investigation, then exits.
             async with Worker(**config):
                 await asyncio.gather(
-                    dispatch_once(env.client, sessions),
-                    dispatch_once(env.client, sessions),
+                    dispatch_once(env.client, sessions, tenant_filter=tenant),
+                    dispatch_once(env.client, sessions, tenant_filter=tenant),
                 )
                 await until_state("AWAITING_APPROVAL")
 
@@ -106,8 +106,8 @@ async def test_two_dispatchers_then_worker_handoff_preserves_one_effect():
             # The approval signal is durable in Temporal and is replayed by
             # the replacement worker without re-running initial probes.
             await asyncio.gather(
-                dispatch_once(env.client, sessions),
-                dispatch_once(env.client, sessions),
+                dispatch_once(env.client, sessions, tenant_filter=tenant),
+                dispatch_once(env.client, sessions, tenant_filter=tenant),
             )
             async with Worker(**config):
                 await until_state("VERIFIED")
