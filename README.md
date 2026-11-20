@@ -255,3 +255,8 @@ Production readiness additionally requires complete, trusted OIDC
 issuer/audience/JWKS configuration. Missing identity-provider settings
 cause `/v1/health/ready` to return 503 even when PostgreSQL and
 Temporal are reachable, avoiding a false-ready deployment.
+
+The frontend now commits the runner-resolved npm v3 lockfile. CI uses
+`npm ci --no-audit --no-fund` to verify that
+`frontend/package-lock.json` matches `frontend/package.json`.
+Local installs can use `npm ci` for the same dependency tree.
