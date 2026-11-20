@@ -122,3 +122,7 @@ their target digests and evidence references and revokes linked lessons in
 the same transaction. Repeated runs are idempotent and leave minimal audit
 IDs; no raw incident logs are added. Production retention scheduling and
 backup/restore purge verification remain separate operational gates.
+
+The CI backend job also runs a narrow Ruff undefined-name check
+(`F821,F822,F823`) before tests. This intentionally avoids an
+unrelated repository-wide style rewrite.
