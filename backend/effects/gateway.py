@@ -174,10 +174,18 @@ async def reconcile_effect(
             return "UNKNOWN"
         if observed_version is None:
             if state != "UNKNOWN":
-                await set_state(sessions, effect_id, "UNKNOWN")
+                try:
+                    await set_state(sessions, effect_id, "UNKNOWN")
+                except EffectConflict:
+                    # Another worker advanced the receipt after our stale read.
+                    # Never replace CONFIRMED/VERIFIED with UNKNOWN.
+                    return await reconcile_effect(sessions, adapter, effect_id)
             return "UNKNOWN"
         if state != "CONFIRMED":
-            await set_state(sessions, effect_id, "CONFIRMED", observed_version)
+            try:
+                await set_state(sessions, effect_id, "CONFIRMED", observed_version)
+            except EffectConflict:
+                return await reconcile_effect(sessions, adapter, effect_id)
         expected_observed = observed_version
 
     try:
@@ -188,7 +196,11 @@ async def reconcile_effect(
         return "UNKNOWN"
     verified = witness is not None and witness == (expected_observed, True)
     terminal = "VERIFIED" if verified else "NEEDS_REVIEW"
-    await set_state(sessions, effect_id, terminal)
+    try:
+        await set_state(sessions, effect_id, terminal)
+    except EffectConflict:
+        # A newer terminal record takes precedence over this observation.
+        return await reconcile_effect(sessions, adapter, effect_id)
     return terminal
 
 
