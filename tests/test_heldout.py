@@ -114,3 +114,30 @@ def test_oracle_input_rejects_duplicate_json_keys(tmp_path):
     path.write_text('{"cases":[],"cases":[]}', encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate"):
         read_json(str(path))
+
+
+@pytest.mark.parametrize("mutation", ["almost_no_controls", "bad_training_family", "boolean_version"])
+def test_redteam_heldout_metadata_tampering_is_rejected(mutation):
+    manifest, oracle, runs = fixture()
+    if mutation == "almost_no_controls":
+        for case in oracle["cases"][32:-1]:
+            case["negative_control"] = False
+        manifest["oracle_sha256"] = canonical_digest(oracle)
+    elif mutation == "bad_training_family":
+        manifest["training_families"] = [42]
+    else:
+        manifest["version"] = True
+    report = evaluate_heldout(manifest, oracle, runs)
+    assert report["state"] == "INVALID"
+    assert report["promotion_eligible"] is False
+
+
+def test_redteam_trial_mutation_changes_report_digest_without_leaking_labels():
+    manifest, oracle, runs = fixture()
+    original = evaluate_heldout(manifest, oracle, runs)
+    runs["candidate"][0]["probe_cost_units"] += 1
+    altered = evaluate_heldout(manifest, oracle, runs)
+    assert original["trials_digest"] != altered["trials_digest"]
+    assert original["oracle_digest"] == altered["oracle_digest"]
+    assert "cases" not in original
+    assert original["promotion_eligible"] is False
