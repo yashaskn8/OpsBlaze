@@ -3,17 +3,17 @@
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, NAMESPACE_URL, uuid5
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.adapters.simulator import SimulatorAdapter
+from backend.adapters.simulator import SimulatorAdapter, utc
 from backend.adapters.conformance import current_simulator_is_conformant
 from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
-from backend.models import EffectReceipt, Incident, IncidentPlan, OutboxEntry, SimulatorTarget, UIEvent
+from backend.models import DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, SimulatorTarget, UIEvent
 from backend.outcomes import adjudicate_simulator
 
 
@@ -32,6 +32,68 @@ def digest_plan(
     }
     raw = json.dumps(doc, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+async def current_plan_evidence_is_intact(
+    session: AsyncSession, plan: IncidentPlan,
+) -> bool:
+    """Recheck durable evidence and assessment before approval and first effect."""
+    ids = plan.evidence_ids
+    if not isinstance(ids, list) or len(ids) != 2 or len(set(ids)) != 2:
+        return False
+    try:
+        refs = [UUID(value) for value in ids]
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+    expected_digest = digest_plan(
+        plan.tenant_id, plan.incident_id, plan.target_id,
+        plan.expected_version, ids,
+    )
+    if plan.plan_digest != expected_digest:
+        return False
+    evidence_snapshot = hashlib.sha256(
+        json.dumps(ids, separators=(",", ":"), sort_keys=False).encode()
+    ).hexdigest()
+    assessment = await session.scalar(
+        select(DecisionAssessment).where(
+            DecisionAssessment.tenant_id == plan.tenant_id,
+            DecisionAssessment.incident_id == plan.incident_id,
+            DecisionAssessment.step_no == 2,
+        )
+    )
+    if (
+        assessment is None or assessment.outcome != "PROPOSED"
+        or assessment.reason != "ACCEPTED"
+        or assessment.evidence_digest != evidence_snapshot
+    ):
+        return False
+    items = (await session.scalars(
+        select(Evidence).where(
+            Evidence.id.in_(refs),
+            Evidence.tenant_id == plan.tenant_id,
+            Evidence.incident_id == plan.incident_id,
+        )
+    )).all()
+    if len(items) != 2:
+        return False
+    now = datetime.now(timezone.utc)
+    if (
+        {row.source for row in items} != {"simulator.health", "simulator.version"}
+        or any(
+            row.validity != "VALID"
+            or row.target_id != plan.target_id
+            or row.target_version != plan.expected_version
+            or not timedelta(0) <= now - utc(row.observed_at) <= timedelta(minutes=5)
+            or hashlib.sha256(row.redacted_excerpt.encode()).hexdigest() != row.sha256
+            for row in items
+        )
+    ):
+        return False
+    target = await session.get(
+        SimulatorTarget, (plan.tenant_id, plan.target_id)
+    )
+    return target is not None and target.version == plan.expected_version
 
 
 async def propose_simulator_plan(
@@ -94,10 +156,10 @@ async def decide_plan(
             or incident is None or incident.status_projection != "AWAITING_APPROVAL"
         ):
             raise PlanConflict("plan or incident version/state changed")
-        if decision == "APPROVE":
-            target = await session.get(SimulatorTarget, (tenant_id, plan.target_id))
-            if target is None or target.version != plan.expected_version:
-                raise PlanConflict("simulator target version changed")
+        if decision == "APPROVE" and not await current_plan_evidence_is_intact(
+            session, plan
+        ):
+            raise PlanConflict("plan evidence, assessment, or target version changed")
         plan.status = "APPROVED" if decision == "APPROVE" else "REJECTED"
         plan.version += 1
         plan.decided_at = datetime.now(timezone.utc)
@@ -137,7 +199,9 @@ async def execute_approved_simulator_plan(
             or plan.version != 2
         ):
             return "NEEDS_REVIEW"
-        digest, target_id, target_version = plan.plan_digest, plan.target_id, plan.expected_version
+        digest, target_id, target_version = (
+            plan.plan_digest, plan.target_id, plan.expected_version
+        )
         existing = await session.scalar(
             select(EffectReceipt).where(
                 EffectReceipt.tenant_id == tenant_id,
@@ -145,6 +209,10 @@ async def execute_approved_simulator_plan(
                 EffectReceipt.plan_digest == digest,
             )
         )
+        if existing is None and not await current_plan_evidence_is_intact(
+            session, plan
+        ):
+            return "NEEDS_REVIEW"
     adapter = SimulatorAdapter(sessions)
     if existing is not None:
         state = await reconcile_effect(sessions, adapter, existing.id)

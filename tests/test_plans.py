@@ -4,7 +4,7 @@ from sqlalchemy import select, update
 
 from backend.investigator.baseline import inspect
 from backend.adapters.conformance import execute_suite
-from backend.models import Incident, IncidentPlan, OutboxEntry, ResourceEpoch, SimulatorTarget
+from backend.models import EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, ResourceEpoch, SimulatorTarget
 from backend.plans import PlanConflict, decide_plan, execute_approved_simulator_plan
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
@@ -71,6 +71,37 @@ async def test_wrong_tenant_and_stale_target_rejected(proposed_lab):
         async with session.begin():
             target = await session.get(SimulatorTarget, ("a", "checkout"))
             target.version = 9
+    async with sessions() as session:
+        with pytest.raises(PlanConflict):
+            await decide_plan(session, "a", plan_id, 1, "APPROVE")
+
+
+@pytest.mark.asyncio
+async def test_approved_plan_does_not_execute_after_evidence_is_tampered(proposed_lab):
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        plan = await decide_plan(session, "a", plan_id, 1, "APPROVE")
+        evidence_id = plan.evidence_ids[0]
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+    async with sessions() as session:
+        async with session.begin():
+            from uuid import UUID
+            row = await session.get(Evidence, UUID(evidence_id))
+            row.redacted_excerpt = '{"healthy":true}'
+    assert await execute_approved_simulator_plan(sessions, "a", incident_id, plan_id) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert target.healthy is False and target.version == 3
+        assert (await session.scalars(select(EffectReceipt))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_approval_rejects_modified_plan_digest(proposed_lab):
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        async with session.begin():
+            plan = await session.get(IncidentPlan, plan_id)
+            plan.plan_digest = "0" * 64
     async with sessions() as session:
         with pytest.raises(PlanConflict):
             await decide_plan(session, "a", plan_id, 1, "APPROVE")

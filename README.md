@@ -374,3 +374,12 @@ idempotency conflicts, version-bound cancellation, and the production
 and release fail-closed paths. A shared development token is **not**
 production authentication; production mode deliberately rejects all
 tenant API access until a distinct authorization system is implemented.
+
+## Execution-time evidence revalidation
+
+A2/A4/P2 evidence checks now run at both simulator-plan approval and before
+the first simulator effect. They verify the exact plan digest, evidence IDs,
+typed source pair, observation age, evidence content hashes, pinned assessment
+and current simulator target version. A post-approval evidence change leaves
+the incident in NEEDS_REVIEW without producing a new effect receipt.
+Existing ambiguous effect receipts remain available for reconciliation.
