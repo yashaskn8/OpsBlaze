@@ -721,3 +721,84 @@ async def test_failure_case_not_trusted_after_concurrent_outcome_dispute():
                 assert cluster.quarantined
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_failure_review_serializes_with_outcome_dispute():
+    """E3 reviewer cannot leave a corrected case trusted after an E2 reversal."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.learning.failures import (
+        FailureConflict, record_case, review_classification,
+    )
+    from backend.models import (
+        EffectReceipt, FailureCase, FailureCluster, OutcomeRevision,
+    )
+    from backend.outcomes import dispute_outcome
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "review-race-" + uuid4().hex[:12]
+    outcome_id = uuid4()
+    try:
+        async with sessions() as session:
+            incident = await admit_incident(
+                session, tenant, "review", IncidentCreate(target_id="checkout"),
+            )
+        async with sessions() as session:
+            async with session.begin():
+                session.add(EffectReceipt(
+                    id=uuid4(), tenant_id=tenant, incident_id=incident.id,
+                    plan_digest="f" * 64, target_id="checkout",
+                    adapter_id="simulator", idempotency_key="review",
+                    fence=1, expected_version=1, state="UNKNOWN",
+                    attempt_count=1,
+                ))
+                session.add(OutcomeRevision(
+                    id=outcome_id, tenant_id=tenant, incident_id=incident.id,
+                    effect_id=None, revision=1, label="DISPUTED",
+                    witness_source="SIMULATOR_WITNESS", observed_version=None,
+                    reason="unknown outcome with independently disputed status",
+                ))
+        async with sessions() as session:
+            original = await record_case(session, tenant, outcome_id)
+            assert original.origin_code == "OUTCOME_DISPUTED"
+            assert original.classification_version == 1
+
+        async def review():
+            async with sessions() as session:
+                try:
+                    return await review_classification(
+                        session, tenant, original.id, 1,
+                        "EFFECT_UNKNOWN", None,
+                        "reviewed the unresolved simulator effect receipt",
+                    )
+                except FailureConflict:
+                    return None
+
+        async def reverse():
+            async with sessions() as session:
+                return await dispute_outcome(
+                    session, tenant, outcome_id, 1,
+                    "new independent feedback invalidates prior classification",
+                )
+
+        correction, revision = await asyncio.gather(review(), reverse())
+        assert revision.revision == 2
+        async with sessions() as session:
+            stored = await session.get(FailureCase, original.id)
+            assert stored.review_status == "STALE"
+            cluster = await session.get(FailureCluster, stored.cluster_id)
+            assert cluster is not None and cluster.quarantined
+            if correction is None:
+                assert stored.classification_version == 1
+            else:
+                assert stored.classification_version == 2
+                assert stored.origin_code == "EFFECT_UNKNOWN"
+    finally:
+        await engine.dispose()

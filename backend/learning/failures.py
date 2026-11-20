@@ -247,15 +247,35 @@ async def review_classification(
     if corrected_code not in {"PROBE_DENIED", "EFFECT_FAILED", "EFFECT_UNKNOWN"}:
         raise FailureConflict("unsupported correction code")
     async with session.begin():
+        # Read the incident ID without taking the case lock. E2 reversals
+        # acquire the incident lock before invalidating failure cases.
+        source = await session.scalar(
+            select(FailureCase.incident_id).where(
+                FailureCase.id == case_id, FailureCase.tenant_id == tenant_id
+            )
+        )
+        if source is None:
+            return None
+        incident = await session.scalar(
+            select(Incident.id).where(
+                Incident.id == source, Incident.tenant_id == tenant_id
+            ).with_for_update()
+        )
+        if incident is None:
+            raise FailureConflict("incident missing")
+        # Reload after waiting for a possible E2 reversal. The cached
+        # pre-lock row is not a reliable source of current review status.
         case = await session.scalar(
             select(FailureCase)
             .where(FailureCase.id == case_id, FailureCase.tenant_id == tenant_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        if case is None:
-            return None
-        if case.classification_version != expected_version:
-            raise FailureConflict("classification version changed")
+        if (
+            case is None or case.classification_version != expected_version
+            or case.review_status == "STALE"
+        ):
+            raise FailureConflict("classification version changed or source stale")
         latest_outcome = await session.scalar(
             select(OutcomeRevision)
             .where(
@@ -320,6 +340,8 @@ async def review_classification(
                 case_count=0, quarantined=False,
             )
             session.add(new_cluster)
+            # Parent FK must exist before updating the existing case row.
+            await session.flush()
         if old_cluster.id != new_cluster.id:
             old_cluster.case_count -= 1
             old_cluster.quarantined = True
