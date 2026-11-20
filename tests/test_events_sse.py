@@ -223,3 +223,47 @@ async def test_redteam_oversized_sse_and_poll_cursors_are_rejected(sessions_fixt
                 assert response.status_code == 400
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_redteam_sse_expires_between_frames_even_inside_one_event_batch(
+    sessions_fixture, monkeypatch,
+):
+    """A valid login must not grant indefinite streaming after expiry."""
+    from backend.models import UIEvent
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "expiry-stream",
+            IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(UIEvent(
+                tenant_id="alpha", incident_id=incident.id,
+                kind="INVESTIGATING", projection_version=2,
+            ))
+
+    clock = [1000.0]
+    monkeypatch.setattr("backend.events.time.time", lambda: clock[0])
+
+    async def connected():
+        return False
+
+    stream = stream_incident_events(
+        sessions_fixture, "alpha", incident.id, 0, connected,
+        poll_seconds=0, max_ticks=2, token_expires_at=1001,
+    )
+    first = await stream.__anext__()
+    assert '"kind":"ADMITTED"' in first
+
+    clock[0] = 1001.0
+    with pytest.raises(StopAsyncIteration):
+        await stream.__anext__()
+
+    already_expired = stream_incident_events(
+        sessions_fixture, "alpha", incident.id, 0, connected,
+        poll_seconds=0, max_ticks=1, token_expires_at=1000,
+    )
+    with pytest.raises(StopAsyncIteration):
+        await already_expired.__anext__()
