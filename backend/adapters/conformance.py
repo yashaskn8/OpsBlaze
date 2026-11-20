@@ -32,14 +32,14 @@ from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 from backend.settings import get_settings
 
-SUITE_VERSION = "simulator-conformance-v4"
+SUITE_VERSION = "simulator-conformance-v5"
 RETENTION_SECONDS = 3600
 REQUIRED_SCENARIOS = frozenset({
     "first-apply", "duplicate-apply", "effect-status", "stale-fence",
     "version-cas", "lost-ack-lookup", "expired-lease", "missing-effect",
     "effect-identity-binding", "status-store-outage", "status-store-recovered",
     "oracle-outage", "oracle-recovered", "retention-gap",
-    "retention-recovered", "external-version-edit",
+    "retention-recovered", "external-version-edit", "permit-version-binding",
 })
 
 
@@ -311,6 +311,27 @@ async def execute_suite(
             outcome(
                 "external-version-edit", True,
                 "adapter CAS rejects a target modified outside the workflow",
+            )
+
+        forged_permit = Permit(
+            tenant_id=permit_seven.tenant_id,
+            target_id=permit_seven.target_id,
+            incident_id=permit_seven.incident_id,
+            action_digest=permit_seven.action_digest,
+            fence=permit_seven.fence,
+            expected_version=permit_seven.expected_version + 1,
+            expires_at=permit_seven.expires_at,
+        )
+        try:
+            await adapter.apply(uuid4(), forged_permit)
+            outcome(
+                "permit-version-binding", False,
+                "changed permit version bypassed frozen reservation",
+            )
+        except TargetVersionConflict:
+            outcome(
+                "permit-version-binding", True,
+                "permit target version remains bound to reservation snapshot",
             )
     finally:
         # Remove disposable fixture rows. Keep only the digest + scenario report.
