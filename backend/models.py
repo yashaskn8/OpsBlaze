@@ -78,9 +78,10 @@ class OutboxEntry(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    payload: Mapped[dict | None] = mapped_column(JSON)
 
 # B2/B3 simulator and effect records. No production target connector is enabled.
-from sqlalchemy import Boolean
+from sqlalchemy import Boolean, JSON
 
 
 class ResourceEpoch(Base):
@@ -100,6 +101,7 @@ class ResourceReservation(Base):
     holder_incident: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     action_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     fence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    expected_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False)
 
@@ -154,7 +156,6 @@ class AdmissionUsage(Base):
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     accepted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-from sqlalchemy import JSON
 
 
 class Evidence(Base):
@@ -207,3 +208,23 @@ class HypothesisStep(Base):
     token_reserved: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     token_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+class IncidentPlan(Base):
+    __tablename__ = "incident_plan"
+    __table_args__ = (
+        UniqueConstraint("incident_id", name="uq_plan_incident"),
+        Index("ix_plan_tenant_incident", "tenant_id", "incident_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    action_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    plan_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    evidence_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

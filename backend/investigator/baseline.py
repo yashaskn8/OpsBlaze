@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.models import HypothesisStep
 from backend.probes.gateway import ProbeDenied, invoke_probe
+from backend.plans import PlanConflict, propose_simulator_plan
 
 
 async def write_step(
@@ -82,4 +83,14 @@ async def inspect(
         {"simulated_target_unhealthy": 1} if version.outcome == "OK" else {},
         "simulator.version",
     )
-    return "SIMULATOR_REVIEW_REQUIRED" if version.outcome == "OK" else "ABSTAINED"
+
+    if version.outcome != "OK":
+        return "ABSTAINED"
+    try:
+        await propose_simulator_plan(
+            sessions, tenant_id, incident_id,
+            json.loads(version.excerpt)["version"], ids,
+        )
+    except (PlanConflict, KeyError, TypeError):
+        return "ABSTAINED"
+    return "SIMULATOR_REVIEW_REQUIRED"

@@ -37,6 +37,19 @@ async def reserve_simulator_target(
                 and reservation.state == "RESERVED"
                 and utc(reservation.expires_at) > now
             ):
+                if (
+                    reservation.holder_incident == incident_id
+                    and reservation.action_digest == action_digest
+                ):
+                    return Permit(
+                        tenant_id=tenant_id,
+                        target_id=target_id,
+                        incident_id=incident_id,
+                        action_digest=action_digest,
+                        fence=reservation.fence,
+                        expected_version=reservation.expected_version,
+                        expires_at=utc(reservation.expires_at),
+                    )
                 raise ReservationBusy("target is already reserved")
             epoch.latest_fence += 1
             expiration = now + timedelta(seconds=lease_seconds)
@@ -47,6 +60,7 @@ async def reserve_simulator_target(
                     holder_incident=incident_id,
                     action_digest=action_digest,
                     fence=epoch.latest_fence,
+                    expected_version=target.version,
                     expires_at=expiration,
                     state="RESERVED",
                 )
@@ -55,6 +69,7 @@ async def reserve_simulator_target(
                 reservation.holder_incident = incident_id
                 reservation.action_digest = action_digest
                 reservation.fence = epoch.latest_fence
+                reservation.expected_version = target.version
                 reservation.expires_at = expiration
                 reservation.state = "RESERVED"
             return Permit(
