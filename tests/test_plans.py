@@ -416,3 +416,48 @@ async def test_redteam_revoked_creator_cannot_receive_new_approval(proposed_lab)
     async with sessions() as session:
         plan = await session.get(IncidentPlan, plan_id)
         assert plan.status == "PROPOSED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tamper", ["adapter", "target", "version", "digest", "plan_action"],
+)
+async def test_redteam_receipt_plan_substitution_never_crosses_sent(
+    proposed_lab, tamper,
+):
+    from uuid import uuid4
+    from backend.effects.gateway import EffectConflict, set_state
+    from backend.models import ApprovalGrant
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        approved = await decide_plan(session, "a", plan_id, 1, "APPROVE")
+        digest = approved.plan_digest
+        expected_version = approved.expected_version
+
+    receipt_id = uuid4()
+    async with sessions() as session:
+        async with session.begin():
+            session.add(EffectReceipt(
+                id=receipt_id, tenant_id="a", incident_id=incident_id,
+                plan_digest="0" * 64 if tamper == "digest" else digest,
+                target_id="other-target" if tamper == "target" else "checkout",
+                adapter_id="external" if tamper == "adapter" else "simulator",
+                idempotency_key=str(receipt_id), fence=1,
+                expected_version=expected_version + (1 if tamper == "version" else 0),
+                state="PREPARED", attempt_count=0,
+            ))
+            if tamper == "plan_action":
+                plan = await session.get(IncidentPlan, plan_id)
+                plan.action_id = "UNAUTHORIZED_ACTION"
+
+    with pytest.raises(EffectConflict):
+        await set_state(sessions, receipt_id, "SENT", plan_id=plan_id)
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, receipt_id)
+        approval = await session.scalar(
+            select(ApprovalGrant).where(ApprovalGrant.plan_id == plan_id)
+        )
+        assert receipt.state == "PREPARED"
+        assert receipt.attempt_count == 0
+        assert approval.state == "APPROVED"
