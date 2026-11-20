@@ -33,4 +33,4 @@ include = ["backend*"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = ["integration: requires the native local Temporal test server"]
-addopts = "-m not\\ integration"
+addopts = "-m 'not integration'"
