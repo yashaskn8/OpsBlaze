@@ -138,3 +138,17 @@ reviewer pseudonym, exact action scope, reason and expiry. It collects
 an explicit decision reason and provides a version-bound revocation
 button while the grant remains unconsumed. It never treats a button
 click or SSE event as authorization; server-side checks control execution.
+
+## Durable worker readiness
+
+The dispatcher and incident-worker processes now maintain one durable
+heartbeat row per required role, updated every ten seconds in native
+PostgreSQL. When `OPSBLAZE_ENVIRONMENT=production`,
+`GET /v1/health/ready` returns 503 unless the database is reachable
+and both roles have fresh heartbeats (default stale threshold: 30s).
+Configure `OPSBLAZE_WORKER_HEARTBEAT_SECONDS` and
+`OPSBLAZE_WORKER_STALE_SECONDS` to match observed load.
+
+Heartbeats demonstrate process/database connectivity only; they do not
+prove Temporal task-processing progress, third-party availability,
+redundancy or disaster recovery. These remain separate operational gates.

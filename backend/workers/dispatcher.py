@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from backend.database import get_session_maker
 from backend.models import Incident, OutboxEntry
 from backend.settings import get_settings
 from backend.workflows.incident import IncidentWorkflow
+from backend.workers.heartbeat import heartbeat_loop
 
 log = logging.getLogger(__name__)
 
@@ -128,11 +130,17 @@ async def main() -> None:
         settings.temporal_address, namespace=settings.temporal_namespace
     )
     sessions = get_session_maker()
+    heartbeat = asyncio.create_task(heartbeat_loop("dispatcher"))
     log.info("Outbox dispatcher started")
-    while True:
-        found = await dispatch_once(client, sessions)
-        if not found:
-            await asyncio.sleep(1)
+    try:
+        while True:
+            found = await dispatch_once(client, sessions)
+            if not found:
+                await asyncio.sleep(1)
+    finally:
+        heartbeat.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat
 
 
 if __name__ == "__main__":

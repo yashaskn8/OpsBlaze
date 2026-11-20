@@ -714,3 +714,12 @@ class ApprovalRevocation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class WorkerHeartbeat(Base):
+    __tablename__ = "worker_heartbeat"
+
+    role: Mapped[str] = mapped_column(String(32), primary_key=True)
+    last_seen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )

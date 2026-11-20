@@ -98,14 +98,27 @@ async def acknowledge_incident_review(
 
 
 @app.get("/v1/health/ready")
-async def readiness(session: AsyncSession = Depends(get_session)) -> dict[str, str]:
+async def readiness(
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, str]:
     from sqlalchemy import text
+    from backend.workers.heartbeat import REQUIRED_ROLES, present_workers
+
     try:
         await session.execute(text("SELECT 1"))
+        if settings.environment == "production":
+            present = await present_workers(
+                session,
+                max_age_seconds=settings.worker_stale_seconds,
+            )
+            if not REQUIRED_ROLES.issubset(present):
+                raise HTTPException(503, "required worker heartbeat missing or stale")
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(503, "database unavailable") from exc
     return {"status": "ready"}
-
 
 @app.get("/v1/operations/queues")
 async def tenant_queues(

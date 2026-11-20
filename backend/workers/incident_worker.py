@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from contextlib import suppress
 
 from temporalio.client import Client
 from temporalio.worker import Worker
@@ -14,6 +15,7 @@ from backend.workflows.activities import (
     project_incident_status,
 )
 from backend.workflows.incident import IncidentWorkflow
+from backend.workers.heartbeat import heartbeat_loop
 
 
 async def main() -> None:
@@ -27,7 +29,13 @@ async def main() -> None:
         workflows=[IncidentWorkflow],
         activities=[inspect_incident_read_only, project_incident_status, apply_approved_simulator_plan, select_incident_route],
     )
-    await worker.run()
+    heartbeat = asyncio.create_task(heartbeat_loop("incident_worker"))
+    try:
+        await worker.run()
+    finally:
+        heartbeat.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat
 
 
 if __name__ == "__main__":
