@@ -1087,3 +1087,52 @@ async def test_lesson_validation_cannot_outlive_concurrent_outcome_reversal():
                 assert stored.status in {"DRAFT", "REVOKED"}
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_parallel_postgres_probe_retries_reserve_one_budget_slot() -> None:
+    """A2: row-locked retries cannot create duplicate tool observations."""
+    from sqlalchemy import func, select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.models import Evidence, Incident, ProbeCall
+    from backend.probes.gateway import invoke_probe
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "probe-race-" + uuid4().hex[:12]
+    try:
+        async with sessions() as session:
+            incident = await admit_incident(
+                session, tenant, "stable-probe-key",
+                IncidentCreate(target_id="unseeded-simulator"),
+            )
+
+        async def call_probe():
+            return await invoke_probe(
+                sessions, tenant, incident.id, 1, "simulator.health",
+            )
+
+        results = await asyncio.gather(*(call_probe() for _ in range(8)))
+        assert {result.outcome for result in results} == {"UNAVAILABLE"}
+        assert len({result.evidence_id for result in results}) == 1
+
+        async with sessions() as session:
+            persisted = await session.get(Incident, incident.id)
+            assert persisted.probe_used == 1
+            assert await session.scalar(
+                select(func.count()).select_from(ProbeCall).where(
+                    ProbeCall.incident_id == incident.id,
+                )
+            ) == 1
+            assert await session.scalar(
+                select(func.count()).select_from(Evidence).where(
+                    Evidence.incident_id == incident.id,
+                )
+            ) == 1
+    finally:
+        await engine.dispose()
