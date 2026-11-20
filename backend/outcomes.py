@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.adapters.simulator import SimulatorAdapter
+from backend.adapters.simulator import SimulatorAdapter, observed_healthy_at_version
 from backend.models import EffectReceipt, Incident, OutcomeRevision
 from backend.learning.invalidation import invalidate_outcome_dependents
 
@@ -48,11 +48,17 @@ async def adjudicate_simulator(
 
     observation = await adapter.observe(tenant_id, target_id)
     verified = (
-        effect_state == "VERIFIED" and observation is not None
-        and observation == (effect_version, True)
+        effect_state == "VERIFIED"
+        and observed_healthy_at_version(observation, effect_version)
     )
     label = "VERIFIED" if verified else "DISPUTED"
-    observed_version = None if observation is None else observation[0]
+    observed_version = (
+        observation[0]
+        if isinstance(observation, tuple)
+        and len(observation) == 2
+        and type(observation[0]) is int
+        else None
+    )
     async with sessions() as session:
         async with session.begin():
             # Lock the stable parent before allocating a new outcome revision.
