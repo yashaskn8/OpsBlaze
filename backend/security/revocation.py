@@ -7,7 +7,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import (
-    ApprovalGrant, ApprovalRevocation, IncidentPlan, RevokedIdentity,
+    ApprovalGrant, ApprovalRevocation, IdentityProviderEvent, IncidentPlan,
+    RevokedIdentity,
 )
 
 
@@ -28,6 +29,7 @@ async def revoke_identity(
     actor_id: str,
     security_admin: str,
     reason: str,
+    *, event_digest: str | None = None,
 ) -> tuple[RevokedIdentity, int]:
     """Permanent deny-list record and all still-pending grants in one commit."""
     if actor_id == security_admin:
@@ -37,8 +39,30 @@ async def revoke_identity(
     when = datetime.now(timezone.utc)
     async with session.begin():
         await lock_reviewer_subject(session, tenant_id, actor_id)
+        if event_digest is not None:
+            if (
+                len(event_digest) != 64
+                or any(ch not in "0123456789abcdef" for ch in event_digest)
+            ):
+                raise ValueError("invalid signed event digest")
+            previous = await session.get(
+                IdentityProviderEvent, event_digest, with_for_update=True
+            )
+            if previous is not None:
+                if previous.tenant_id != tenant_id or previous.actor_id != actor_id:
+                    raise ValueError("security event identity mismatch")
+                revoked = await session.get(RevokedIdentity, (tenant_id, actor_id))
+                if revoked is None:
+                    raise ValueError("security event ledger has no revocation")
+                return revoked, 0
+
         revoked = await session.get(RevokedIdentity, (tenant_id, actor_id))
         if revoked is not None:
+            if event_digest is not None:
+                session.add(IdentityProviderEvent(
+                    event_digest=event_digest,
+                    tenant_id=tenant_id, actor_id=actor_id,
+                ))
             return revoked, 0
 
         grants = (await session.scalars(
@@ -76,4 +100,9 @@ async def revoke_identity(
             revoked_at=when, revoked_by=security_admin, reason=reason.strip(),
         )
         session.add(revoked)
+        if event_digest is not None:
+            session.add(IdentityProviderEvent(
+                event_digest=event_digest, tenant_id=tenant_id,
+                actor_id=actor_id,
+            ))
     return revoked, len(grants)
