@@ -41,6 +41,16 @@ async def valid_source(
         return None
     if utc(capsule.expires_at) <= datetime.now(timezone.utc):
         return None
+    incident = await session.get(Incident, capsule.incident_id)
+    if (
+        incident is None or incident.tenant_id != tenant_id
+        or capsule.target_digest != hashlib.sha256(
+            f"{tenant_id}:{incident.target_id}".encode("utf-8")
+        ).hexdigest()
+    ):
+        # The capsule's untrusted stored target tag must never authorize
+        # a lesson for a different incident target.
+        return None
     consent = await session.get(ExperienceConsent, capsule.incident_id)
     if (
         consent is None or consent.tenant_id != tenant_id
@@ -162,10 +172,17 @@ async def validate_draft(
             or source.outcome_revision_id != lesson.source_outcome_id
         ):
             raise LessonConflict("source lineage changed")
-        if utc(lesson.valid_until) <= datetime.now(timezone.utc):
-            raise LessonConflict("lesson has expired")
-        if lesson.rule_id not in LESSON_RULES:
-            raise LessonConflict("rule is no longer allowed")
+        now = datetime.now(timezone.utc)
+        if (
+            not utc(lesson.valid_from) <= now < utc(lesson.valid_until)
+            or utc(lesson.valid_until) > utc(source.expires_at)
+        ):
+            raise LessonConflict("lesson validity window is not source-bounded")
+        if (
+            lesson.rule_id not in LESSON_RULES
+            or lesson.summary_redacted != LESSON_RULES.get(lesson.rule_id)
+        ):
+            raise LessonConflict("lesson text or rule was changed")
         lesson.status = "VALIDATED"
         lesson.version += 1
     return lesson
