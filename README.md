@@ -210,3 +210,15 @@ The "Clear browser session" control clears only this app's memory;
 it is not IdP-wide logout. Production must use HTTPS, a same-origin API,
 appropriate CSP and a trusted configured IdP. Browser E2E and actual
 IdP integration remain unverified release gates.
+
+
+## Aggregate counter retention
+
+`python -m backend.workers.budget_retention` prunes fixed-minute
+admission-rate and optional model-token budget counters older than
+`OPSBLAZE_BUDGET_COUNTER_RETENTION_DAYS` (default seven days).
+Each transaction removes at most 500 rows per table and is safe to
+repeat. Active windows remain intact. The command deliberately
+does not remove any incident, approval, effect, outcome or experience
+audit records. Provider billing and historical cost reporting require
+a separate immutable metering system.

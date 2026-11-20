@@ -7,7 +7,7 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 | B1 — Durable incident workflow | Atomic PostgreSQL admission/outbox, stable Temporal workflow IDs, signal ordering, status state machine, lost-ack, worker-restart and history replay tests, read-only anti-entropy scan | Multi-host failover/replay campaigns, old-history compatibility, multi-host HA and failover campaigns |
 | B2 — Resource reservation | Leased target reservations, monotonic fencing, version checks | Real adapter-enforced fencing and failover/clock tests |
 | B3 — Effect receipt gateway | Durable effect identities, exact-permit checks, unknown-outcome reconciliation, simulator postcondition | External effect acknowledgment/retention guarantees |
-| B4 — Budgets and backpressure | Admission rate/active-work caps, durable AI budgets, outbox age and worker heartbeats | Workload-specific concurrency limits, external model budgets, load characterization |
+| B4 — Budgets and backpressure | Admission rate/active-work caps, durable AI budgets, outbox age, worker heartbeats and bounded counter retention | Workload-specific concurrency limits, external model budgets, load characterization |
 | A1 — Adaptive investigation | Deterministic simulator probe loop; optional typed read-only model advisory | Evaluated multi-probe model policy, empirical quality and token metrics |
 | A2 — Tool policy gateway | Read-only probe catalog, tenant scope, durable per-incident probe budget | Production role-based policies, external connector permissions |
 | A3 — Evidence provenance | Evidence IDs, timestamps, source versions and SHA-256, hypothesis steps | Signed external telemetry attestation, robust retention/redaction review |
