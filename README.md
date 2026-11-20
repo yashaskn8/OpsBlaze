@@ -229,3 +229,14 @@ and validated lesson records by their persisted IDs. Missing references are
 reported explicitly, and absent observability spans are never inferred.
 All reads are tenant-scoped and the local viewer shows status per record.
 This is a durable-record projection, not a complete OTel span integration.
+
+## E7 pinned lab routing
+
+The Temporal workflow now runs a deterministic strategy selector before
+investigation. If its tenant-scoped simulator fixture is unavailable or the
+probe budget is insufficient, it permanently records HANDOFF and projects
+NEEDS_REVIEW. Otherwise it records RUNBOOK with an explicit two-probe cap.
+The decision is stable under activity replay and visible at
+GET /v1/incidents/{id}/route, including its policy ID, reason and
+non-random selection propensity. There is no autonomous model routing,
+online bandit, or memory-aided live execution.

@@ -42,6 +42,15 @@ class IncidentWorkflow:
             return "CANCELLED"
 
         await project("INVESTIGATING")
+        route = await workflow.execute_activity(
+            "select_incident_route",
+            args=[tenant_id, incident_id],
+            start_to_close_timeout=ACTIVITY_TIMEOUT,
+            retry_policy=RETRIES,
+        )
+        if route != "RUNBOOK":
+            await project("NEEDS_REVIEW")
+            return "NEEDS_REVIEW"
         probe_result = await workflow.execute_activity(
             "inspect_incident_read_only",
             args=[tenant_id, incident_id],

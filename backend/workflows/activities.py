@@ -61,3 +61,11 @@ async def apply_approved_simulator_plan(
     return await execute_approved_simulator_plan(
         get_session_maker(), tenant_id, UUID(incident_id), UUID(plan_id)
     )
+
+
+@activity.defn(name="select_incident_route")
+async def select_incident_route(tenant_id: str, incident_id: str) -> str:
+    from backend.routing.decision import select_route
+
+    decision = await select_route(get_session_maker(), tenant_id, UUID(incident_id))
+    return decision.route if decision is not None else "HANDOFF"

@@ -10,6 +10,7 @@ from backend.settings import get_settings
 from backend.workflows.activities import (
     inspect_incident_read_only,
     apply_approved_simulator_plan,
+    select_incident_route,
     project_incident_status,
 )
 from backend.workflows.incident import IncidentWorkflow
@@ -24,7 +25,7 @@ async def main() -> None:
         client,
         task_queue=settings.temporal_task_queue,
         workflows=[IncidentWorkflow],
-        activities=[inspect_incident_read_only, project_incident_status, apply_approved_simulator_plan],
+        activities=[inspect_incident_read_only, project_incident_status, apply_approved_simulator_plan, select_incident_route],
     )
     await worker.run()
 

@@ -729,3 +729,32 @@ async def incident_lineage(
     if lineage is None:
         raise HTTPException(404, "incident not found")
     return lineage
+
+
+@app.get("/v1/incidents/{incident_id}/route")
+async def incident_route(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from sqlalchemy import select
+    from backend.models import RouteDecision
+
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    decision = await session.scalar(
+        select(RouteDecision).where(
+            RouteDecision.tenant_id == tenant_id,
+            RouteDecision.incident_id == incident_id,
+            RouteDecision.decision_no == 1,
+        )
+    )
+    if decision is None:
+        return {"route": "UNROUTED", "policy_id": None}
+    return {
+        "route": decision.route, "policy_id": decision.policy_id,
+        "selection_reason": decision.selection_reason,
+        "risk_band": decision.risk_band,
+        "cost_cap_probes": decision.cost_cap_probes,
+        "propensity": decision.propensity,
+    }

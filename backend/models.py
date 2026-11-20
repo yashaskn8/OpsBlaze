@@ -422,3 +422,26 @@ class EvaluationGate(Base):
     rule_id: Mapped[str] = mapped_column(String(48), nullable=False)
     passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     evidence: Mapped[str] = mapped_column(String(256), nullable=False)
+
+
+class RouteDecision(Base):
+    __tablename__ = "route_decision"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "incident_id", "decision_no", name="uq_route_once"),
+        Index("ix_route_tenant_created", "tenant_id", "created_at", "route"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False)
+    decision_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    policy_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    context_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    risk_band: Mapped[str] = mapped_column(String(16), nullable=False)
+    route: Mapped[str] = mapped_column(String(32), nullable=False)
+    selection_reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    propensity: Mapped[int] = mapped_column(Integer, nullable=False)
+    cost_cap_probes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

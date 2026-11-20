@@ -18,6 +18,7 @@ from backend.workflows.activities import (
     apply_approved_simulator_plan,
     inspect_incident_read_only,
     project_incident_status,
+    select_incident_route,
 )
 from backend.workflows.incident import IncidentWorkflow
 
@@ -40,6 +41,7 @@ async def test_postgres_temporal_simulator_recovery() -> None:
                 inspect_incident_read_only,
                 project_incident_status,
                 apply_approved_simulator_plan,
+                select_incident_route,
             ],
         ):
             transport = ASGITransport(app=app)

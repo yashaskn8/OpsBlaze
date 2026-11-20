@@ -21,6 +21,10 @@ async def test_temporal_lifecycle_signals_and_replay_safe_activities() -> None:
     async def project(tenant_id: str, incident_id: str, state: str) -> None:
         states.setdefault(incident_id, []).append(state)
 
+    @activity.defn(name="select_incident_route")
+    async def route(tenant_id: str, incident_id: str) -> str:
+        return "RUNBOOK"
+
     @activity.defn(name="inspect_incident_read_only")
     async def inspect(tenant_id: str, incident_id: str) -> str:
         return "ABSTAINED" if incident_id == "abstain" else "SIMULATOR_REVIEW_REQUIRED"
@@ -36,7 +40,7 @@ async def test_temporal_lifecycle_signals_and_replay_safe_activities() -> None:
             env.client,
             task_queue=queue,
             workflows=[IncidentWorkflow],
-            activities=[project, inspect, apply],
+            activities=[project, route, inspect, apply],
         ):
             approved = await env.client.start_workflow(
                 IncidentWorkflow.run, args=["tenant", "approved"],
