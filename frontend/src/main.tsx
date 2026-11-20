@@ -136,7 +136,13 @@ function App() {
     ? Boolean(accessToken && identity)
     : Boolean(token && tenant);
   const canOperate = usingOidc ? Boolean(identity?.roles.includes("operator")) : authenticated;
-  const canReview = usingOidc ? Boolean(identity?.roles.includes("reviewer")) : Boolean(reviewToken);
+  const canReview = usingOidc
+    ? Boolean(
+        identity?.roles.includes("reviewer")
+        && !identity.roles.includes("operator")
+        && !identity.roles.includes("security_admin")
+      )
+    : Boolean(reviewToken);
 
   useEffect(() => {
     if (!usingOidc) return;
