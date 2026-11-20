@@ -29,6 +29,50 @@ async def authenticated_identity(
     }
 
 
+@app.post("/v1/security/idp-events", status_code=202)
+async def accept_signed_idp_revocation(
+    authorization: str | None = Header(default=None),
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    """Dedicated, separately-audienced IdP event JWT; never an API access token."""
+    import asyncio
+    import jwt
+    from sqlalchemy.exc import IntegrityError
+
+    from backend.security.idp_events import verify_identity_event
+    from backend.security.revocation import revoke_identity
+
+    if (
+        settings.environment != "production"
+        or not settings.idp_event_audience
+        or settings.idp_event_audience == settings.oidc_audience
+    ):
+        raise HTTPException(503, "IdP security-event integration not configured")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "signed IdP revocation event required")
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token or " " in token:
+        raise HTTPException(401, "invalid IdP event token")
+    try:
+        event = await asyncio.to_thread(verify_identity_event, token, settings)
+    except (jwt.PyJWTError, ValueError, OSError, TimeoutError) as exc:
+        raise HTTPException(401, "invalid signed IdP revocation event") from exc
+
+    try:
+        _, affected = await revoke_identity(
+            session, event.tenant_id, event.actor_id,
+            security_admin="IDP_EVENT",
+            reason="Identity provider confirmed access revocation",
+            event_digest=event.event_digest,
+        )
+    except (ValueError, IntegrityError) as exc:
+        raise HTTPException(409, "security event replay or identity conflict") from exc
+    except Exception as exc:
+        raise HTTPException(503, "identity revocation store unavailable") from exc
+    return {"status": "recorded", "grants_revoked": affected}
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
