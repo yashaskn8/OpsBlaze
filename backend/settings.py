@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     stuck_after_seconds: int = 300
     worker_heartbeat_seconds: int = 10
     worker_stale_seconds: int = 30
+    ui_event_retention_days: int = 7
     max_probe_calls_per_incident: int = 3
     experience_retention_days: int = 7
     ai_advisory_enabled: bool = False

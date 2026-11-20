@@ -41,7 +41,23 @@ STREAM_CAPACITY = StreamCapacity()
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.models import UIEvent
+from backend.models import UIEvent, UIEventWatermark
+
+
+class ExpiredCursor(Exception):
+    def __init__(self, min_after_id: int) -> None:
+        self.min_after_id = min_after_id
+        super().__init__("notification cursor requires snapshot resync")
+
+
+async def validate_event_cursor(
+    session: AsyncSession, tenant_id: str, incident_id: UUID, after_id: int,
+) -> None:
+    watermark = await session.get(
+        UIEventWatermark, (tenant_id, incident_id)
+    )
+    if watermark is not None and after_id < watermark.last_purged_id:
+        raise ExpiredCursor(watermark.last_purged_id)
 
 
 async def read_event_batch(
@@ -51,6 +67,7 @@ async def read_event_batch(
     after_id: int,
 ) -> list[UIEvent]:
     async with sessions() as session:
+        await validate_event_cursor(session, tenant_id, incident_id, after_id)
         return list((await session.scalars(
             select(UIEvent)
             .where(
@@ -89,7 +106,16 @@ async def stream_incident_events(
     for _ in range(max_ticks):
         if await disconnected():
             return
-        rows = await read_event_batch(sessions, tenant_id, incident_id, after_id)
+        try:
+            rows = await read_event_batch(sessions, tenant_id, incident_id, after_id)
+        except ExpiredCursor as expired:
+            yield (
+                "event: gap\n"
+                + "data: " + json.dumps(
+                    {"min_after_id": expired.min_after_id}
+                ) + "\n\n"
+            )
+            return
         if rows:
             for event in rows:
                 if await disconnected():

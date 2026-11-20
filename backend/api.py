@@ -965,6 +965,15 @@ async def incident_ui_events(
         raise HTTPException(422, "after_id cannot be negative")
     if await find_incident(session, tenant_id, incident_id) is None:
         raise HTTPException(404, "incident not found")
+    from backend.events import ExpiredCursor, validate_event_cursor
+
+    try:
+        await validate_event_cursor(session, tenant_id, incident_id, after_id)
+    except ExpiredCursor as exc:
+        raise HTTPException(
+            410, {"reason": "event history trimmed; refetch snapshot",
+                  "min_after_id": exc.min_after_id},
+        ) from exc
     rows = (await session.scalars(
         select(UIEvent)
         .where(
@@ -1122,7 +1131,10 @@ async def stream_incident_updates(
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
     from backend.database import get_session_maker
-    from backend.events import STREAM_CAPACITY, stream_incident_events
+    from backend.events import (
+        STREAM_CAPACITY, ExpiredCursor, stream_incident_events,
+        validate_event_cursor,
+    )
 
     if after_id < 0:
         raise HTTPException(400, "after_id cannot be negative")
@@ -1132,6 +1144,13 @@ async def stream_incident_updates(
         after_id = max(after_id, int(last_event_id))
     if await find_incident(session, tenant_id, incident_id) is None:
         raise HTTPException(404, "incident not found")
+    try:
+        await validate_event_cursor(session, tenant_id, incident_id, after_id)
+    except ExpiredCursor as exc:
+        raise HTTPException(
+            410, {"reason": "event history trimmed; refetch snapshot",
+                  "min_after_id": exc.min_after_id},
+        ) from exc
 
     # The request dependency may outlive StreamingResponse. Release its read
     # transaction before the long-lived stream starts.

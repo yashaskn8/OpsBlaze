@@ -152,3 +152,15 @@ Configure `OPSBLAZE_WORKER_HEARTBEAT_SECONDS` and
 Heartbeats demonstrate process/database connectivity only; they do not
 prove Temporal task-processing progress, third-party availability,
 redundancy or disaster recovery. These remain separate operational gates.
+
+## SSE notification retention and cursor gaps
+
+Run `python -m backend.workers.event_retention --days 7` from an
+authorized maintenance environment. The one-shot worker purges at most
+500 expired UI notifications per transaction and atomically advances
+per-incident `last_purged_id` watermarks. A stale REST/SSE cursor receives
+410 with the minimum safe continuation ID; an active stream emits a
+lightweight `gap` event if expiry happens while connected. The React
+client discards its stale timeline, refetches the authoritative incident
+snapshot and resumes from the watermark. Incident, approval, effect and
+outcome audit rows are never deleted by this job.

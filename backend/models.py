@@ -723,3 +723,13 @@ class WorkerHeartbeat(Base):
     last_seen: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+
+
+class UIEventWatermark(Base):
+    __tablename__ = "ui_event_watermark"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id"), primary_key=True
+    )
+    last_purged_id: Mapped[int] = mapped_column(BigInteger, nullable=False)

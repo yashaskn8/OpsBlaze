@@ -251,10 +251,26 @@ function App() {
       await refreshSnapshot();
     }
 
+    async function resyncAfterGap(response: Response): Promise<boolean> {
+      if (response.status !== 410) return false;
+      const payload: unknown = await response.json();
+      const minimum = (payload as { detail?: { min_after_id?: number } })
+        ?.detail?.min_after_id;
+      if (!Number.isSafeInteger(minimum) || minimum === undefined || minimum < 0) {
+        throw new Error("invalid event retention watermark");
+      }
+      cursor = Math.max(cursor, minimum);
+      setEvents([]);
+      setConnection("SYNCING");
+      await refreshSnapshot();
+      return true;
+    }
+
     async function pollFallback() {
       const response = await fetch(url + "/events?after_id=" + cursor, {
         headers: auth, signal: controller.signal
       });
+      if (await resyncAfterGap(response)) return;
       const body: unknown = await response.json();
       if (!response.ok) throw new Error(detail(body));
       const page = body as UIEventPage;
@@ -270,6 +286,7 @@ function App() {
             headers: { ...auth, "Accept": "text/event-stream" },
             signal: controller.signal
           });
+          if (await resyncAfterGap(response)) continue;
           if (!response.ok || !response.body) throw new Error("stream unavailable");
           setConnection("LIVE");
           const reader = response.body.getReader();
@@ -283,8 +300,18 @@ function App() {
             while (boundary !== -1) {
               const frame = pending.slice(0, boundary);
               pending = pending.slice(boundary + 2);
-              const data = frame.split("\n").find(line => line.startsWith("data: "));
-              if (data) {
+              const lines = frame.split("\n");
+              const data = lines.find(line => line.startsWith("data: "));
+              if (data && lines.includes("event: gap")) {
+                const gap = JSON.parse(data.slice(6)) as { min_after_id: number };
+                if (!Number.isSafeInteger(gap.min_after_id) || gap.min_after_id < 0) {
+                  throw new Error("invalid gap notification");
+                }
+                cursor = Math.max(cursor, gap.min_after_id);
+                setEvents([]);
+                setConnection("SYNCING");
+                await refreshSnapshot();
+              } else if (data) {
                 const event = JSON.parse(data.slice(6)) as UIEvent;
                 if (Number.isSafeInteger(event.id) && event.id > cursor) {
                   await recordEvents([event]);

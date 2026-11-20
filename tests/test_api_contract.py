@@ -278,3 +278,46 @@ async def test_approval_revocation_requires_reviewer_and_version(api_client):
         json=body,
     )
     assert malformed_version.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_expired_notification_cursor_requires_snapshot_resync(api_client, sessions_fixture):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import update
+    from backend.models import UIEvent
+    from backend.workers.event_retention import purge_ui_events
+
+    created = await api_client.post(
+        "/v1/incidents",
+        headers=headers("alpha", **{"Idempotency-Key": "event-gap"}),
+        json={"target_id": "checkout"},
+    )
+    assert created.status_code == 202
+    incident_id = created.json()["id"]
+    async with sessions_fixture() as session:
+        async with session.begin():
+            await session.execute(
+                update(UIEvent).where(UIEvent.incident_id == uuid4())
+                .values(kind="NO_MATCH")
+            )
+            await session.execute(
+                update(UIEvent)
+                .where(UIEvent.tenant_id == "alpha")
+                .values(created_at=datetime.now(timezone.utc) - timedelta(days=10))
+            )
+    assert await purge_ui_events(
+        sessions_fixture, datetime.now(timezone.utc) - timedelta(days=7),
+    ) == 1
+    route = f"/v1/incidents/{incident_id}"
+    stale = await api_client.get(route + "/events?after_id=0", headers=headers("alpha"))
+    assert stale.status_code == 410
+    watermark = stale.json()["detail"]["min_after_id"]
+    stream = await api_client.get(route + "/stream?after_id=0", headers=headers("alpha"))
+    assert stream.status_code == 410
+    resumed = await api_client.get(
+        route + f"/events?after_id={watermark}", headers=headers("alpha"),
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["events"] == []
+    snapshot = await api_client.get(route, headers=headers("alpha"))
+    assert snapshot.status_code == 200
