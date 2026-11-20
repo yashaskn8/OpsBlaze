@@ -111,11 +111,22 @@ async def deliver_intent(client: Client, intent: tuple[int, str, str, str, dict 
             IncidentWorkflow.acknowledge_review
         )
     elif kind == "PLAN_DECIDED":
-        if not isinstance(payload, dict):
-            raise ValueError("plan signal missing payload")
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"plan_id", "approved"}
+            or not isinstance(payload.get("plan_id"), str)
+            or type(payload.get("approved")) is not bool
+        ):
+            raise ValueError("plan signal must have a canonical typed payload")
+        try:
+            plan_id = UUID(payload["plan_id"])
+        except ValueError as exc:
+            raise ValueError("plan signal has an invalid plan ID") from exc
+        if str(plan_id) != payload["plan_id"]:
+            raise ValueError("plan signal ID is not canonical")
         await client.get_workflow_handle(wid).signal(
             IncidentWorkflow.plan_decided,
-            args=[payload["plan_id"], payload["approved"]],
+            args=[str(plan_id), payload["approved"]],
         )
     else:
         raise ValueError("unsupported outbox kind")
