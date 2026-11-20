@@ -1250,6 +1250,7 @@ async def stream_incident_updates(
     last_event_id: Annotated[str | None, Header()] = None,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(get_principal),
 ) -> StreamingResponse:
     from backend.database import get_session_maker
     from backend.events import (
@@ -1287,6 +1288,7 @@ async def stream_incident_updates(
             async for frame in stream_incident_events(
                 get_session_maker(), tenant_id, incident_id, after_id,
                 request.is_disconnected,
+                actor_id=principal.subject if principal.subject.startswith("oidc:") else None,
             ):
                 yield frame
         finally:
