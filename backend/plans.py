@@ -13,7 +13,7 @@ from backend.adapters.simulator import SimulatorAdapter, utc
 from backend.adapters.conformance import current_simulator_is_conformant
 from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
-from backend.models import ApprovalGrant, ApprovalRevocation, RevokedIdentity, DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, SimulatorTarget, UIEvent
+from backend.models import ApprovalGrant, ApprovalRevocation, RevokedIdentity, DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, ProbeCall, SimulatorTarget, UIEvent
 from backend.outcomes import adjudicate_simulator
 from backend.probes.gateway import evidence_links_intact
 from backend.settings import get_settings
@@ -48,6 +48,16 @@ async def current_plan_evidence_is_intact(
     except (ValueError, TypeError, AttributeError):
         return False
     if not await evidence_links_intact(session, plan.incident_id, refs):
+        return False
+    # A denied tool call after the original assessment invalidates permission
+    # to act; a stale positive assessment cannot hide it.
+    denied = await session.scalar(
+        select(ProbeCall.id).where(
+            ProbeCall.incident_id == plan.incident_id,
+            ProbeCall.outcome == "DENIED",
+        ).limit(1)
+    )
+    if denied is not None:
         return False
 
     expected_digest = digest_plan(
