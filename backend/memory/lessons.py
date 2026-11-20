@@ -214,12 +214,17 @@ async def retrieve_active_lessons(
         .limit(limit)
     )).all()
     allowed = []
+    now = datetime.now(timezone.utc)
     for lesson in rows:
         capsule = await valid_source(session, tenant_id, lesson.source_capsule_id)
         if (
-            capsule is not None and lesson.consent_epoch == capsule.consent_epoch
+            capsule is not None
+            and lesson.consent_epoch == capsule.consent_epoch
             and lesson.source_outcome_id == capsule.outcome_revision_id
-            and lesson.rule_id in LESSON_RULES
+            and lesson.target_digest == capsule.target_digest
+            and lesson.summary_redacted == LESSON_RULES.get(lesson.rule_id)
+            and utc(lesson.valid_from) <= now < utc(lesson.valid_until)
+            and utc(lesson.valid_until) <= utc(capsule.expires_at)
         ):
             allowed.append(lesson)
     return allowed
