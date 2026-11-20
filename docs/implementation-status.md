@@ -4,7 +4,7 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 
 | Feature | Implemented simulator/lab baseline | Important missing validation or capability |
 |---|---|---|
-| B1 — Durable incident workflow | Atomic PostgreSQL admission/outbox, stable Temporal workflow IDs, signal ordering, status state machine, lost-ack and native JSON-history replay tests | Multi-host failover/replay campaigns, old-history compatibility, multi-host HA and failover campaigns |
+| B1 — Durable incident workflow | Atomic PostgreSQL admission/outbox, stable Temporal workflow IDs, signal ordering, status state machine, lost-ack, worker-restart and native JSON-history replay tests | Multi-host failover/replay campaigns, old-history compatibility, multi-host HA and failover campaigns |
 | B2 — Resource reservation | Leased target reservations, monotonic fencing, version checks | Real adapter-enforced fencing and failover/clock tests |
 | B3 — Effect receipt gateway | Durable effect identities, exact-permit checks, unknown-outcome reconciliation, simulator postcondition | External effect acknowledgment/retention guarantees |
 | B4 — Budgets and backpressure | Admission rate/active-work caps, durable AI budgets, outbox age and worker heartbeats | Workload-specific concurrency limits, external model budgets, load characterization |

@@ -164,3 +164,10 @@ lightweight `gap` event if expiry happens while connected. The React
 client discards its stale timeline, refetches the authoritative incident
 snapshot and resumes from the watermark. Incident, approval, effect and
 outcome audit rows are never deleted by this job.
+
+The native Temporal integration suite also exercises worker restart:
+it stops the first worker at `AWAITING_APPROVAL`, signals the running
+workflow while no worker is connected, then resumes with a new worker.
+It asserts that previously completed probes do not repeat and the
+simulator execution activity runs exactly once in this scenario.
+It does not replace multi-host, load, corruption or disaster-recovery tests.
