@@ -196,3 +196,32 @@ async def test_plan_decision_requires_distinct_reviewer_token(api_client):
         headers={**base, "X-OpsBlaze-Reviewer-Token": TOKEN},
     )
     assert same.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_review_actions_require_separate_local_reviewer(api_client):
+    reviewer_routes = [
+        ("post", f"/v1/outcomes/{uuid4()}/feedback",
+         {"reason": "independent observation changed"}),
+        ("post", f"/v1/failures/{uuid4()}/review",
+         {"corrected_code": "PROBE_DENIED", "first_bad_step": 1,
+          "reason": "durable probe evidence was checked"}),
+        ("post", f"/v1/improvements/{uuid4()}/submit", None),
+        ("post", f"/v1/lessons/{uuid4()}/validate", None),
+        ("post", f"/v1/lessons/{uuid4()}/revoke", None),
+        ("post", f"/v1/rollouts/{uuid4()}/pause", None),
+    ]
+    base = headers("alpha", **{"If-Match": "1"})
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        local_token=TOKEN, review_token="separate-reviewer-credential",
+        environment="development",
+    )
+    for method, path, body in reviewer_routes:
+        denied = await api_client.request(method, path, headers=base, json=body)
+        assert denied.status_code == 403, (path, denied.text)
+        granted = await api_client.request(
+            method, path,
+            headers={**base, "X-OpsBlaze-Reviewer-Token": "separate-reviewer-credential"},
+            json=body,
+        )
+        assert granted.status_code == 404, (path, granted.text)

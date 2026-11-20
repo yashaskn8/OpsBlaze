@@ -30,6 +30,26 @@ def local_tenant(
     return x_tenant_id
 
 
+
+def local_reviewer(
+    reviewer_token: Annotated[str | None, Header(alias="X-OpsBlaze-Reviewer-Token")] = None,
+    settings: Settings = Depends(get_settings),
+) -> str:
+    """Separate local review capability; never a production user identity."""
+    if (
+        not settings.review_token
+        or not settings.local_token
+        or secrets.compare_digest(settings.review_token, settings.local_token)
+    ):
+        raise HTTPException(503, "distinct local reviewer credential is not configured")
+    if (
+        reviewer_token is None
+        or not secrets.compare_digest(reviewer_token, settings.review_token)
+    ):
+        raise HTTPException(403, "reviewer credential required")
+    return "DEV_REVIEWER_CREDENTIAL"
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -284,22 +304,9 @@ async def decide_incident_plan(
     if_match: Annotated[str, Header()],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
-    reviewer_token: Annotated[str | None, Header(alias="X-OpsBlaze-Reviewer-Token")] = None,
-    settings: Settings = Depends(get_settings),
+    reviewer_identity: str = Depends(local_reviewer),
 ) -> dict:
     from backend.plans import PlanConflict, decide_plan
-
-    if (
-        not settings.review_token
-        or not settings.local_token
-        or secrets.compare_digest(settings.review_token, settings.local_token)
-    ):
-        raise HTTPException(503, "distinct local reviewer credential is not configured")
-    if (
-        reviewer_token is None
-        or not secrets.compare_digest(reviewer_token, settings.review_token)
-    ):
-        raise HTTPException(403, "reviewer credential required")
 
     version = if_match.strip('"')
     if not version.isdecimal():
@@ -307,7 +314,7 @@ async def decide_incident_plan(
     try:
         plan = await decide_plan(
             session, tenant_id, plan_id, int(version), payload.decision,
-            decided_by="DEV_REVIEWER_CREDENTIAL",
+            decided_by=reviewer_identity,
         )
     except PlanConflict as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -375,6 +382,7 @@ async def report_outcome_dispute(
     if_match: Annotated[str, Header()],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    reviewer_identity: str = Depends(local_reviewer),
 ) -> dict:
     from backend.outcomes import OutcomeConflict, dispute_outcome
 
@@ -568,6 +576,7 @@ async def submit_improvement(
     if_match: Annotated[str, Header()],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    reviewer_identity: str = Depends(local_reviewer),
 ) -> dict:
     from backend.learning.failures import FailureConflict, submit_candidate
 
@@ -642,6 +651,7 @@ async def validate_lesson(
     if_match: Annotated[str, Header()],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    reviewer_identity: str = Depends(local_reviewer),
 ) -> dict:
     from backend.memory.lessons import LessonConflict, validate_draft
 
@@ -664,6 +674,7 @@ async def revoke_operational_lesson(
     if_match: Annotated[str, Header()],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    reviewer_identity: str = Depends(local_reviewer),
 ) -> dict:
     from backend.memory.lessons import LessonConflict, revoke_lesson
 
@@ -887,6 +898,7 @@ async def stop_policy_rollout(
     if_match: Annotated[str, Header()],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    reviewer_identity: str = Depends(local_reviewer),
 ) -> dict:
     from backend.policy.registry import PolicyConflict, stop_rollout
 
@@ -1050,6 +1062,7 @@ async def review_failure(
     if_match: Annotated[str, Header()],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    reviewer_identity: str = Depends(local_reviewer),
 ) -> dict:
     from backend.learning.failures import FailureConflict, review_classification
 

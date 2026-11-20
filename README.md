@@ -183,3 +183,11 @@ The plan decision endpoint checks the second secret and persists
 version and evidence checks. The operator token alone cannot decide
 plans. These are still local shared secrets, **not real user identity**
 or production separation of duties: production mode remains closed.
+
+The same distinct local reviewer credential is also required before
+the API accepts outcome feedback, failure-taxonomy corrections,
+improvement submission, lesson validation/revocation, and rollout
+pause/rollback. These checks prevent an operator-only token from
+changing review decisions. As before, this is a developer-mode
+capability boundary, not independent production identity or release
+authorization.
