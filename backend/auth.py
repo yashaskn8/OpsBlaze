@@ -56,6 +56,20 @@ def configured_identity(settings: Settings) -> bool:
     )
 
 
+def supported_jws_header(header: dict) -> bool:
+    """Reject unsupported critical JWS processing and unsafe key identifiers."""
+    kid = header.get("kid")
+    return (
+        header.get("alg") == "RS256"
+        and isinstance(kid, str)
+        and 1 <= len(kid) <= 128
+        and kid.isascii()
+        and all(33 <= ord(ch) <= 126 for ch in kid)
+        and "crit" not in header
+        and "b64" not in header
+    )
+
+
 def signing_key(token: str, settings: Settings):
     # A pinned JWKS endpoint is the only network input; JWT headers never
     # provide URLs, allowed algorithms, issuer, or key retrieval locations.
@@ -66,8 +80,8 @@ def verify_bearer(token: str, settings: Settings) -> Principal:
     if len(token) > 8192 or token.count(".") != 2:
         raise ValueError("invalid token shape")
     header = jwt.get_unverified_header(token)
-    if header.get("alg") != "RS256" or not isinstance(header.get("kid"), str):
-        raise ValueError("unsupported JWT signing algorithm")
+    if not supported_jws_header(header):
+        raise ValueError("unsupported JWT signing header")
     claims = jwt.decode(
         token, signing_key(token, settings),
         algorithms=["RS256"],
