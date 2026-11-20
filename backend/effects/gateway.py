@@ -81,7 +81,7 @@ async def set_state(
 ) -> None:
     allowed = {
         "PREPARED": {"SENT", "UNKNOWN", "NEEDS_REVIEW"},
-        "SENT": {"UNKNOWN", "CONFIRMED", "FAILED"},
+        "SENT": {"UNKNOWN", "CONFIRMED", "FAILED", "NEEDS_REVIEW"},
         "UNKNOWN": {"CONFIRMED", "FAILED", "NEEDS_REVIEW"},
         "CONFIRMED": {"VERIFIED", "NEEDS_REVIEW"},
     }
