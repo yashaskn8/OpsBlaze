@@ -461,3 +461,31 @@ async def test_redteam_receipt_plan_substitution_never_crosses_sent(
         assert receipt.state == "PREPARED"
         assert receipt.attempt_count == 0
         assert approval.state == "APPROVED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [
+    ("source_version", "untrusted-provider-v9"),
+    ("classification", "PUBLIC"),
+])
+async def test_redteam_provenance_metadata_swap_blocks_preapproved_effect(
+    proposed_lab, field, value,
+):
+    from uuid import UUID
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        approved = await decide_plan(session, "a", plan_id, 1, "APPROVE")
+        evidence_id = UUID(approved.evidence_ids[0])
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+    async with sessions() as session:
+        async with session.begin():
+            row = await session.get(Evidence, evidence_id)
+            setattr(row, field, value)
+    assert await execute_approved_simulator_plan(
+        sessions, "a", incident_id, plan_id,
+    ) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert not target.healthy and target.version == 3
+        assert (await session.scalars(select(EffectReceipt))).all() == []
