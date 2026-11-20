@@ -573,3 +573,91 @@ async def list_improvements(
          "evaluation_manifest_id": row.evaluation_manifest_id}
         for row in rows
     ]
+
+
+class LessonDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_capsule_id: UUID
+    rule_id: Literal[
+        "PROBE_HEALTH_FIRST", "CHECK_VERSION", "ESCALATE_UNCERTAIN"
+    ]
+
+
+@app.post("/v1/lessons", status_code=201)
+async def create_lesson_draft(
+    payload: LessonDraftRequest,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.memory.lessons import LessonConflict, create_draft
+
+    try:
+        lesson = await create_draft(
+            session, tenant_id, payload.source_capsule_id, payload.rule_id
+        )
+    except LessonConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"id": str(lesson.id), "status": lesson.status,
+            "version": lesson.version, "rule_id": lesson.rule_id}
+
+
+@app.post("/v1/lessons/{lesson_id}/validate", status_code=202)
+async def validate_lesson(
+    lesson_id: UUID,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.memory.lessons import LessonConflict, validate_draft
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be the lesson version")
+    try:
+        lesson = await validate_draft(session, tenant_id, lesson_id, int(version))
+    except LessonConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if lesson is None:
+        raise HTTPException(404, "lesson not found")
+    return {"id": str(lesson.id), "status": lesson.status,
+            "version": lesson.version}
+
+
+@app.post("/v1/lessons/{lesson_id}/revoke", status_code=202)
+async def revoke_operational_lesson(
+    lesson_id: UUID,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.memory.lessons import LessonConflict, revoke_lesson
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be the lesson version")
+    try:
+        lesson = await revoke_lesson(session, tenant_id, lesson_id, int(version))
+    except LessonConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if lesson is None:
+        raise HTTPException(404, "lesson not found")
+    return {"id": str(lesson.id), "status": lesson.status,
+            "version": lesson.version}
+
+
+@app.get("/v1/lessons")
+async def visible_lessons(
+    target_id: str,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    from backend.memory.lessons import retrieve_active_lessons
+
+    rows = await retrieve_active_lessons(session, tenant_id, target_id)
+    return [
+        {"id": str(row.id), "rule_id": row.rule_id,
+         "summary_redacted": row.summary_redacted,
+         "source_outcome_id": str(row.source_outcome_id),
+         "version": row.version}
+        for row in rows
+    ]

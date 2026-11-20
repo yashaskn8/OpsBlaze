@@ -341,3 +341,31 @@ class ImprovementCandidate(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class OperationalLesson(Base):
+    __tablename__ = "operational_lesson"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "source_capsule_id", "rule_id", name="uq_lesson_source_rule"),
+        Index("ix_lesson_lookup", "tenant_id", "status", "valid_until"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_capsule_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("experience_capsule.id"), nullable=False
+    )
+    source_outcome_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("outcome_revision.id"), nullable=False
+    )
+    target_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    rule_id: Mapped[str] = mapped_column(String(48), nullable=False)
+    summary_redacted: Mapped[str] = mapped_column(String(200), nullable=False)
+    consent_epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="DRAFT")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

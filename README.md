@@ -191,3 +191,14 @@ rejected. Submission uses a version check and never deploys the change.
 The draft and submit endpoints currently use a development-only token;
 production reviewer identity and auditable classification corrections are
 not implemented. E5 offline evaluations must be built before rollout.
+
+## E4 lesson registry
+
+Lessons can be drafted only from currently consented, VERIFIED E1/E2
+experience capsules. They have fixed typed rule IDs rather than free-form
+instructions. Validation rechecks the latest outcome, consent epoch, expiry,
+and target scope. Revocation is version-bound and retrieval checks all
+source constraints again. The activation gate is deliberately **closed**:
+validated lessons are not served as ACTIVE until E5 paired evaluation and
+release review are implemented. Stored lessons do not grant tools or
+permissions.
