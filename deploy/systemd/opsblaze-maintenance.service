@@ -1,0 +1,23 @@
+[Unit]
+Description=OpsBlaze bounded retention maintenance
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=opsblaze
+Group=opsblaze
+WorkingDirectory=/srv/opsblaze
+EnvironmentFile=/etc/opsblaze/opsblaze.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/srv/opsblaze/.venv/bin/python -m backend.workers.maintenance
+TimeoutStartSec=15min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

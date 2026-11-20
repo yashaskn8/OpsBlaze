@@ -240,3 +240,12 @@ otherwise startup and readiness fail closed. Optional
 Development's native local Temporal server remains compatible with
 plaintext. Cloud and private-CA/mTLS configurations still require actual
 external integration testing.
+
+## Native scheduled maintenance
+
+A Docker-free systemd timer example is in
+[deploy/systemd](deploy/systemd/README.md). It calls
+`python -m backend.workers.maintenance` hourly to scrub expired
+experience capsules, purge old SSE notifications with cursor watermarks,
+and prune obsolete rate/token counters. Each category commits
+independently, and work per invocation is explicitly bounded.

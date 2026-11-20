@@ -12,11 +12,11 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 | A2 — Tool policy gateway | Read-only probe catalog, tenant scope, durable per-incident probe budget | Production role-based policies, external connector permissions |
 | A3 — Evidence provenance | Evidence IDs, timestamps, source versions and SHA-256, hypothesis steps | Signed external telemetry attestation, robust retention/redaction review |
 | A4 — Safe abstention | Typed risk assessment, evidence integrity/freshness/target-version checks, fail-closed abstention | Empirical calibration with independent held-out families; current 0/100 is **not a probability** |
-| P1 — Operator workbench | React incident list and plan actions, ETag snapshots, resumable SSE, gap-resync watermark, bounded retention, 32-stream cap | Production RBAC, multi-replica stream limits, reconnect/load campaigns and accessibility audit |
+| P1 — Operator workbench | React incident list and plan actions, ETag snapshots, resumable SSE, gap-resync watermark, scheduled bounded retention, 32-stream cap | Production RBAC, multi-replica stream limits, reconnect/load campaigns and accessibility audit |
 | P2 — Approval boundary | Exact-plan digest, identity-bound grant/expiry/revocation, reviewer epoch and atomic consume-on-send | OIDC SPA callback implementation, external IdP integration tests, per-user revocation, independent authority and two-person release policy |
 | P3 — Forensic graph | Evidence→hypothesis→plan→effect→outcome lineage, explicitly missing refs | Comprehensive OpenTelemetry span linking and performance checks |
 | S1 — Paired replay | Isolated, time-sealed deterministic twin fixtures with an independent postcondition | Actual paired model-vs-runbook controlled trial, statistical inference |
-| E1 — Experience capture | Consent-scoped capsules with expiry scrubbing, outcome-reversal quarantine and dependent-lesson revocation | Cross-store deletion and approved classification/retention controls |
+| E1 — Experience capture | Consent-scoped capsules with scheduled expiry scrubbing, outcome-reversal quarantine and dependent-lesson revocation | Cross-store deletion and approved classification/retention controls |
 | E2 — Outcome adjudication | Separate simulator witness, append-only outcomes and disputes | Independent real-world recovery oracle and delayed outcome reconciliation |
 | E3 — Failure learning | Fact-backed cases, superseded-outcome rejection, corrected taxonomy, candidate→rollout invalidation | Independent reviewers, causal attribution beyond typed simulator facts |
 | E4 — Validated memory | Typed lesson drafts, source/consent checks, validation/revoke | Release gate for activation, measured retrieval effect and revocation propagation |
