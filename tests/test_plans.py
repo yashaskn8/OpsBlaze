@@ -352,3 +352,67 @@ async def test_forbidden_probe_after_approval_blocks_new_effect(proposed_lab):
         assert (await session.scalars(select(EffectReceipt))).all() == []
         target = await session.get(SimulatorTarget, ("a", "checkout"))
         assert not target.healthy and target.version == 3
+
+
+@pytest.mark.asyncio
+async def test_redteam_revoked_creator_cannot_dispatch_preapproved_effect(proposed_lab):
+    from backend.models import RevokedIdentity
+    from backend.security.revocation import revoke_identity
+
+    sessions, incident_id, plan_id = proposed_lab
+    creator = "oidc:" + "a" * 32
+    reviewer = "oidc:" + "b" * 32
+    admin = "oidc:" + "c" * 32
+
+    async with sessions() as session:
+        async with session.begin():
+            incident = await session.get(Incident, incident_id)
+            incident.created_by = creator
+    async with sessions() as session:
+        plan = await decide_plan(
+            session, "a", plan_id, 1, "APPROVE", decided_by=reviewer,
+        )
+        assert plan.status == "APPROVED"
+
+    async with sessions() as session:
+        revoked, count = await revoke_identity(
+            session, "a", creator, admin,
+            "incident creator was revoked after approval",
+        )
+        assert revoked.actor_id == creator
+        assert count == 0
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+    assert await execute_approved_simulator_plan(
+        sessions, "a", incident_id, plan_id
+    ) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert target.version == 3 and not target.healthy
+        assert (await session.scalars(select(EffectReceipt))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_redteam_revoked_creator_cannot_receive_new_approval(proposed_lab):
+    from backend.security.revocation import revoke_identity
+
+    sessions, incident_id, plan_id = proposed_lab
+    creator = "oidc:" + "d" * 32
+    reviewer = "oidc:" + "e" * 32
+    admin = "oidc:" + "f" * 32
+    async with sessions() as session:
+        async with session.begin():
+            incident = await session.get(Incident, incident_id)
+            incident.created_by = creator
+    async with sessions() as session:
+        await revoke_identity(
+            session, "a", creator, admin,
+            "incident origin identity access withdrawn",
+        )
+    async with sessions() as session:
+        with pytest.raises(PlanConflict, match="evidence"):
+            await decide_plan(
+                session, "a", plan_id, 1, "APPROVE", decided_by=reviewer,
+            )
+    async with sessions() as session:
+        plan = await session.get(IncidentPlan, plan_id)
+        assert plan.status == "PROPOSED"
