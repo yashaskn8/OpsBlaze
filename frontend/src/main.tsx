@@ -21,6 +21,18 @@ type Plan = {
   evidence_ids: string[];
 };
 
+type Approval = {
+  id: string;
+  state: "APPROVED" | "REJECTED" | "REVOKED" | "CONSUMED";
+  version: number;
+  expires_at: string;
+  reviewer: string;
+  scope: string;
+  reason: string;
+};
+
+type PlanDetail = Plan & { approval: Approval | null };
+
 type Evidence = {
   id: string;
   source: string;
@@ -84,6 +96,13 @@ function App() {
   const [key, setKey] = useState(() => crypto.randomUUID());
   const [incident, setIncident] = useState<Incident | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
+  const [approval, setApproval] = useState<Approval | null>(null);
+  const [decisionReason, setDecisionReason] = useState(
+    "Reviewed simulator evidence and expected target version"
+  );
+  const [revocationReason, setRevocationReason] = useState(
+    "Reviewer withdrew permission before simulator dispatch"
+  );
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [effects, setEffects] = useState<Effect[]>([]);
   const [lineage, setLineage] = useState<Lineage | null>(null);
@@ -114,6 +133,7 @@ function App() {
       if (!response.ok) throw new Error(detail(data));
       setIncident(data as Incident);
       setPlan(null);
+      setApproval(null);
       setEvidence([]);
       setEffects([]);
       setLineage(null);
@@ -148,6 +168,16 @@ function App() {
         getList<Effect>("effects")
       ]);
       setPlan(plans[0] ?? null);
+      if (plans[0]) {
+        const planResponse = await fetch("/v1/plans/" + plans[0].id, {
+          headers: headers()
+        });
+        const detailBody: unknown = await planResponse.json();
+        if (!planResponse.ok) throw new Error(detail(detailBody));
+        setApproval((detailBody as PlanDetail).approval);
+      } else {
+        setApproval(null);
+      }
       setEvidence(proof);
       setEffects(receipts);
       const lineageResponse = await fetch(
@@ -180,6 +210,7 @@ function App() {
   function chooseIncident(item: Incident) {
     setIncident(item);
     setPlan(null);
+    setApproval(null);
     setEvidence([]);
     setEffects([]);
     setLineage(null);
@@ -317,7 +348,9 @@ function App() {
           "If-Match": String(plan.version),
           "X-OpsBlaze-Reviewer-Token": reviewToken,
         },
-        body: JSON.stringify({ decision: choice })
+        body: JSON.stringify({
+          decision: choice, reason: decisionReason.trim()
+        })
       });
       const data: unknown = await response.json();
       if (!response.ok) throw new Error(detail(data));
@@ -332,6 +365,38 @@ function App() {
     }
   }
 
+
+
+  async function revokeApproval() {
+    if (!approval || !plan) return;
+    if (revocationReason.trim().length < 8) {
+      setError("Revocation reason must be at least 8 characters.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(
+        "/v1/approvals/" + approval.id + "/revoke", {
+          method: "POST",
+          headers: {
+            ...headers(),
+            "X-OpsBlaze-Reviewer-Token": reviewToken,
+            "If-Match": String(approval.version),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ reason: revocationReason.trim() })
+        }
+      );
+      const data: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(data));
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Approval revocation failed");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function runReplay(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -381,7 +446,7 @@ function App() {
             <p className="key">Idempotency key <code>{key}</code></p>
             <div className="actions">
               <button type="submit" disabled={busy}>{busy ? "Working..." : "Admit incident"}</button>
-              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setPlan(null); setEvidence([]); setEffects([]); setLineage(null); setEvents([]); setConnection("SYNCING"); setError(""); }}>New request key</button>
+              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setPlan(null); setApproval(null); setEvidence([]); setEffects([]); setLineage(null); setEvents([]); setConnection("SYNCING"); setError(""); }}>New request key</button>
             </div>
           </form>
         </section>
@@ -418,11 +483,39 @@ function App() {
               <p className="muted">Plan state: {plan.status} · Expected target version: {plan.expected_version}</p>
               <p className="muted">Digest</p><code>{plan.plan_digest}</code>
               {plan.status === "PROPOSED" && incident.status_projection === "AWAITING_APPROVAL" &&
+                <label className="review-reason">Review reason
+                  <textarea minLength={8} maxLength={256}
+                    value={decisionReason}
+                    onChange={event => setDecisionReason(event.target.value)}
+                    placeholder="What evidence did you review?" />
+                </label>}
+              {plan.status === "PROPOSED" && incident.status_projection === "AWAITING_APPROVAL" &&
                 <div className="actions">
-                  <button type="button" disabled={busy || connection !== "LIVE" || !reviewToken} onClick={() => decidePlan("APPROVE")}>Approve simulator plan</button>
-                  <button type="button" className="secondary" disabled={busy || connection !== "LIVE" || !reviewToken} onClick={() => decidePlan("REJECT")}>Reject</button>
+                  <button type="button" disabled={busy || connection !== "LIVE" || !reviewToken || decisionReason.trim().length < 8} onClick={() => decidePlan("APPROVE")}>Approve simulator plan</button>
+                  <button type="button" className="secondary" disabled={busy || connection !== "LIVE" || !reviewToken || decisionReason.trim().length < 8} onClick={() => decidePlan("REJECT")}>Reject</button>
                 </div>
               }
+              {approval && <div className="approval-review">
+                <h4>Durable reviewer decision</h4>
+                <p className="muted">Status: {approval.state} · Version {approval.version}</p>
+                <p className="muted">Reviewer ID: {approval.reviewer}</p>
+                <p className="muted">Scope: {approval.scope}</p>
+                <p className="muted">Expires: {new Date(approval.expires_at).toLocaleString()}</p>
+                <p className="muted">Reason: {approval.reason}</p>
+                {approval.state === "APPROVED" && <>
+                  <label>Revocation reason
+                    <textarea minLength={8} maxLength={256}
+                      value={revocationReason}
+                      onChange={event => setRevocationReason(event.target.value)}
+                    />
+                  </label>
+                  <button type="button" className="secondary"
+                    disabled={busy || connection !== "LIVE" || !reviewToken || revocationReason.trim().length < 8}
+                    onClick={revokeApproval}>
+                    Revoke unconsumed approval
+                  </button>
+                </>}
+              </div>}
             </div>}
             {evidence.length > 0 && <div className="audit">
               <h3>Evidence ({evidence.length})</h3>

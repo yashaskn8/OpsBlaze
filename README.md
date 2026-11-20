@@ -132,3 +132,9 @@ transaction consumes the grant, preventing a subsequent revocation
 from falsely cancelling an already-started effect. Existing receipts
 remain independently reconcilable. Legacy approved plans without grants
 cannot initiate new effects. The real-adapter boundary remains disabled.
+
+The local React review card now shows the separate grant state,
+reviewer pseudonym, exact action scope, reason and expiry. It collects
+an explicit decision reason and provides a version-bound revocation
+button while the grant remains unconsumed. It never treats a button
+click or SSE event as authorization; server-side checks control execution.

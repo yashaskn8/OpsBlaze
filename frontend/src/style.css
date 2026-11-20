@@ -63,3 +63,20 @@ select { background: #0b1524; border: 1px solid #425371; border-radius: 8px; pad
 .replay-arm { border: 1px solid #324660; border-radius: 8px; background: #0e1c30; padding: 14px; }
 .replay-arm strong { display: block; font-size: 13px; }
 .replay-arm span { display: inline-block; padding: 6px 0; color: #a2e5cc; font-size: 12px; }
+
+textarea {
+  min-height: 84px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #425371;
+  border-radius: 8px;
+  background: #0b1524;
+  color: white;
+  font: inherit;
+  resize: vertical;
+}
+textarea:focus { outline: 2px solid #76a8ff; }
+.approval-review { border-top: 1px dashed #455c7b; margin-top: 18px; padding-top: 12px; }
+.approval-review h4 { font-size: 14px; margin: 4px 0 12px; }
+.approval-review label { margin: 14px 0; }
+.review-reason { margin-top: 14px; }
