@@ -140,7 +140,26 @@ async def tenant_queues(
             Incident.status_projection.in_(ACTIVE_STATES),
         )
     )
-    return {"pending_outbox": pending or 0, "active_incidents": active or 0}
+    from datetime import datetime, timezone
+    from backend.adapters.simulator import utc
+
+    oldest_pending = await session.scalar(
+        select(func.min(OutboxEntry.created_at))
+        .join(Incident, Incident.id == OutboxEntry.incident_id)
+        .where(
+            Incident.tenant_id == tenant_id,
+            OutboxEntry.delivered_at.is_(None),
+        )
+    )
+    oldest_age = (
+        max(0, int((datetime.now(timezone.utc) - utc(oldest_pending)).total_seconds()))
+        if oldest_pending is not None else 0
+    )
+    return {
+        "pending_outbox": pending or 0,
+        "active_incidents": active or 0,
+        "oldest_pending_seconds": oldest_age,
+    }
 
 
 @app.get("/v1/incidents/{incident_id}/evidence")

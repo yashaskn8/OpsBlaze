@@ -159,3 +159,11 @@ The P2 execution gate also checks the **meaning** of the pinned observations:
 the initial health must have been false, the version observation must match
 the exact pinned integer, and the target must still be unhealthy. Rehashing
 an invented healthy observation does not make it authorization evidence.
+
+B4 now records an immutable `outbox.created_at` separate from the
+retry lease `available_at`. The state-age monitor includes every
+active incident phase (including EXECUTING) and overdue undelivered
+intents even when a retry has been scheduled into the future.
+`GET /v1/operations/queues` reports the oldest pending intent age
+for the authenticated local tenant. Monitoring remains read-only and
+never marks unresolved work as successful.

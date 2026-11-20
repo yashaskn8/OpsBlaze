@@ -58,6 +58,10 @@ class OutboxEntry(Base):
     __tablename__ = "outbox"
     __table_args__ = (
         Index(
+            "ix_outbox_age_pending", "created_at",
+            postgresql_where=text("delivered_at IS NULL"),
+        ),
+        Index(
             "ix_outbox_pending",
             "available_at",
             "id",
@@ -79,6 +83,9 @@ class OutboxEntry(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
     payload: Mapped[dict | None] = mapped_column(JSON)
 
 # B2/B3 simulator and effect records. No production target connector is enabled.
