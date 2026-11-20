@@ -35,6 +35,14 @@ type Effect = {
   observed_version: number | null;
 };
 
+type Lineage = {
+  projection: "COMPLETE" | "PARTIAL_LINKS";
+  trace_spans_available: boolean;
+  nodes: { id: string; kind: string; status: string }[];
+  edges: { from: string; to: string; relation: string }[];
+  missing_refs: { source: string; missing_target: string; relation: string }[];
+};
+
 function detail(value: unknown): string {
   if (value && typeof value === "object" && "detail" in value) {
     const message = (value as { detail: unknown }).detail;
@@ -52,6 +60,7 @@ function App() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [effects, setEffects] = useState<Effect[]>([]);
+  const [lineage, setLineage] = useState<Lineage | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -73,6 +82,7 @@ function App() {
       setPlan(null);
       setEvidence([]);
       setEffects([]);
+      setLineage(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
@@ -105,6 +115,12 @@ function App() {
       setPlan(plans[0] ?? null);
       setEvidence(proof);
       setEffects(receipts);
+      const lineageResponse = await fetch(
+        "/v1/incidents/" + incident.id + "/lineage", { headers: headers() }
+      );
+      const lineageBody: unknown = await lineageResponse.json();
+      if (!lineageResponse.ok) throw new Error(detail(lineageBody));
+      setLineage(lineageBody as Lineage);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
@@ -174,7 +190,7 @@ function App() {
             <p className="key">Idempotency key <code>{key}</code></p>
             <div className="actions">
               <button type="submit" disabled={busy}>{busy ? "Working..." : "Admit incident"}</button>
-              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setPlan(null); setEvidence([]); setEffects([]); setError(""); }}>New request key</button>
+              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setPlan(null); setEvidence([]); setEffects([]); setLineage(null); setError(""); }}>New request key</button>
             </div>
           </form>
         </section>
@@ -218,6 +234,19 @@ function App() {
                 <strong>{item.source}</strong><span>{item.validity}</span>
                 <code>{item.redacted_excerpt}</code>
               </div>)}
+            </div>}
+            {lineage && <div className="audit">
+              <h3>Evidence-to-effect trace</h3>
+              <p className="muted">{lineage.projection.replaceAll("_", " ")} · {lineage.nodes.length} durable records · {lineage.edges.length} links</p>
+              {!lineage.trace_spans_available && <p className="muted">Telemetry spans unavailable; durable records are shown instead.</p>}
+              {lineage.missing_refs.length > 0 &&
+                <p className="error">{lineage.missing_refs.length} missing durable link(s). Do not infer the omitted evidence.</p>}
+              <div className="trace-scroll">
+                {lineage.nodes.map(node => <div className="trace-node" key={node.id}>
+                  <strong>{node.kind}</strong><span>{node.status}</span>
+                  <code>{node.id.split(":")[1]}</code>
+                </div>)}
+              </div>
             </div>}
             {effects.length > 0 && <div className="audit">
               <h3>Effect receipts</h3>

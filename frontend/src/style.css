@@ -35,3 +35,9 @@ footer { margin-top: 28px; font-size: 13px; }
 .audit-item strong { display: inline-block; margin-right: 12px; }
 .audit-item span { color: #9bdad5; }
 .audit-item code { white-space: pre-wrap; }
+
+.trace-scroll { max-height: 330px; overflow-y: auto; display: grid; gap: 7px; }
+.trace-node { padding: 9px 11px; background: #0a192d; border: 1px solid #34415b; border-radius: 8px; font-size: 12px; }
+.trace-node strong { text-transform: capitalize; margin-right: 10px; }
+.trace-node span { color: #a5e6cc; }
+.trace-node code { font-size: 10px; }

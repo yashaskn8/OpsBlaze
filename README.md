@@ -219,3 +219,13 @@ promotion_eligible=false. It cannot authorize deployment, lesson activation,
 or real-target effects. Full E5 needs an independently managed hidden-label
 fixture store, measured paired-effect outcomes, uncertainty intervals, and
 separate approval authority.
+
+## P3 forensic trace graph
+
+The operator workbench can load a bounded lineage view using
+GET /v1/incidents/{id}/lineage. The server correlates incident, evidence,
+hypothesis, exact plan, effect, independent outcome, experience, failure case,
+and validated lesson records by their persisted IDs. Missing references are
+reported explicitly, and absent observability spans are never inferred.
+All reads are tenant-scoped and the local viewer shows status per record.
+This is a durable-record projection, not a complete OTel span integration.
