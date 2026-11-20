@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.adapters.simulator import utc
 from backend.models import (
     Evidence, ExperienceCapsule, ExperienceConsent, Incident, OperationalLesson, OutcomeRevision
 )
@@ -124,7 +125,7 @@ async def capture_capsule(
                 or existing.target_digest != hashlib.sha256(
                     f"{tenant_id}:{incident.target_id}".encode("utf-8")
                 ).hexdigest()
-                or existing.expires_at <= now
+                or utc(existing.expires_at) <= now
             ):
                 raise ConsentConflict("stale, altered or revoked capsule cannot be reused")
             return existing
