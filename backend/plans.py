@@ -199,7 +199,8 @@ async def decide_plan(
             tenant_id=tenant_id, plan_id=plan.id,
             plan_digest=plan.plan_digest, reviewer_id=decided_by,
             scope=plan.action_id,
-            decision=decision, state=decision,
+            decision=decision,
+            state="APPROVED" if decision == "APPROVE" else "REJECTED",
             reason=reason.strip(), version=1,
             expires_at=decided_at + timedelta(seconds=ttl),
         )
@@ -307,7 +308,7 @@ async def execute_approved_simulator_plan(
                 grant is None or grant.state != "APPROVED"
                 or grant.plan_digest != plan.plan_digest
                 or grant.scope != "SIMULATOR_MARK_HEALTHY"
-                or grant.expires_at <= datetime.now(timezone.utc)
+                or utc(grant.expires_at) <= datetime.now(timezone.utc)
                 or plan.review_epoch != get_settings().review_epoch
                 or not await current_plan_evidence_is_intact(session, plan)
             ):

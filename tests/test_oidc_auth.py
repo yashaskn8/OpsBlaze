@@ -121,7 +121,7 @@ async def test_wrong_signer_and_algorithm_rejected(signer, production_client):
     )
     assert rejected.status_code == 401
     unsigned = jwt.encode(
-        {"iss": ISSUER, "aud": AUDIENCE}, "shared-secret",
+        {"iss": ISSUER, "aud": AUDIENCE}, "a-fixed-test-key-with-more-than-32-characters",
         algorithm="HS256", headers={"kid": "fixture-1"},
     )
     rejected_algorithm = await production_client.get(

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import (
-    Permit, SimulatorAdapter, StaleFence, TargetVersionConflict
+    Permit, SimulatorAdapter, StaleFence, TargetVersionConflict, utc
 )
 from backend.models import ApprovalGrant, EffectReceipt, IncidentPlan
 
@@ -108,7 +108,7 @@ async def set_state(
                     or approval.state != "APPROVED"
                     or approval.plan_digest != receipt.plan_digest
                     or approval.scope != "SIMULATOR_MARK_HEALTHY"
-                    or approval.expires_at <= datetime.now(timezone.utc)
+                    or utc(approval.expires_at) <= datetime.now(timezone.utc)
                     or plan.status != "APPROVED"
                     or plan.review_epoch != get_settings().review_epoch
                     or not await current_plan_evidence_is_intact(session, plan)
