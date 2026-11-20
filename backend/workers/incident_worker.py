@@ -27,6 +27,8 @@ async def main() -> None:
         task_queue=settings.temporal_task_queue,
         workflows=[IncidentWorkflow],
         activities=[inspect_incident_read_only, project_incident_status, apply_approved_simulator_plan, select_incident_route],
+        max_concurrent_workflow_tasks=settings.worker_workflow_slots,
+        max_concurrent_activities=settings.worker_activity_slots,
     )
     heartbeat = asyncio.create_task(heartbeat_loop("incident_worker"))
     try:

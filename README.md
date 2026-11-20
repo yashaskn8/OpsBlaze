@@ -309,3 +309,13 @@ effect. Cross-tenant IDs return 404; unsent PREPARED receipts and
 unsupported adapters return 409 for manual review. VERIFIED receipts
 are idempotently returned. This safe lab operation is not certification
 for a real external adapter's status-lookup contract.
+
+## Per-process worker backpressure
+
+The Temporal incident worker has explicit validated slot limits:
+`OPSBLAZE_WORKER_WORKFLOW_SLOTS=8` (2–64) and
+`OPSBLAZE_WORKER_ACTIVITY_SLOTS=8` (1–64). These bounds prevent a
+single worker process from accepting an unbounded number of concurrent
+activities. Admission limits and durable token budgets remain separate.
+Measure schedule-to-start latency and database contention before raising
+these values; multi-host capacity and fair-share quotas remain unverified.
