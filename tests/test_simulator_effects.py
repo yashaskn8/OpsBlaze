@@ -414,3 +414,30 @@ async def test_redteam_corrupt_confirmation_without_send_is_quarantined(lab):
     async with sessions() as session:
         receipt = await session.get(EffectReceipt, effect_id)
         assert receipt.state == "NEEDS_REVIEW"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fake", [
+    (2.0, True),
+    (2, 1),
+    ("2", True),
+    (2,),
+])
+async def test_redteam_untyped_oracle_cannot_verify_effect(lab, fake):
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "b" * 64,
+    )
+
+    class UntypedWitness(SimulatorAdapter):
+        async def observe(self, tenant_id, target_id):
+            return fake
+
+    result = await execute_simulator_effect(
+        sessions, UntypedWitness(sessions), permit,
+    )
+    assert result == "NEEDS_REVIEW"
+    async with sessions() as session:
+        receipt = await session.scalar(select(EffectReceipt))
+        assert receipt.state == "NEEDS_REVIEW"
+        assert receipt.attempt_count == 1
