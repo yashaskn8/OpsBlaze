@@ -39,6 +39,7 @@ class Incident(Base):
     client_key: Mapped[str] = mapped_column(String(128), nullable=False)
     request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     target_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(48))
     status_projection: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default="DISPATCH_PENDING"
     )

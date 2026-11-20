@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     local_token: str | None = None
     review_token: str | None = None
     review_epoch: int = 1
+    oidc_issuer: str = ""
+    oidc_audience: str = ""
+    oidc_jwks_url: str = ""
     environment: Literal["development", "production"] = "development"
     temporal_address: str = "127.0.0.1:7233"
     temporal_namespace: str = "default"

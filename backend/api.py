@@ -1,5 +1,3 @@
-import re
-import secrets
 from typing import Annotated
 from uuid import UUID
 
@@ -7,47 +5,13 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.auth import local_operator, local_reviewer, local_tenant
 from backend.database import get_session
 from backend.schemas import IncidentCreate, IncidentView
 from backend.services import IdempotencyConflict, RateLimited, admit_incident, find_incident
 from backend.settings import Settings, get_settings
 
 app = FastAPI(title="OpsBlaze", version="0.1.0")
-
-
-def local_tenant(
-    x_tenant_id: Annotated[str, Header(min_length=1, max_length=64)],
-    x_opsblaze_token: Annotated[str, Header()],
-    settings: Settings = Depends(get_settings),
-) -> str:
-    # Local-only bootstrap authentication. Do not deploy as multi-tenant auth.
-    if settings.environment != "development" or not settings.local_token:
-        raise HTTPException(503, "local API disabled; production auth not implemented")
-    if not secrets.compare_digest(x_opsblaze_token, settings.local_token):
-        raise HTTPException(401, "invalid local API token")
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", x_tenant_id) is None:
-        raise HTTPException(422, "invalid tenant identifier")
-    return x_tenant_id
-
-
-
-def local_reviewer(
-    reviewer_token: Annotated[str | None, Header(alias="X-OpsBlaze-Reviewer-Token")] = None,
-    settings: Settings = Depends(get_settings),
-) -> str:
-    """Separate local review capability; never a production user identity."""
-    if (
-        not settings.review_token
-        or not settings.local_token
-        or secrets.compare_digest(settings.review_token, settings.local_token)
-    ):
-        raise HTTPException(503, "distinct local reviewer credential is not configured")
-    if (
-        reviewer_token is None
-        or not secrets.compare_digest(reviewer_token, settings.review_token)
-    ):
-        raise HTTPException(403, "reviewer credential required")
-    return "DEV_REVIEWER_CREDENTIAL"
 
 
 @app.get("/healthz")
@@ -61,11 +25,15 @@ async def create_incident(
     idempotency_key: Annotated[str, Header(min_length=1, max_length=128)],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> IncidentView:
     if not idempotency_key.strip():
         raise HTTPException(422, "idempotency key cannot be blank")
     try:
-        incident = await admit_incident(session, tenant_id, idempotency_key, payload)
+        incident = await admit_incident(
+            session, tenant_id, idempotency_key, payload,
+            created_by=operator_identity,
+        )
     except IdempotencyConflict as exc:
         raise HTTPException(409, str(exc)) from exc
     except RateLimited as exc:
@@ -92,6 +60,7 @@ async def cancel_incident(
     if_match: Annotated[str, Header()],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> IncidentView:
     from backend.services import VersionConflict, request_cancellation
 
@@ -112,6 +81,7 @@ async def acknowledge_incident_review(
     if_match: Annotated[str, Header()],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> IncidentView:
     from backend.services import VersionConflict, acknowledge_review
 
@@ -414,6 +384,7 @@ async def update_experience_consent(
     if_match: Annotated[str, Header()],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> dict:
     from backend.experiences import ConsentConflict, set_consent
 
@@ -437,6 +408,7 @@ async def capture_incident_experience(
     incident_id: UUID,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> dict:
     from backend.experiences import ConsentConflict, capture_capsule
 
@@ -485,6 +457,7 @@ async def classify_failure(
     outcome_id: UUID,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> dict:
     from backend.learning.failures import FailureConflict, record_case
 
@@ -557,6 +530,7 @@ async def create_improvement_draft(
     payload: ImprovementDraft,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> dict:
     from backend.learning.failures import FailureConflict, draft_candidate
 
@@ -634,6 +608,7 @@ async def create_lesson_draft(
     payload: LessonDraftRequest,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> dict:
     from backend.memory.lessons import LessonConflict, create_draft
 
@@ -721,6 +696,7 @@ async def register_evaluation(
     payload: EvaluationRegistration,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> dict:
     from backend.evaluation.smoke import EvaluationConflict, freeze
     from backend.learning.failures import FailureConflict
@@ -738,6 +714,7 @@ async def run_evaluation(
     manifest_id: UUID,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> dict:
     from backend.evaluation.smoke import EvaluationConflict, run_smoke
 
@@ -848,6 +825,7 @@ async def create_policy_draft(
     payload: PolicyDraftRequest,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> dict:
     from backend.policy.registry import PolicyConflict, register_bundle
     from backend.learning.failures import FailureConflict
@@ -868,6 +846,7 @@ async def create_rollout_draft(
     payload: RolloutDraftRequest,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> dict:
     from backend.policy.registry import PolicyConflict, create_rollout
 
@@ -885,6 +864,7 @@ async def create_rollout_draft(
 async def deny_unvalidated_rollout(
     rollout_id: UUID,
     tenant_id: str = Depends(local_tenant),
+    operator_identity: str = Depends(local_operator),
 ) -> dict:
     raise HTTPException(
         409,
@@ -1005,6 +985,7 @@ async def create_replay_experiment(
     payload: ExperimentRequest,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
 ) -> dict:
     from backend.experiments.replay import create_pair
 

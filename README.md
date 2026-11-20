@@ -2,7 +2,7 @@
 
 OpsBlaze is a **local, simulator-only incident investigation and controlled recovery lab** based on the TITAN-20 engineering blueprint (formerly RehearsalGate).
 
-**Status:** a Docker-free end-to-end simulator path is implemented and tested with FastAPI, PostgreSQL, Temporal, and React/TypeScript. **It is not production-ready**: real-target adapters, production identity and approval roles, held-out evaluations, calibrated AI, and policy promotion remain disabled or incomplete.
+**Status:** a Docker-free end-to-end simulator path is implemented and tested with FastAPI, PostgreSQL, Temporal, and React/TypeScript. **It is not production-ready**: real-target adapters, externally verified production identity configuration, independent approvals, held-out evaluations, calibrated AI, and policy promotion remain incomplete.
 
 See [implementation status](docs/implementation-status.md) for all 20 TITAN-20 capability areas, test evidence, and missing gates. Coding guidelines are in [AGENTS.md](AGENTS.md).
 
@@ -51,7 +51,7 @@ Open `http://127.0.0.1:5173` and supply the **local** API token from your `.env`
 4. If approved and all fences, evidence checks, and current adapter conformance pass, the worker applies **only** `SIMULATOR_MARK_HEALTHY`. It reconciles its effect receipt and requires an independent simulator postcondition observation before setting `VERIFIED`.
 5. The UI can show evidence, effect receipts, trace lineage, recent incidents, sequenced SSE event notifications with a polling fallback, and isolated paired-replay results. These notifications never authorize actions; decisions rely on authoritative snapshots and server-side version checks.
 
-The local token is **not** reviewer authentication or a real multi-tenant security system. The API deliberately rejects tenant requests when `OPSBLAZE_ENVIRONMENT=production`. **Do not expose this application publicly or connect it to real infrastructure.**
+The local token is **not** reviewer authentication or a real multi-tenant security system. The API requires signed, issuer- and audience-validated identity-provider bearer tokens when `OPSBLAZE_ENVIRONMENT=production`. **Do not expose this application publicly or connect it to real infrastructure.**
 
 ## Verification
 
@@ -93,3 +93,26 @@ safeguards. The [TITAN-20 status matrix](docs/implementation-status.md)
 identifies the remaining acceptance blockers. Use the latest passing
 [GitHub Actions run](https://github.com/yashaskn8/OpsBlaze/actions)
 to verify the exact code revision before deployment.
+
+## Production identity boundary (configuration required)
+
+In production mode, configure `OPSBLAZE_OIDC_ISSUER`,
+`OPSBLAZE_OIDC_AUDIENCE`, and `OPSBLAZE_OIDC_JWKS_URL` using
+your trusted provider's HTTPS endpoint (JWKS must share the issuer's
+hostname). The API verifies the signed RS256 access token's issuer,
+audience, expiry, issued-at, signature and key ID. Token claims include
+`tenant_id`, `sub`, and a `roles` list containing only `viewer`,
+`operator`, and/or `reviewer`. Admission and ordinary writes require
+`operator`; reviewer-only decisions require `reviewer`. The server
+derives tenant identity from the token, checks any supplied
+`X-Tenant-Id` against it, and stores a non-reversible subject
+pseudonym on incident admission. An incident's creator cannot approve
+their own plan, even with both roles.
+
+The development shared-secret headers **never** authenticate in
+production. Missing configuration, invalid signatures and unavailable
+signing keys fail closed. The React UI currently supports only local
+development credentials; deployment must supply an OAuth2/OIDC login
+client and HTTPS reverse proxy before humans can use this boundary.
+This auth milestone does not authorize real infrastructure effects:
+the simulator gateway and independent E5/E6 release blocks remain.

@@ -35,7 +35,8 @@ def request_fingerprint(payload: IncidentCreate) -> str:
 
 
 async def admit_incident(
-    session: AsyncSession, tenant_id: str, client_key: str, payload: IncidentCreate
+    session: AsyncSession, tenant_id: str, client_key: str, payload: IncidentCreate,
+    created_by: str | None = None,
 ) -> Incident:
     """Atomically persist the incident and a pending workflow-start intent."""
     fingerprint = request_fingerprint(payload)
@@ -45,6 +46,7 @@ async def admit_incident(
         client_key=client_key,
         request_sha256=fingerprint,
         target_id=payload.target_id,
+        created_by=created_by,
         status_projection="DISPATCH_PENDING",
         status_version=1,
     )

@@ -173,6 +173,11 @@ async def decide_plan(
             or incident is None or incident.status_projection != "AWAITING_APPROVAL"
         ):
             raise PlanConflict("plan or incident version/state changed")
+        if (
+            incident.created_by is not None
+            and decided_by == incident.created_by
+        ):
+            raise PlanConflict("incident creator cannot decide the same plan")
         if decision == "APPROVE" and not await current_plan_evidence_is_intact(
             session, plan
         ):
