@@ -150,3 +150,31 @@ async def test_outcome_reversal_invalidates_dependent_policy_lineage(witnessed_e
         assert (await session.get(PolicyBundle, bundle_id)).state == "REVOKED"
         rollout = await session.get(PolicyRollout, rollout_id)
         assert rollout.state == "ROLLED_BACK" and rollout.version == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fake", [
+    (2.0, True),
+    (2, 1),
+    ("2", True),
+    (2,),
+])
+async def test_redteam_untyped_independent_outcome_cannot_certify_recovery(
+    witnessed_effect, fake,
+):
+    sessions, adapter, incident_id, effect_id = witnessed_effect
+
+    class InvalidWitness(SimulatorAdapter):
+        async def observe(self, tenant_id, target_id):
+            return fake
+
+    assert await adjudicate_simulator(
+        sessions, InvalidWitness(sessions), "a", incident_id, effect_id,
+    ) == "DISPUTED"
+    async with sessions() as session:
+        rows = (await session.scalars(select(OutcomeRevision))).all()
+        assert len(rows) == 1 and rows[0].label == "DISPUTED"
+        if type(fake[0]) is int:
+            assert rows[0].observed_version == fake[0]
+        else:
+            assert rows[0].observed_version is None
