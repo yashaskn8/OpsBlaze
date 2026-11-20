@@ -929,3 +929,89 @@ async def test_parallel_effect_preparation_creates_one_immutable_receipt():
             assert remaining.state == "PREPARED"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_postgres_racing_sent_checkpoint_only_calls_adapter_once(monkeypatch):
+    """B3: row locks serialize duplicate dispatch after both see PREPARED."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.adapters.simulator import SimulatorAdapter
+    from backend.effects import gateway
+    from backend.effects.reservations import reserve_simulator_target
+    from backend.models import (
+        EffectReceipt, ResourceEpoch, SimulatorAppliedEffect, SimulatorTarget,
+    )
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "dispatch-race-" + uuid4().hex[:12]
+    entering = 0
+    reached = asyncio.Event()
+    sent_state = gateway.set_state
+
+    async def release_together(sessions_arg, effect_id, state, **kwargs):
+        nonlocal entering
+        if state == "SENT":
+            entering += 1
+            if entering == 2:
+                reached.set()
+            await asyncio.wait_for(reached.wait(), timeout=10)
+        return await sent_state(sessions_arg, effect_id, state, **kwargs)
+
+    monkeypatch.setattr(gateway, "set_state", release_together)
+    calls = 0
+
+    class CountedSimulator(SimulatorAdapter):
+        async def apply(self, effect_id, permit):
+            nonlocal calls
+            calls += 1
+            return await super().apply(effect_id, permit)
+
+    try:
+        async with sessions() as session:
+            async with session.begin():
+                session.add(SimulatorTarget(
+                    tenant_id=tenant, target_id="checkout",
+                    version=1, healthy=False, last_fence=0,
+                ))
+                session.add(ResourceEpoch(
+                    tenant_id=tenant, target_id="checkout",
+                    latest_fence=0, version_seen=1,
+                ))
+        async with sessions() as session:
+            incident = await admit_incident(
+                session, tenant, "dispatch",
+                IncidentCreate(target_id="checkout"),
+            )
+        permit = await reserve_simulator_target(
+            sessions, tenant, "checkout", incident.id, "9" * 64,
+        )
+        adapter = CountedSimulator(sessions)
+        outcomes = await asyncio.gather(*(
+            gateway.execute_simulator_effect(sessions, adapter, permit)
+            for _ in range(2)
+        ))
+        assert "VERIFIED" in outcomes
+        assert set(outcomes).issubset({"UNKNOWN", "VERIFIED"})
+        assert calls == 1
+        async with sessions() as session:
+            receipt = await session.scalar(
+                select(EffectReceipt).where(
+                    EffectReceipt.incident_id == incident.id,
+                )
+            )
+            applied = (await session.scalars(select(SimulatorAppliedEffect).where(
+                SimulatorAppliedEffect.tenant_id == tenant,
+            ))).all()
+            assert receipt.state == "VERIFIED"
+            assert receipt.attempt_count == 1
+            assert len(applied) == 1
+        assert await adapter.observe(tenant, "checkout") == (2, True)
+    finally:
+        await engine.dispose()

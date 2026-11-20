@@ -226,50 +226,21 @@ async def test_parallel_sqlite_prepare_reuses_exact_immutable_effect_id(lab):
         assert len(receipts) == 1 and receipts[0].attempt_count == 0
 
 
-@pytest.mark.asyncio
-async def test_two_workers_racing_prepared_receipt_only_call_apply_once(lab, monkeypatch):
-    """Exactly one worker crosses SENT even when both observed PREPARED."""
-    import asyncio
-    from backend.effects import gateway
 
-    sessions, incident_id, _adapter = lab
+@pytest.mark.asyncio
+async def test_sent_transition_may_only_be_claimed_once(lab):
+    from backend.effects.gateway import set_state
+
+    sessions, incident_id, adapter = lab
     permit = await reserve_simulator_target(
         sessions, "a", "checkout", incident_id, "9" * 64,
     )
-    reached = asyncio.Event()
-    entering = 0
-    sent_state = gateway.set_state
-
-    async def release_together(sessions_arg, effect_id, state, **kwargs):
-        nonlocal entering
-        if state == "SENT":
-            entering += 1
-            if entering == 2:
-                reached.set()
-            await asyncio.wait_for(reached.wait(), timeout=8)
-        return await sent_state(sessions_arg, effect_id, state, **kwargs)
-
-    monkeypatch.setattr(gateway, "set_state", release_together)
-    calls = 0
-
-    class CountedSimulator(SimulatorAdapter):
-        async def apply(self, effect_id, permit):
-            nonlocal calls
-            calls += 1
-            return await super().apply(effect_id, permit)
-
-    adapter = CountedSimulator(sessions)
-    outcomes = await asyncio.gather(*(
-        execute_simulator_effect(sessions, adapter, permit)
-        for _ in range(2)
-    ))
-    assert "VERIFIED" in outcomes
-    assert set(outcomes).issubset({"VERIFIED", "UNKNOWN"})
-    assert calls == 1
+    effect_id = await prepare_receipt(sessions, permit)
+    await set_state(sessions, effect_id, "SENT")
+    with pytest.raises(EffectConflict, match="already dispatched"):
+        await set_state(sessions, effect_id, "SENT")
     async with sessions() as session:
-        receipt = await session.scalar(select(EffectReceipt))
-        applied = (await session.scalars(select(SimulatorAppliedEffect))).all()
-        assert receipt.state == "VERIFIED"
+        receipt = await session.get(EffectReceipt, effect_id)
+        assert receipt.state == "SENT"
         assert receipt.attempt_count == 1
-        assert len(applied) == 1
-        assert await adapter.observe("a", "checkout") == (2, True)
+    assert await adapter.observe("a", "checkout") == (1, False)
