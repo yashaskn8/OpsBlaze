@@ -1,4 +1,5 @@
 
+import hashlib
 from uuid import uuid4
 
 import pytest
@@ -103,3 +104,66 @@ async def test_read_time_excludes_superseded_verified_source(sessions_fixture):
         assert await list_capsules(session, "tenant") == []
         persisted = await session.get(ExperienceCapsule, capsule.id)
         assert persisted.status == "VALID"
+
+
+@pytest.mark.asyncio
+async def test_redteam_capsule_read_rejects_forged_source_target(sessions_fixture):
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "tenant", "poisoned-capsule",
+            IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        await set_consent(session, "tenant", incident.id, 0, True)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutcomeRevision(
+                id=uuid4(), tenant_id="tenant", incident_id=incident.id,
+                effect_id=None, revision=1, label="VERIFIED",
+                witness_source="SIMULATOR_WITNESS",
+                observed_version=1, reason="witness fixture",
+            ))
+    async with sessions_fixture() as session:
+        capsule = await capture_capsule(session, "tenant", incident.id)
+    async with sessions_fixture() as session:
+        assert [x.id for x in await list_capsules(session, "tenant")] == [capsule.id]
+    async with sessions_fixture() as session:
+        async with session.begin():
+            row = await session.get(ExperienceCapsule, capsule.id)
+            row.target_digest = hashlib.sha256(b"tenant:other").hexdigest()
+    async with sessions_fixture() as session:
+        assert await list_capsules(session, "tenant") == []
+    async with sessions_fixture() as session:
+        with pytest.raises(ConsentConflict, match="stale"):
+            await capture_capsule(session, "tenant", incident.id)
+
+
+@pytest.mark.asyncio
+async def test_redteam_stale_consent_epoch_cannot_reuse_old_capsule(sessions_fixture):
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "tenant", "stale-capsule",
+            IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        await set_consent(session, "tenant", incident.id, 0, True)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutcomeRevision(
+                id=uuid4(), tenant_id="tenant", incident_id=incident.id,
+                effect_id=None, revision=1, label="VERIFIED",
+                witness_source="SIMULATOR_WITNESS",
+                observed_version=1, reason="witness fixture",
+            ))
+    async with sessions_fixture() as session:
+        old = await capture_capsule(session, "tenant", incident.id)
+    async with sessions_fixture() as session:
+        await set_consent(session, "tenant", incident.id, 1, True)
+    async with sessions_fixture() as session:
+        assert await list_capsules(session, "tenant") == []
+    async with sessions_fixture() as session:
+        with pytest.raises(ConsentConflict, match="stale"):
+            await capture_capsule(session, "tenant", incident.id)
+    async with sessions_fixture() as session:
+        stored = await session.get(ExperienceCapsule, old.id)
+        assert stored.status == "VALID" and stored.consent_epoch == 1
