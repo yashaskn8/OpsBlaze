@@ -98,9 +98,10 @@ async def test_two_dispatchers_then_worker_handoff_preserves_one_effect():
                     )
                 )
                 assert plan is not None
+                plan_id = plan.id
                 await session.rollback()
             async with sessions() as session:
-                await decide_plan(session, tenant, plan.id, 1, "APPROVE")
+                await decide_plan(session, tenant, plan_id, 1, "APPROVE")
 
             # Both dispatcher instances run while no incident worker exists.
             # The approval signal is durable in Temporal and is replayed by
