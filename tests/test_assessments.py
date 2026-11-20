@@ -115,3 +115,22 @@ async def test_future_dated_evidence_abstains(assessment_lab):
     assessment = await assess_decision(sessions, "t", incident_id, 2, ids)
     assert assessment.outcome == "ABSTAINED"
     assert assessment.reason == "STALE_EVIDENCE"
+
+
+@pytest.mark.asyncio
+async def test_assessment_cannot_be_reused_for_another_evidence_snapshot(assessment_lab):
+    sessions, incident_id, ids = assessment_lab
+    accepted = await assess_decision(sessions, "t", incident_id, 2, ids)
+    assert accepted.outcome == "PROPOSED"
+    assert await assess_decision(
+        sessions, "t", incident_id, 2, list(reversed(ids))
+    ) is None
+    async with sessions() as session:
+        saved = await session.scalar(
+            select(DecisionAssessment).where(
+                DecisionAssessment.incident_id == incident_id,
+                DecisionAssessment.step_no == 2,
+            )
+        )
+        assert saved.id == accepted.id
+        assert saved.evidence_digest == accepted.evidence_digest
