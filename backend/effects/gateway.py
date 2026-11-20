@@ -63,7 +63,8 @@ async def prepare_receipt(
                 .with_for_update()
             )
             if receipt is None or (
-                receipt.incident_id != permit.incident_id
+                receipt.adapter_id != "simulator"
+                or receipt.incident_id != permit.incident_id
                 or receipt.target_id != permit.target_id
                 or receipt.plan_digest != permit.action_digest
                 or receipt.fence != permit.fence
@@ -98,6 +99,8 @@ async def set_state(
                 return
             if state not in allowed.get(receipt.state, set()):
                 raise EffectConflict(f"invalid receipt transition {receipt.state} -> {state}")
+            if state == "SENT" and receipt.adapter_id != "simulator":
+                raise EffectConflict("non-simulator effect adapter is disabled")
             if state == "SENT" and plan_id is None:
                 from backend.settings import get_settings
 
@@ -130,10 +133,16 @@ async def set_state(
                         RevokedIdentity,
                         (receipt.tenant_id, approval.reviewer_id),
                     ) is not None
+                    or approval.decision != "APPROVE"
                     or approval.plan_digest != receipt.plan_digest
+                    or approval.plan_digest != plan.plan_digest
                     or approval.scope != "SIMULATOR_MARK_HEALTHY"
                     or utc(approval.expires_at) <= datetime.now(timezone.utc)
                     or plan.status != "APPROVED"
+                    or plan.version != 2
+                    or plan.action_id != "SIMULATOR_MARK_HEALTHY"
+                    or plan.target_id != receipt.target_id
+                    or plan.expected_version != receipt.expected_version
                     or plan.review_epoch != get_settings().review_epoch
                     or not await current_plan_evidence_is_intact(session, plan)
                 ):
