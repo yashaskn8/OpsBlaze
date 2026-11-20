@@ -13,6 +13,9 @@ from backend.auth import (
 
 
 PUBLIC_GETS = frozenset({"/v1/health/ready"})
+# This write endpoint authenticates a separately-audienced signed IdP JWT in
+# the handler, not a human API bearer token or a development shared secret.
+SIGNED_EVENT_POSTS = frozenset({"/v1/security/idp-events"})
 
 
 def test_api_authorization_matrix_is_exhaustive():
@@ -25,6 +28,10 @@ def test_api_authorization_matrix_is_exhaustive():
         direct = {dependency.call for dependency in route.dependant.dependencies}
         methods = route.methods or set()
         if methods.intersection({"POST", "PUT", "PATCH", "DELETE"}):
+            if route.path in SIGNED_EVENT_POSTS:
+                assert route.methods == {"POST"}
+                assert local_tenant not in direct
+                continue
             assert local_tenant in direct, (route.path, methods)
             assert (
                 local_operator in direct or local_reviewer in direct
@@ -46,4 +53,4 @@ def test_identity_and_health_are_the_only_intentional_exceptions():
         direct = {dependency.call for dependency in route.dependant.dependencies}
         if local_tenant not in direct and get_principal not in direct:
             unauthenticated.append(route.path)
-    assert unauthenticated == ["/v1/health/ready"]
+    assert set(unauthenticated) == {"/v1/health/ready", "/v1/security/idp-events"}
