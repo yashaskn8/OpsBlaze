@@ -25,7 +25,11 @@ class IncidentWorkflow:
 
     @workflow.signal
     def plan_decided(self, plan_id: str, approved: bool) -> None:
-        self.plan_decision = (plan_id, approved)
+        # Temporal signals can be redelivered after an outbox lost ACK.
+        # The first recorded version-bound human decision wins; conflicting
+        # later signals cannot upgrade a rejection or replace a plan ID.
+        if self.plan_decision is None:
+            self.plan_decision = (plan_id, approved)
 
     @workflow.run
     async def run(self, tenant_id: str, incident_id: str) -> str:

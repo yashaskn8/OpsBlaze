@@ -319,3 +319,8 @@ single worker process from accepting an unbounded number of concurrent
 activities. Admission limits and durable token budgets remain separate.
 Measure schedule-to-start latency and database contention before raising
 these values; multi-host capacity and fair-share quotas remain unverified.
+
+The native Temporal tests also verify that an approval signal received while
+workers are stopped is immutable: a later contradictory signal cannot replace
+its plan ID or convert a reviewer rejection into an approval. The API and
+gateway still enforce independent plan versions and receipt permissions.
