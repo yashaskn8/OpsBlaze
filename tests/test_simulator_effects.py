@@ -441,3 +441,30 @@ async def test_redteam_untyped_oracle_cannot_verify_effect(lab, fake):
         receipt = await session.scalar(select(EffectReceipt))
         assert receipt.state == "NEEDS_REVIEW"
         assert receipt.attempt_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tamper", ["version", "send_count", "adapter"])
+async def test_redteam_terminal_receipt_integrity_checked_on_replay(lab, tamper):
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "f" * 64,
+    )
+    assert await execute_simulator_effect(sessions, adapter, permit) == "VERIFIED"
+    async with sessions() as session:
+        receipt = await session.scalar(select(EffectReceipt))
+        receipt_id = receipt.id
+
+    async with sessions() as session:
+        async with session.begin():
+            receipt = await session.get(EffectReceipt, receipt_id)
+            if tamper == "version":
+                receipt.observed_version += 7
+            elif tamper == "send_count":
+                receipt.attempt_count = 0
+            else:
+                receipt.adapter_id = "untrusted-external-adapter"
+    assert await reconcile_effect(sessions, adapter, receipt_id) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, receipt_id)
+        assert receipt.state == "VERIFIED"  # preserved historical record
