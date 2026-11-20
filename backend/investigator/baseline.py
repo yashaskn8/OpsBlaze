@@ -23,6 +23,7 @@ async def write_step(
     probe_id: str,
     model_id: str = "deterministic-baseline-v1",
     token_used: int = 0,
+    token_reserved: int = 0,
 ) -> None:
     async with sessions() as session:
         async with session.begin():
@@ -41,7 +42,7 @@ async def write_step(
                     prompt_version="none",
                     evidence_ids=evidence_ids, cause_scores=scores,
                     probe_id=probe_id, decision=decision,
-                    token_reserved=128 if token_used else 0,
+                    token_reserved=token_reserved,
                     token_used=token_used,
                 )
             )
@@ -75,11 +76,13 @@ async def inspect(
     advice = await advise_after_unhealthy(sessions, tenant_id, incident_id)
     model_id = advice.model_id if advice else "deterministic-baseline-v1"
     token_used = advice.tokens_used if advice else 0
+    token_reserved = advice.tokens_reserved if advice else 0
     if advice is not None and advice.next_probe == "ABSTAIN":
         await write_step(
             sessions, incident_id, 1, ids, "MODEL_ADVISORY_ABSTAINED",
             {"simulated_target_unhealthy": 1}, "simulator.health",
             model_id=model_id, token_used=token_used,
+            token_reserved=token_reserved,
         )
         return "ABSTAINED"
 
@@ -87,6 +90,7 @@ async def inspect(
         sessions, incident_id, 1, ids, "NEEDS_SECOND_PROBE",
         {"simulated_target_unhealthy": 1}, "simulator.health",
         model_id=model_id, token_used=token_used,
+            token_reserved=token_reserved,
     )
     try:
         version = await invoke_probe(

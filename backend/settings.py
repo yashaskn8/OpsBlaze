@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     experience_retention_days: int = 7
     ai_advisory_enabled: bool = False
     ai_advisory_model: str = "gpt-6.2-sol"
+    ai_token_limit_per_minute: int = 2048
 
 
 @lru_cache

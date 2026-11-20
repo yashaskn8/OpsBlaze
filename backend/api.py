@@ -1122,3 +1122,21 @@ async def pinned_incident_policy(
         "execution_enabled": assignment.bundle_id is None and assignment.rollout_id is None,
         "assigned_at": assignment.assigned_at.isoformat(),
     }
+
+
+@app.get("/v1/operations/model-budget")
+async def tenant_model_budget(
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.budgets import current_window
+    from backend.models import ModelTokenWindow
+
+    limit = get_settings().ai_token_limit_per_minute
+    window = await session.get(ModelTokenWindow, (tenant_id, current_window()))
+    return {
+        "limit_per_minute": limit,
+        "reserved_tokens": window.reserved_tokens if window else 0,
+        "reported_used_tokens": window.used_tokens if window else 0,
+        "provider_enabled": get_settings().ai_advisory_enabled,
+    }

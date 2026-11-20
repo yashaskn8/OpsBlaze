@@ -134,3 +134,12 @@ frozen trial pair is missing, report integrity becomes `INCOMPLETE`
 without granting promotion. These are six public deterministic smoke
 fixtures, **not** held-out production results: verified recovery per
 cost remains explicitly `null` and promotion stays disabled.
+
+Optional A1 model calls also reserve a conservative 512-token budget
+against the tenant's durable fixed-minute counter before contacting the
+provider. The cap is set by `OPSBLAZE_AI_TOKEN_LIMIT_PER_MINUTE` (default
+2048). `GET /v1/operations/model-budget` shows reserved and provider-
+reported usage; a failed or exhausted reservation falls back to the
+deterministic investigator. This bounds the number of optional calls,
+but a provider's actual prompt accounting may differ from the local
+reservation, so it is not a billing guarantee.

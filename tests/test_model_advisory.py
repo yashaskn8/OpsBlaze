@@ -7,7 +7,7 @@ from sqlalchemy import select
 from backend.investigator.advisory import (
     MAX_OUTPUT_TOKENS, ReadOnlyAdvice, advise_after_unhealthy,
 )
-from backend.models import ModelAdvisory
+from backend.models import ModelAdvisory, ModelTokenWindow
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 from backend.settings import Settings
@@ -56,6 +56,7 @@ async def test_model_choice_is_scoped_cached_and_read_only(sessions_fixture, mon
     chosen = await advise_after_unhealthy(sessions_fixture, "t", incident.id, fake)
     assert chosen.next_probe == "simulator.version"
     assert chosen.tokens_used == 37
+    assert chosen.tokens_reserved == 512
     assert await advise_after_unhealthy(sessions_fixture, "t", incident.id, fake) == chosen
     assert fake.responses.calls == 1
     assert await advise_after_unhealthy(sessions_fixture, "other", incident.id, fake) is None
@@ -76,3 +77,40 @@ async def test_model_failure_has_no_blind_retries(sessions_fixture, monkeypatch)
     async with sessions_fixture() as session:
         row = await session.get(ModelAdvisory, incident.id)
         assert row.state == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_tenant_budget_limits_actual_provider_calls(sessions_fixture, monkeypatch):
+    monkeypatch.setattr(
+        "backend.investigator.advisory.get_settings",
+        lambda: Settings(
+            ai_advisory_enabled=True, ai_advisory_model="test-model",
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.budgets.get_settings",
+        lambda: Settings(ai_token_limit_per_minute=512),
+    )
+    async with sessions_fixture() as session:
+        first = await admit_incident(
+            session, "t", "first", IncidentCreate(target_id="checkout")
+        )
+    async with sessions_fixture() as session:
+        second = await admit_incident(
+            session, "t", "second", IncidentCreate(target_id="billing")
+        )
+    fake = SimpleNamespace(responses=FakeResponses(ReadOnlyAdvice(
+        next_probe="simulator.version", reason_code="NEED_VERSION",
+    )))
+    assert await advise_after_unhealthy(
+        sessions_fixture, "t", first.id, fake
+    ) is not None
+    assert await advise_after_unhealthy(
+        sessions_fixture, "t", second.id, fake
+    ) is None
+    assert fake.responses.calls == 1
+    async with sessions_fixture() as session:
+        window = await session.scalar(select(ModelTokenWindow))
+        assert window.reserved_tokens == 512
+        assert window.used_tokens == 37
+        assert (await session.get(ModelAdvisory, second.id)) is None

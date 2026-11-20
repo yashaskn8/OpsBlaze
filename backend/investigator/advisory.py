@@ -6,6 +6,7 @@ provider response, deterministic investigation continues without model output.
 """
 
 from dataclasses import dataclass
+from backend.budgets import current_window, reserve_model_tokens, settle_model_tokens
 import logging
 from typing import Literal
 from uuid import UUID
@@ -18,6 +19,7 @@ from backend.settings import get_settings
 
 log = logging.getLogger(__name__)
 MAX_OUTPUT_TOKENS = 128
+MAX_RESERVE_TOKENS = 512
 
 
 class ReadOnlyAdvice(BaseModel):
@@ -32,6 +34,7 @@ class AdvisoryResult:
     next_probe: str
     model_id: str
     tokens_used: int
+    tokens_reserved: int
 
 
 async def advise_after_unhealthy(
@@ -53,14 +56,23 @@ async def advise_after_unhealthy(
                 if row.state == "COMPLETE" and row.next_probe in {
                     "simulator.version", "ABSTAIN"
                 }:
-                    return AdvisoryResult(row.next_probe, row.model_id, row.tokens_used)
+                    return AdvisoryResult(
+                        row.next_probe, row.model_id, row.tokens_used,
+                        row.tokens_reserved,
+                    )
                 # Previous unknown/in-flight/failed call never triggers another spend.
+                return None
+            window_start = current_window()
+            if not await reserve_model_tokens(
+                session, tenant_id, window_start, MAX_RESERVE_TOKENS,
+            ):
                 return None
             session.add(ModelAdvisory(
                 incident_id=incident_id, tenant_id=tenant_id,
                 model_id=settings.ai_advisory_model, state="RESERVED",
                 next_probe=None, reason_code=None,
-                tokens_reserved=MAX_OUTPUT_TOKENS, tokens_used=0,
+                budget_window_start=window_start,
+                tokens_reserved=MAX_RESERVE_TOKENS, tokens_used=0,
             ))
 
     advice = None
@@ -119,10 +131,16 @@ async def advise_after_unhealthy(
                 return None
             row.state = "COMPLETE" if advice is not None else "FAILED"
             row.tokens_used = used
+            await settle_model_tokens(
+                session, tenant_id, row.budget_window_start, used,
+            )
             if advice is not None:
                 row.next_probe = advice.next_probe
                 row.reason_code = advice.reason_code
 
     if advice is None:
         return None
-    return AdvisoryResult(advice.next_probe, settings.ai_advisory_model, used)
+    return AdvisoryResult(
+        advice.next_probe, settings.ai_advisory_model,
+        used, MAX_RESERVE_TOKENS,
+    )

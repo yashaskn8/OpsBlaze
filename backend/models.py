@@ -573,6 +573,7 @@ class ModelAdvisory(Base):
         Uuid(as_uuid=True), ForeignKey("incident.id"), primary_key=True
     )
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    budget_window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     model_id: Mapped[str] = mapped_column(String(64), nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False)
     next_probe: Mapped[str | None] = mapped_column(String(32))
@@ -649,3 +650,14 @@ class PolicyAssignment(Base):
     assigned_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ModelTokenWindow(Base):
+    __tablename__ = "model_token_window"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True
+    )
+    reserved_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    used_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
