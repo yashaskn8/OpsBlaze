@@ -6,12 +6,12 @@ No external model is trusted to classify root causes or modify permissions.
 
 from uuid import UUID, NAMESPACE_URL, uuid4, uuid5
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import (
-    EffectReceipt, FailureCase, FailureCluster, ImprovementCandidate,
-    Incident, OutcomeRevision,
+    EffectReceipt, EvaluationManifest, FailureCase, FailureCluster,
+    FailureReview, ImprovementCandidate, Incident, OutcomeRevision, ProbeCall,
 )
 
 
@@ -183,3 +183,126 @@ async def submit_candidate(
         candidate.state = "EVALUATION_READY"
         candidate.version += 1
     return candidate
+
+
+async def review_classification(
+    session: AsyncSession,
+    tenant_id: str, case_id: UUID, expected_version: int,
+    corrected_code: str, first_bad_step: int | None,
+    reason: str,
+) -> FailureCase | None:
+    """Fact-bound correction. Invalidate candidates derived from old signatures."""
+    if not 8 <= len(reason.strip()) <= 256:
+        raise FailureConflict("review reason must contain 8–256 characters")
+    if corrected_code not in {"PROBE_DENIED", "EFFECT_FAILED", "EFFECT_UNKNOWN"}:
+        raise FailureConflict("unsupported correction code")
+    async with session.begin():
+        case = await session.scalar(
+            select(FailureCase)
+            .where(FailureCase.id == case_id, FailureCase.tenant_id == tenant_id)
+            .with_for_update()
+        )
+        if case is None:
+            return None
+        if case.classification_version != expected_version:
+            raise FailureConflict("classification version changed")
+        latest_outcome = await session.scalar(
+            select(OutcomeRevision)
+            .where(
+                OutcomeRevision.tenant_id == tenant_id,
+                OutcomeRevision.incident_id == case.incident_id,
+            )
+            .order_by(OutcomeRevision.revision.desc())
+            .limit(1)
+        )
+        if (
+            latest_outcome is None
+            or latest_outcome.id != case.outcome_revision_id
+            or latest_outcome.label == "VERIFIED"
+        ):
+            raise FailureConflict("source outcome is stale or verified")
+
+        if corrected_code == "PROBE_DENIED":
+            if first_bad_step is None or first_bad_step < 1:
+                raise FailureConflict("denied probe step is required")
+            matching = await session.scalar(
+                select(ProbeCall).where(
+                    ProbeCall.incident_id == case.incident_id,
+                    ProbeCall.step_no == first_bad_step,
+                    ProbeCall.outcome == "DENIED",
+                )
+            )
+        else:
+            if first_bad_step is not None:
+                raise FailureConflict("effect correction cannot name a probe step")
+            matching = await session.scalar(
+                select(EffectReceipt).where(
+                    EffectReceipt.tenant_id == tenant_id,
+                    EffectReceipt.incident_id == case.incident_id,
+                    EffectReceipt.state == (
+                        "FAILED" if corrected_code == "EFFECT_FAILED" else "UNKNOWN"
+                    ),
+                ).limit(1)
+            )
+        if matching is None:
+            raise FailureConflict("no durable facts support this correction")
+
+        old_cluster = await session.get(
+            FailureCluster, case.cluster_id, with_for_update=True
+        )
+        if old_cluster is None:
+            raise FailureConflict("source cluster missing")
+        previous_code = case.origin_code
+        signature = (
+            f"{corrected_code}:step-{first_bad_step}"
+            if first_bad_step is not None else f"{corrected_code}:effect"
+        )
+        new_cluster_id = uuid5(
+            NAMESPACE_URL, f"opsblaze/failure/{tenant_id}/{signature}/v1"
+        )
+        new_cluster = await session.get(
+            FailureCluster, new_cluster_id, with_for_update=True
+        )
+        if new_cluster is None:
+            new_cluster = FailureCluster(
+                id=new_cluster_id, tenant_id=tenant_id,
+                signature=signature, version=1,
+                case_count=0, quarantined=False,
+            )
+            session.add(new_cluster)
+        if old_cluster.id != new_cluster.id:
+            old_cluster.case_count -= 1
+            old_cluster.quarantined = True
+            new_cluster.case_count += 1
+            await session.execute(
+                update(ImprovementCandidate)
+                .where(ImprovementCandidate.source_cluster_id == old_cluster.id)
+                .values(state="INVALID")
+            )
+            candidates = (
+                await session.scalars(
+                    select(ImprovementCandidate.id).where(
+                        ImprovementCandidate.source_cluster_id == old_cluster.id
+                    )
+                )
+            ).all()
+            if candidates:
+                await session.execute(
+                    update(EvaluationManifest)
+                    .where(EvaluationManifest.candidate_id.in_(candidates))
+                    .values(state="INVALID")
+                )
+        case.origin_code = corrected_code
+        case.first_bad_step = first_bad_step
+        case.review_status = "CLASSIFIED"
+        case.cluster_id = new_cluster_id
+        case.classification_version += 1
+        session.add(
+            FailureReview(
+                id=uuid4(), tenant_id=tenant_id, case_id=case.id,
+                revision=case.classification_version,
+                previous_code=previous_code, corrected_code=corrected_code,
+                reason=reason.strip(),
+            )
+        )
+    return case

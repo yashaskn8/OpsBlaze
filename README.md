@@ -329,3 +329,14 @@ investigation and never retries the ambiguous request blindly. The
 model cannot select a real adapter or authorize an effect. This optional
 path is not a calibrated production agent, and CI tests use fake clients
 rather than paid model calls.
+
+## E3 fact-bound reviewer corrections
+
+A development reviewer can correct a failure case at
+POST /v1/failures/{id}/review using the current classification version.
+The server requires a matching denied probe or failed/unknown effect receipt,
+records a separate immutable review revision, moves the case to the new
+typed signature cluster and quarantines proposals/evaluations from the
+previous signature. It cannot invent a root cause from persuasive text.
+Real reviewer identities and independent review policy remain required
+before production use.

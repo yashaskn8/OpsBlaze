@@ -582,3 +582,23 @@ class ModelAdvisory(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class FailureReview(Base):
+    __tablename__ = "failure_review"
+    __table_args__ = (
+        UniqueConstraint("case_id", "revision", name="uq_failure_review_revision"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    case_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("failure_case.id"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    corrected_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

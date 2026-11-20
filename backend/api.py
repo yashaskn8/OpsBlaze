@@ -1001,3 +1001,39 @@ async def incident_model_advisory(
         "tokens_reserved": row.tokens_reserved,
         "tokens_used": row.tokens_used,
     }
+
+
+class FailureReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    corrected_code: Literal["PROBE_DENIED", "EFFECT_FAILED", "EFFECT_UNKNOWN"]
+    first_bad_step: int | None = Field(default=None, ge=1)
+    reason: str = Field(min_length=8, max_length=256)
+
+
+@app.post("/v1/failures/{case_id}/review", status_code=202)
+async def review_failure(
+    case_id: UUID,
+    payload: FailureReviewRequest,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.learning.failures import FailureConflict, review_classification
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be classification version")
+    try:
+        case = await review_classification(
+            session, tenant_id, case_id, int(version),
+            payload.corrected_code, payload.first_bad_step, payload.reason,
+        )
+    except FailureConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if case is None:
+        raise HTTPException(404, "failure case not found")
+    return {
+        "id": str(case.id), "cluster_id": str(case.cluster_id),
+        "origin_code": case.origin_code,
+        "classification_version": case.classification_version,
+    }
