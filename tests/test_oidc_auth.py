@@ -232,3 +232,23 @@ async def test_missing_or_untrusted_configuration_fails_closed(signer, productio
         )
     ).status_code == 503
     assert configured_identity(AUTH_SETTINGS)
+
+
+@pytest.mark.asyncio
+async def test_authenticated_identity_returns_verified_roles_without_raw_sub(
+    signer, production_client,
+):
+    token = signer(tenant="alpha", subject="name@example.test", roles=("reviewer", "viewer"))
+    response = await production_client.get(
+        "/v1/auth/me", headers=bearer(token),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["tenant_id"] == "alpha"
+    assert body["roles"] == ["reviewer", "viewer"]
+    assert body["actor_id"].startswith("oidc:")
+    assert "name@example.test" not in str(body)
+    forged = await production_client.get(
+        "/v1/auth/me", headers=bearer(token, tenant="beta"),
+    )
+    assert forged.status_code == 403

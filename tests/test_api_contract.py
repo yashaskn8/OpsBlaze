@@ -321,3 +321,16 @@ async def test_expired_notification_cursor_requires_snapshot_resync(api_client, 
     assert resumed.json()["events"] == []
     snapshot = await api_client.get(route, headers=headers("alpha"))
     assert snapshot.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_development_identity_never_grants_reviewer_role(api_client):
+    response = await api_client.get(
+        "/v1/auth/me", headers=headers("alpha"),
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "tenant_id": "alpha",
+        "actor_id": "DEV_OPERATOR_CREDENTIAL",
+        "roles": ["operator", "viewer"],
+    }
