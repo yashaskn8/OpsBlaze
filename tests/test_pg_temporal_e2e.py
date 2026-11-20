@@ -1136,3 +1136,82 @@ async def test_parallel_postgres_probe_retries_reserve_one_budget_slot() -> None
             ) == 1
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_idp_event_replay_concurrency_revokes_once_without_duplicated_audit():
+    """Adversarial duplicate deliveries across independent PG sessions."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.models import (
+        ApprovalGrant, ApprovalRevocation, IdentityProviderEvent,
+        IncidentPlan, RevokedIdentity,
+    )
+    from backend.schemas import IncidentCreate
+    from backend.security.revocation import revoke_identity
+    from backend.services import admit_incident
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "idp-replay-" + uuid4().hex[:10]
+    reviewer = "oidc:" + "a" * 32
+    admin = "oidc:" + "b" * 32
+    event_digest = uuid4().hex + uuid4().hex
+    plan_id, approval_id = uuid4(), uuid4()
+    try:
+        async with sessions() as session:
+            incident = await admit_incident(
+                session, tenant, "revocation-replay",
+                IncidentCreate(target_id="checkout"),
+            )
+        async with sessions() as session:
+            async with session.begin():
+                session.add(IncidentPlan(
+                    id=plan_id, tenant_id=tenant, incident_id=incident.id,
+                    target_id="checkout", action_id="SIMULATOR_MARK_HEALTHY",
+                    plan_digest="a" * 64, expected_version=1,
+                    evidence_ids=[], status="APPROVED", version=2,
+                    decided_by=reviewer, review_epoch=1,
+                ))
+                await session.flush()
+                session.add(ApprovalGrant(
+                    id=approval_id, tenant_id=tenant, plan_id=plan_id,
+                    plan_digest="a" * 64, reviewer_id=reviewer,
+                    scope="SIMULATOR_MARK_HEALTHY", decision="APPROVE",
+                    state="APPROVED", version=1,
+                    reason="approved local concurrency fixture",
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+                ))
+
+        async def deliver_same_event():
+            async with sessions() as session:
+                _, count = await revoke_identity(
+                    session, tenant, reviewer, admin,
+                    "identity provider signed revocation fixture",
+                    event_digest=event_digest,
+                )
+                return count
+
+        results = await asyncio.gather(*(deliver_same_event() for _ in range(8)))
+        assert sorted(results) == [0] * 7 + [1]
+        async with sessions() as session:
+            events = (await session.scalars(
+                select(IdentityProviderEvent).where(
+                    IdentityProviderEvent.tenant_id == tenant,
+                )
+            )).all()
+            audits = (await session.scalars(
+                select(ApprovalRevocation).where(
+                    ApprovalRevocation.approval_id == approval_id,
+                )
+            )).all()
+            assert len(events) == 1 and events[0].event_digest == event_digest
+            assert len(audits) == 1
+            assert (await session.get(ApprovalGrant, approval_id)).state == "REVOKED"
+            assert (await session.get(IncidentPlan, plan_id)).status == "REVOKED"
+            assert await session.get(RevokedIdentity, (tenant, reviewer)) is not None
+    finally:
+        await engine.dispose()
