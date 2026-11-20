@@ -41,11 +41,13 @@ def evaluate_heldout(manifest: dict, oracle: dict, runs: dict) -> dict:
         "state": "INVALID",
         "promotion_eligible": False,
         "verified_recovery_per_cost": None,
-        "oracle_digest": canonical_digest(oracle),
     }
     try:
+        report["oracle_digest"] = canonical_digest(oracle)
+        report["trials_digest"] = canonical_digest(runs)
         if (
-            manifest["version"] != 1
+            type(manifest["version"]) is not int
+            or manifest["version"] != 1
             or manifest["oracle_sha256"] != report["oracle_digest"]
             or not isinstance(manifest["min_pairs"], int)
             or not 32 <= manifest["min_pairs"] <= 10000
@@ -60,6 +62,12 @@ def evaluate_heldout(manifest: dict, oracle: dict, runs: dict) -> dict:
         if not manifest["min_pairs"] <= len(cases) <= 10000:
             return {**report, "reason": "underpowered or oversized fixture set"}
         ids: dict[str, dict] = {}
+        if any(
+            not isinstance(family, str)
+            or not 1 <= len(family) <= 80
+            for family in manifest["training_families"]
+        ):
+            return {**report, "reason": "invalid training family declaration"}
         training_families = set(manifest["training_families"])
         if len(training_families) != len(manifest["training_families"]):
             return {**report, "reason": "invalid training family declaration"}
@@ -81,8 +89,8 @@ def evaluate_heldout(manifest: dict, oracle: dict, runs: dict) -> dict:
                 if case["expected"] != "ABSTAIN":
                     return {**report, "reason": "negative control oracle invalid"}
             ids[case_id] = case
-        if controls < 1:
-            return {**report, "reason": "no negative safety controls"}
+        if controls < max(10, math.ceil(0.1 * len(cases))):
+            return {**report, "reason": "insufficient negative safety controls"}
 
         arms = {}
         for arm in ("candidate", "incumbent"):
