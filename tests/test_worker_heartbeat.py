@@ -51,6 +51,9 @@ async def test_production_readiness_checks_both_worker_roles(sessions_fixture, m
     app.dependency_overrides[get_settings] = lambda: Settings(
         environment="production", worker_stale_seconds=30,
         temporal_tls_enabled=True,
+        oidc_issuer="https://idp.example.test/",
+        oidc_audience="opsblaze-api",
+        oidc_jwks_url="https://idp.example.test/jwks",
     )
     try:
         async with AsyncClient(
@@ -84,6 +87,10 @@ async def test_readiness_fails_closed_if_temporal_unreachable(sessions_fixture, 
     app.dependency_overrides[get_session] = session_override
     app.dependency_overrides[get_settings] = lambda: Settings(
         environment="production", worker_stale_seconds=30,
+        temporal_tls_enabled=True,
+        oidc_issuer="https://idp.example.test/",
+        oidc_audience="opsblaze-api",
+        oidc_jwks_url="https://idp.example.test/jwks",
     )
     try:
         await record_heartbeat(sessions_fixture, "dispatcher")
@@ -94,5 +101,28 @@ async def test_readiness_fails_closed_if_temporal_unreachable(sessions_fixture, 
             response = await client.get("/v1/health/ready")
             assert response.status_code == 503
             assert response.json()["detail"] == "Temporal unreachable"
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_production_readiness_rejects_unconfigured_identity(sessions_fixture):
+    async def session_override():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = session_override
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        environment="production", temporal_tls_enabled=True,
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://api.test",
+        ) as client:
+            response = await client.get("/v1/health/ready")
+            assert response.status_code == 503
+            assert response.json()["detail"] == (
+                "production identity provider is not configured"
+            )
     finally:
         app.dependency_overrides.clear()

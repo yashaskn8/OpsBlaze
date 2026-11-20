@@ -249,3 +249,9 @@ A Docker-free systemd timer example is in
 experience capsules, purge old SSE notifications with cursor watermarks,
 and prune obsolete rate/token counters. Each category commits
 independently, and work per invocation is explicitly bounded.
+
+
+Production readiness additionally requires complete, trusted OIDC
+issuer/audience/JWKS configuration. Missing identity-provider settings
+cause `/v1/health/ready` to return 503 even when PostgreSQL and
+Temporal are reachable, avoiding a false-ready deployment.

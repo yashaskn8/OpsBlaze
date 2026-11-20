@@ -119,9 +119,13 @@ async def readiness(
 
     from backend.workers.temporal_health import check_temporal_health
     from backend.temporal_connection import validate_temporal_transport
+    from backend.auth import configured_identity
+
+    if settings.environment == "production" and not configured_identity(settings):
+        raise HTTPException(503, "production identity provider is not configured")
 
     try:
-        await session.execute(text("SELECT 1"))
+        await session.execute(text("SELECT 1")
         if settings.environment == "production":
             present = await present_workers(
                 session,
