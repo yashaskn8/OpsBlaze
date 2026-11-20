@@ -47,6 +47,7 @@ class Incident(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    probe_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     phase_entered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -152,3 +153,57 @@ class AdmissionUsage(Base):
     tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     accepted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+from sqlalchemy import JSON
+
+
+class Evidence(Base):
+    __tablename__ = "evidence"
+    __table_args__ = (
+        Index("ix_evidence_scoped", "tenant_id", "incident_id", "captured_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_version: Mapped[int | None] = mapped_column(BigInteger)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    redacted_excerpt: Mapped[str] = mapped_column(String(512), nullable=False)
+    classification: Mapped[str] = mapped_column(String(24), nullable=False)
+    validity: Mapped[str] = mapped_column(String(24), nullable=False)
+
+
+class ProbeCall(Base):
+    __tablename__ = "probe_call"
+    __table_args__ = (UniqueConstraint("incident_id", "step_no", name="uq_probe_incident_step"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    incident_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False)
+    step_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    catalog_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(24), nullable=False)
+    evidence_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("evidence.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class HypothesisStep(Base):
+    __tablename__ = "hypothesis_step"
+    __table_args__ = (UniqueConstraint("incident_id", "step_no", name="uq_hypothesis_incident_step"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    incident_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False)
+    step_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    model_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    evidence_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    cause_scores: Mapped[dict[str, int]] = mapped_column(JSON, nullable=False)
+    probe_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(48), nullable=False)
+    token_reserved: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    token_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

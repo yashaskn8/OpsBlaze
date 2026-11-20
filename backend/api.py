@@ -140,3 +140,83 @@ async def tenant_queues(
         )
     )
     return {"pending_outbox": pending or 0, "active_incidents": active or 0}
+
+
+@app.get("/v1/incidents/{incident_id}/evidence")
+async def incident_evidence(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    from sqlalchemy import select
+    from backend.models import Evidence
+
+    incident = await find_incident(session, tenant_id, incident_id)
+    if incident is None:
+        raise HTTPException(404, "incident not found")
+    items = (await session.scalars(
+        select(Evidence)
+        .where(Evidence.incident_id == incident_id, Evidence.tenant_id == tenant_id)
+        .order_by(Evidence.captured_at, Evidence.id)
+        .limit(50)
+    )).all()
+    return [
+        {"id": str(row.id), "source": row.source,
+         "target_version": row.target_version, "sha256": row.sha256,
+         "validity": row.validity, "redacted_excerpt": row.redacted_excerpt,
+         "captured_at": row.captured_at.isoformat()}
+        for row in items
+    ]
+
+
+@app.get("/v1/incidents/{incident_id}/hypotheses")
+async def incident_hypotheses(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    from sqlalchemy import select
+    from backend.models import HypothesisStep
+
+    incident = await find_incident(session, tenant_id, incident_id)
+    if incident is None:
+        raise HTTPException(404, "incident not found")
+    items = (await session.scalars(
+        select(HypothesisStep)
+        .where(HypothesisStep.incident_id == incident_id)
+        .order_by(HypothesisStep.step_no)
+        .limit(50)
+    )).all()
+    return [
+        {"step_no": row.step_no, "decision": row.decision,
+         "probe_id": row.probe_id, "model_id": row.model_id,
+         "evidence_ids": row.evidence_ids, "cause_scores": row.cause_scores}
+        for row in items
+    ]
+
+
+@app.get("/v1/incidents/{incident_id}/effects")
+async def incident_effects(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    from sqlalchemy import select
+    from backend.models import EffectReceipt
+
+    incident = await find_incident(session, tenant_id, incident_id)
+    if incident is None:
+        raise HTTPException(404, "incident not found")
+    items = (await session.scalars(
+        select(EffectReceipt)
+        .where(EffectReceipt.tenant_id == tenant_id,
+               EffectReceipt.incident_id == incident_id)
+        .order_by(EffectReceipt.created_at, EffectReceipt.id)
+        .limit(50)
+    )).all()
+    return [
+        {"id": str(row.id), "state": row.state, "adapter_id": row.adapter_id,
+         "target_id": row.target_id, "fence": row.fence,
+         "observed_version": row.observed_version}
+        for row in items
+    ]

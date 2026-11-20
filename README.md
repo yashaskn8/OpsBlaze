@@ -106,3 +106,15 @@ and active-incident counts. `GET /v1/health/ready` checks database readiness.
 Run `python -m backend.workers.state_age` separately to log phase-age alerts.
 This is a baseline quota; worker-concurrency and model token budgets are not yet
 implemented and require measured tuning.
+
+## A1/A2/A3/A4 safe investigator baseline
+
+An incident worker now runs a bounded, deterministic simulator investigation:
+probe health, then request a version observation if the target appears unhealthy.
+An allowlisted gateway verifies the tenant, incident and target, decrements a
+durable per-incident probe budget and records immutable evidence IDs, hashes,
+source version and timestamps. Probe attempts are idempotent by incident/step.
+The read-only API offers evidence, hypothesis steps, and effect receipt views.
+A4 conservatively abstains when the simulator target is absent or evidence is
+insufficient. This is **not** a trained LLM or empirically calibrated abstention
+policy; those require a provider, model evaluation fixtures, and held-out data.

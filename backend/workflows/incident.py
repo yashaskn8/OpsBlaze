@@ -37,7 +37,7 @@ class IncidentWorkflow:
             return "CANCELLED"
 
         await project("INVESTIGATING")
-        await workflow.execute_activity(
+        probe_result = await workflow.execute_activity(
             "inspect_incident_read_only",
             args=[tenant_id, incident_id],
             start_to_close_timeout=ACTIVITY_TIMEOUT,
@@ -46,6 +46,9 @@ class IncidentWorkflow:
         if self.cancel_requested:
             await project("CANCELLED")
             return "CANCELLED"
+        if probe_result != "SIMULATOR_REVIEW_REQUIRED":
+            await project("NEEDS_REVIEW")
+            return "NEEDS_REVIEW"
 
         # No unsupported production effect is performed by this baseline worker.
         await project("AWAITING_APPROVAL")

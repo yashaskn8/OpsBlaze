@@ -46,6 +46,6 @@ async def project_incident_status(
 async def inspect_incident_read_only(
     tenant_id: str, incident_id: str
 ) -> str:
-    # Minimal safe baseline: never invent a diagnosis or mutate any target.
-    # Full A1/A2 probes and A3 evidence provenance are later stages.
-    return "NO_PROBES_CONFIGURED"
+    from backend.investigator.baseline import inspect
+
+    return await inspect(get_session_maker(), tenant_id, UUID(incident_id))
