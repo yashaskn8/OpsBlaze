@@ -183,3 +183,101 @@ async def test_incident_creator_cannot_approve_own_plan(proposed_lab):
     async with sessions() as session:
         plan = await session.get(IncidentPlan, plan_id)
         assert plan.status == "PROPOSED" and plan.version == 1
+
+
+@pytest.mark.asyncio
+async def test_approval_grant_consumed_by_first_effect_send(proposed_lab):
+    from backend.models import ApprovalGrant
+    from backend.plans import revoke_approval
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        approved = await decide_plan(
+            session, "a", plan_id, 1, "APPROVE",
+            decided_by="DEV_REVIEWER_CREDENTIAL",
+            reason="checked simulator evidence and target version",
+        )
+        assert approved.status == "APPROVED"
+
+    async with sessions() as session:
+        grant = await session.scalar(
+            select(ApprovalGrant).where(ApprovalGrant.plan_id == plan_id)
+        )
+        grant_id = grant.id
+        assert grant.plan_digest == approved.plan_digest
+        assert grant.scope == "SIMULATOR_MARK_HEALTHY"
+        assert grant.state == "APPROVED" and grant.version == 1
+
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+    assert await execute_approved_simulator_plan(
+        sessions, "a", incident_id, plan_id
+    ) == "VERIFIED"
+
+    async with sessions() as session:
+        consumed = await session.get(ApprovalGrant, grant_id)
+        assert consumed.state == "CONSUMED"
+        assert consumed.consumed_at is not None
+        assert consumed.version == 2
+    async with sessions() as session:
+        with pytest.raises(PlanConflict, match="consumed"):
+            await revoke_approval(
+                session, "a", grant_id, 2,
+                "DEV_REVIEWER_CREDENTIAL",
+                "attempt to revoke completed simulator action",
+            )
+
+
+@pytest.mark.asyncio
+async def test_approval_revoked_before_dispatch_blocks_new_effect(proposed_lab):
+    from backend.models import ApprovalGrant, ApprovalRevocation
+    from backend.plans import revoke_approval
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        await decide_plan(session, "a", plan_id, 1, "APPROVE")
+    async with sessions() as session:
+        grant = await session.scalar(
+            select(ApprovalGrant).where(ApprovalGrant.plan_id == plan_id)
+        )
+        grant_id = grant.id
+    async with sessions() as session:
+        revoked = await revoke_approval(
+            session, "a", grant_id, 1, "DEV_REVIEWER_CREDENTIAL",
+            "review approval withdrawn before dispatch",
+        )
+        assert revoked.state == "REVOKED"
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+    assert await execute_approved_simulator_plan(
+        sessions, "a", incident_id, plan_id
+    ) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert target.healthy is False and target.version == 3
+        assert (await session.scalars(select(EffectReceipt))).all() == []
+        audit = await session.scalar(
+            select(ApprovalRevocation).where(
+                ApprovalRevocation.approval_id == grant_id
+            )
+        )
+        assert audit.revoked_by == "DEV_REVIEWER_CREDENTIAL"
+        assert (await session.get(IncidentPlan, plan_id)).status == "REVOKED"
+
+
+@pytest.mark.asyncio
+async def test_expired_grant_never_starts_a_new_effect(proposed_lab):
+    from datetime import datetime, timedelta, timezone
+    from backend.models import ApprovalGrant
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        await decide_plan(session, "a", plan_id, 1, "APPROVE")
+    async with sessions() as session:
+        async with session.begin():
+            grant = await session.scalar(select(ApprovalGrant))
+            grant.expires_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+    assert await execute_approved_simulator_plan(
+        sessions, "a", incident_id, plan_id
+    ) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        assert (await session.scalars(select(EffectReceipt))).all() == []

@@ -233,7 +233,7 @@ async def incident_effects(
 
 
 from typing import Literal
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PlanDecisionRequest(BaseModel):
@@ -312,7 +312,6 @@ async def simulator_target_view(
             "healthy": target.healthy, "adapter": "simulator"}
 
 
-from pydantic import Field
 
 
 class OutcomeFeedback(BaseModel):

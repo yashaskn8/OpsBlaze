@@ -246,3 +246,35 @@ async def test_sse_overload_returns_retryable_status(api_client, monkeypatch):
     assert result.status_code == 503
     assert result.headers["retry-after"] == "3"
     limit.release()
+
+
+@pytest.mark.asyncio
+async def test_approval_revocation_requires_reviewer_and_version(api_client):
+    path = f"/v1/approvals/{uuid4()}/revoke"
+    body = {"reason": "reviewer revoked the proposed simulator action"}
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        local_token=TOKEN, review_token="separate-reviewer-credential",
+        environment="development",
+    )
+    base = headers("alpha", **{"If-Match": "1"})
+    denied = await api_client.post(path, headers=base, json=body)
+    assert denied.status_code == 403
+    approved = await api_client.post(
+        path,
+        headers={
+            **base,
+            "X-OpsBlaze-Reviewer-Token": "separate-reviewer-credential",
+        },
+        json=body,
+    )
+    assert approved.status_code == 404
+    malformed_version = await api_client.post(
+        path,
+        headers={
+            **base,
+            "If-Match": "bogus",
+            "X-OpsBlaze-Reviewer-Token": "separate-reviewer-credential",
+        },
+        json=body,
+    )
+    assert malformed_version.status_code == 400
