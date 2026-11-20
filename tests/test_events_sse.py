@@ -131,3 +131,48 @@ async def test_retention_watermark_requires_snapshot_and_preserves_other_tenants
     frame = await stream.__anext__()
     assert "event: gap" in frame
     assert str(watermark.last_purged_id) in frame
+
+
+@pytest.mark.asyncio
+async def test_redteam_revocation_terminates_open_sse_before_next_event(sessions_fixture):
+    from datetime import datetime, timezone
+
+    from backend.events import StreamAccessRevoked
+    from backend.models import RevokedIdentity
+
+    actor = "oidc:" + "b" * 32
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "stream-revoked",
+            IncidentCreate(target_id="checkout"),
+        )
+
+    async def connected():
+        return False
+
+    stream = stream_incident_events(
+        sessions_fixture, "alpha", incident.id, 0, connected,
+        poll_seconds=0, max_ticks=3, actor_id=actor,
+    )
+    frame = await stream.__anext__()
+    assert "ADMITTED" in frame
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(RevokedIdentity(
+                tenant_id="alpha", actor_id=actor,
+                revoked_at=datetime.now(timezone.utc),
+                revoked_by="oidc:" + "c" * 32,
+                reason="security authority revoked this active stream",
+            ))
+    with pytest.raises(StreamAccessRevoked):
+        await read_event_batch(
+            sessions_fixture, "alpha", incident.id, 0, actor_id=actor,
+        )
+    with pytest.raises(StopAsyncIteration):
+        await stream.__anext__()
+    # An unrelated tenant's streaming identity remains independently scoped.
+    assert len(await read_event_batch(
+        sessions_fixture, "alpha", incident.id, 0,
+        actor_id="oidc:" + "d" * 32,
+    )) == 1
