@@ -54,3 +54,25 @@ The blueprint requires FastAPI + PostgreSQL outbox + Temporal as the B1 lifecycl
 ## Operator UI
 
 Run `cd frontend`, `npm install`, then `npm run dev` while FastAPI is running on port 8000. Open `http://127.0.0.1:5173` and enter the local token from `.env`. The UI supports incident admission and status reads only.
+
+## B1 Temporal worker and dispatcher
+
+The dispatcher consumes the transactional outbox, starts a stable Temporal
+workflow ID and retries after lost responses. It runs separately from FastAPI.
+The worker records lifecycle projections and waits for operator acknowledgment
+or cancellation; it never performs a real remediation action.
+
+Install a native Temporal dev server or Temporal CLI (no Docker). After starting
+the server with persistent local storage, run these commands in separate terminals:
+
+```bash
+python -m backend.workers.dispatcher
+python -m backend.workers.incident_worker
+```
+
+With a valid local token you can cancel an incident by sending
+`POST /v1/incidents/{id}/cancel` with the current numeric `If-Match`
+version returned by GET. The durable dispatcher delivers this request to
+Temporal. A status response is a lagging projection; Temporal history is
+authoritative. Real approval, the guarded action gateway and evidence
+collection are not yet implemented.

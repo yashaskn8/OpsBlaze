@@ -1,0 +1,118 @@
+"""Claim pending intents in short PostgreSQL transactions, then dispatch outside DB."""
+
+import asyncio
+import logging
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from temporalio.client import Client
+from temporalio.common import WorkflowIDReusePolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
+
+from backend.database import get_session_maker
+from backend.models import Incident, OutboxEntry
+from backend.settings import get_settings
+from backend.workflows.incident import IncidentWorkflow
+
+log = logging.getLogger(__name__)
+
+
+def workflow_id(tenant_id: str, incident_id: UUID) -> str:
+    return f"opsblaze/{tenant_id}/{incident_id}"
+
+
+async def claim_intent(
+    sessions: async_sessionmaker[AsyncSession],
+) -> tuple[int, str, str, str] | None:
+    now = datetime.now(timezone.utc)
+    async with sessions() as session:
+        async with session.begin():
+            stmt = (
+                select(OutboxEntry, Incident.tenant_id)
+                .join(Incident, Incident.id == OutboxEntry.incident_id)
+                .where(
+                    OutboxEntry.delivered_at.is_(None),
+                    OutboxEntry.available_at <= now,
+                )
+                .order_by(OutboxEntry.id)
+                .limit(1)
+                .with_for_update(of=OutboxEntry, skip_locked=True)
+            )
+            result = (await session.execute(stmt)).first()
+            if result is None:
+                return None
+            entry, tenant_id = result
+            entry.attempt += 1
+            # Lease the claim before making a network call, avoiding a long
+            # transaction. After a crash the intent becomes eligible again.
+            retry_seconds = min(300, 2 ** min(entry.attempt, 8))
+            entry.available_at = now + timedelta(seconds=retry_seconds)
+            return (entry.id, tenant_id, str(entry.incident_id), entry.kind)
+
+
+async def deliver_intent(client: Client, intent: tuple[int, str, str, str]) -> None:
+    _, tenant_id, incident_id, kind = intent
+    wid = workflow_id(tenant_id, UUID(incident_id))
+    if kind == "START_WORKFLOW":
+        try:
+            await client.start_workflow(
+                IncidentWorkflow.run,
+                args=[tenant_id, incident_id],
+                id=wid,
+                task_queue=get_settings().temporal_task_queue,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            )
+        except WorkflowAlreadyStartedError:
+            # Covers an acknowledgment lost after a successful Temporal start.
+            pass
+    elif kind == "CANCEL_WORKFLOW":
+        await client.get_workflow_handle(wid).signal(
+            IncidentWorkflow.request_cancel
+        )
+    elif kind == "ACKNOWLEDGE_REVIEW":
+        await client.get_workflow_handle(wid).signal(
+            IncidentWorkflow.acknowledge_review
+        )
+    else:
+        raise ValueError("unsupported outbox kind")
+
+
+async def dispatch_once(
+    client: Client, sessions: async_sessionmaker[AsyncSession]
+) -> bool:
+    intent = await claim_intent(sessions)
+    if intent is None:
+        return False
+    entry_id = intent[0]
+    try:
+        await deliver_intent(client, intent)
+    except Exception:
+        log.exception("Outbox dispatch failed: intent_id=%s", entry_id)
+        # The lease ensures bounded retry; never drop the intent.
+        return True
+    async with sessions() as session:
+        async with session.begin():
+            entry = await session.get(OutboxEntry, entry_id)
+            if entry is not None and entry.delivered_at is None:
+                entry.delivered_at = datetime.now(timezone.utc)
+    return True
+
+
+async def main() -> None:
+    settings = get_settings()
+    client = await Client.connect(
+        settings.temporal_address, namespace=settings.temporal_namespace
+    )
+    sessions = get_session_maker()
+    log.info("Outbox dispatcher started")
+    while True:
+        found = await dispatch_once(client, sessions)
+        if not found:
+            await asyncio.sleep(1)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(main())

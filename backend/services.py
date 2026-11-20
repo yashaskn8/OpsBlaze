@@ -64,3 +64,27 @@ async def find_incident(
             Incident.tenant_id == tenant_id, Incident.id == incident_id
         )
     )
+
+class VersionConflict(Exception):
+    pass
+
+
+async def request_cancellation(
+    session: AsyncSession, tenant_id: str, incident_id: UUID, expected_version: int
+) -> Incident | None:
+    async with session.begin():
+        incident = await session.scalar(
+            select(Incident)
+            .where(Incident.id == incident_id, Incident.tenant_id == tenant_id)
+            .with_for_update()
+        )
+        if incident is None:
+            return None
+        if incident.status_version != expected_version:
+            raise VersionConflict("incident version changed; refetch before retrying")
+        if incident.status_projection in {"CANCELLED", "VERIFIED", "FAILED", "NEEDS_REVIEW", "CANCEL_REQUESTED"}:
+            raise VersionConflict("incident is terminal or cancellation is pending")
+        incident.status_projection = "CANCEL_REQUESTED"
+        incident.status_version += 1
+        session.add(OutboxEntry(incident_id=incident.id, kind="CANCEL_WORKFLOW"))
+    return incident

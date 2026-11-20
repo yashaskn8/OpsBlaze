@@ -60,3 +60,22 @@ async def get_incident(
     if incident is None:
         raise HTTPException(404, "incident not found")
     return IncidentView.model_validate(incident)
+
+@app.post("/v1/incidents/{incident_id}/cancel", response_model=IncidentView, status_code=202)
+async def cancel_incident(
+    incident_id: UUID,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> IncidentView:
+    from backend.services import VersionConflict, request_cancellation
+
+    if not if_match.isdecimal():
+        raise HTTPException(400, "If-Match must be the status version")
+    try:
+        incident = await request_cancellation(session, tenant_id, incident_id, int(if_match))
+    except VersionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if incident is None:
+        raise HTTPException(404, "incident not found")
+    return IncidentView.model_validate(incident)
