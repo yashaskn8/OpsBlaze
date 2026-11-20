@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""
     oidc_jwks_url: str = ""
+    idp_event_audience: str = ""  # Dedicated signed revocation event audience
     environment: Literal["development", "production"] = "development"
     temporal_address: str = "127.0.0.1:7233"
     temporal_namespace: str = "default"
