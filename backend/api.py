@@ -758,3 +758,26 @@ async def incident_route(
         "cost_cap_probes": decision.cost_cap_probes,
         "propensity": decision.propensity,
     }
+
+
+@app.get("/v1/adapters/simulator/conformance")
+async def simulator_conformance_results(
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from sqlalchemy import select
+    from backend.models import AdapterConformanceRun
+
+    row = await session.scalar(
+        select(AdapterConformanceRun)
+        .where(AdapterConformanceRun.adapter_id == "simulator-v1")
+        .order_by(AdapterConformanceRun.created_at.desc(), AdapterConformanceRun.id)
+        .limit(1)
+    )
+    if row is None:
+        return {"state": "UNTESTED", "production_enablement": False}
+    return {
+        "run_id": str(row.id), "state": row.state,
+        "code_digest": row.code_digest, "suite_version": row.suite_version,
+        "results": row.results, "production_enablement": False,
+    }

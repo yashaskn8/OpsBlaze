@@ -240,3 +240,17 @@ The decision is stable under activity replay and visible at
 GET /v1/incidents/{id}/route, including its policy ID, reason and
 non-random selection propensity. There is no autonomous model routing,
 online bandit, or memory-aided live execution.
+
+## E8 isolated adapter conformance smoke
+
+Run `python -m backend.adapters.conformance` after migration to create
+disposable simulator fixtures and record a code-digest-pinned conformance
+report. The suite checks duplicate apply, status lookup, stale fence,
+version CAS, lost acknowledgment, expired lease, and missing effects.
+GitHub Actions runs the suite on native PostgreSQL after the end-to-end
+test. GET /v1/adapters/simulator/conformance displays the latest local
+report. The lab fixture data is deleted, leaving only the report.
+
+**LAB_PASS is not external-adapter certification or production enablement.**
+No production adapter registry, release-owner approval, or long-horizon
+retention validation is present. Only the isolated simulator can mutate.
