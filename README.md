@@ -299,3 +299,13 @@ independent receipt reconciliation; revocation never fabricates a
 rollback. The identity provider still needs a trusted administrative
 workflow to publish role-removal events promptly; no external IdP
 integration or operational security certification is implied.
+
+## Operator-triggered B3 status reconciliation
+
+A tenant-scoped operator may call `POST /v1/effects/{effect_id}/reconcile`
+to query the original simulator effect identity and independently observe
+its postcondition. This **never calls apply** and cannot create a new
+effect. Cross-tenant IDs return 404; unsent PREPARED receipts and
+unsupported adapters return 409 for manual review. VERIFIED receipts
+are idempotently returned. This safe lab operation is not certification
+for a real external adapter's status-lookup contract.

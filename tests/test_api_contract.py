@@ -334,3 +334,114 @@ async def test_development_identity_never_grants_reviewer_role(api_client):
         "actor_id": "DEV_OPERATOR_CREDENTIAL",
         "roles": ["operator", "viewer"],
     }
+
+
+@pytest.mark.asyncio
+async def test_authorized_reconcile_queries_existing_effect_without_reapply(
+    api_client, sessions_fixture,
+):
+    from sqlalchemy import select
+
+    from backend.adapters.simulator import SimulatorAdapter
+    from backend.effects.gateway import execute_simulator_effect
+    from backend.effects.reservations import reserve_simulator_target
+    from backend.models import (
+        EffectReceipt, ResourceEpoch, SimulatorAppliedEffect, SimulatorTarget,
+    )
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(SimulatorTarget(
+                tenant_id="alpha", target_id="checkout",
+                version=1, healthy=False, last_fence=0,
+            ))
+            session.add(ResourceEpoch(
+                tenant_id="alpha", target_id="checkout",
+                latest_fence=0, version_seen=1,
+            ))
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "effect-reconcile",
+            IncidentCreate(target_id="checkout"),
+        )
+    permit = await reserve_simulator_target(
+        sessions_fixture, "alpha", "checkout", incident.id, "7" * 64,
+    )
+
+    class LostAckAdapter(SimulatorAdapter):
+        async def apply(self, effect_id, permit):
+            await super().apply(effect_id, permit)
+            raise TimeoutError("simulator committed but acknowledgment was lost")
+
+    assert await execute_simulator_effect(
+        sessions_fixture, LostAckAdapter(sessions_fixture), permit,
+    ) == "UNKNOWN"
+    async with sessions_fixture() as session:
+        receipt = await session.scalar(
+            select(EffectReceipt).where(EffectReceipt.incident_id == incident.id)
+        )
+        effect_id = receipt.id
+        assert receipt.state == "UNKNOWN" and receipt.attempt_count == 1
+
+    path = f"/v1/effects/{effect_id}/reconcile"
+    hidden = await api_client.post(path, headers=headers("beta"))
+    assert hidden.status_code == 404
+    denied = await api_client.post(path, headers={
+        "X-Tenant-Id": "alpha", "X-OpsBlaze-Token": "invalid",
+    })
+    assert denied.status_code == 401
+    reconciled = await api_client.post(path, headers=headers("alpha"))
+    assert reconciled.status_code == 202, reconciled.text
+    assert reconciled.json() == {
+        "effect_id": str(effect_id), "state": "VERIFIED",
+    }
+    repeated = await api_client.post(path, headers=headers("alpha"))
+    assert repeated.status_code == 202
+    assert repeated.json()["state"] == "VERIFIED"
+    async with sessions_fixture() as session:
+        applied = (await session.scalars(select(SimulatorAppliedEffect))).all()
+        stored = await session.get(EffectReceipt, effect_id)
+        assert len(applied) == 1
+        assert stored.state == "VERIFIED"
+        assert stored.attempt_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_prepared_receipt_never_infers_a_dispatch(
+    api_client, sessions_fixture,
+):
+    from backend.adapters.simulator import SimulatorAdapter
+    from backend.effects.gateway import prepare_receipt
+    from backend.effects.reservations import reserve_simulator_target
+    from backend.models import ResourceEpoch, SimulatorTarget
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(SimulatorTarget(
+                tenant_id="alpha", target_id="checkout",
+                version=1, healthy=False, last_fence=0,
+            ))
+            session.add(ResourceEpoch(
+                tenant_id="alpha", target_id="checkout",
+                latest_fence=0, version_seen=1,
+            ))
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "unsent-receipt",
+            IncidentCreate(target_id="checkout"),
+        )
+    permit = await reserve_simulator_target(
+        sessions_fixture, "alpha", "checkout", incident.id, "8" * 64,
+    )
+    effect_id = await prepare_receipt(sessions_fixture, permit)
+    response = await api_client.post(
+        f"/v1/effects/{effect_id}/reconcile", headers=headers("alpha"),
+    )
+    assert response.status_code == 409
+    assert await SimulatorAdapter(sessions_fixture).observe(
+        "alpha", "checkout",
+    ) == (1, False)

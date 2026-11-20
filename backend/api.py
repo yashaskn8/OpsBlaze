@@ -1364,3 +1364,47 @@ async def security_revoke_identity(
         "revoked_at": row.revoked_at.isoformat(),
         "grants_revoked": grants_revoked,
     }
+
+
+@app.post("/v1/effects/{effect_id}/reconcile", status_code=202)
+async def request_effect_reconciliation(
+    effect_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    operator_identity: str = Depends(local_operator),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Read-only adapter lookup; never redeliver the original mutation."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from backend.adapters.simulator import SimulatorAdapter
+    from backend.effects.gateway import EffectConflict, reconcile_effect
+    from backend.models import EffectReceipt
+
+    receipt = await session.scalar(
+        select(EffectReceipt).where(
+            EffectReceipt.id == effect_id,
+            EffectReceipt.tenant_id == tenant_id,
+        )
+    )
+    if receipt is None:
+        raise HTTPException(404, "effect receipt not found")
+    if receipt.adapter_id != "simulator":
+        raise HTTPException(409, "unsupported adapter; manual review required")
+    if receipt.state == "PREPARED":
+        raise HTTPException(409, "effect was never sent; no status to reconcile")
+
+    # Release the request's read transaction before performing adapter I/O.
+    # An isolated session records receipt state after the status lookup.
+    bind = session.bind
+    await session.rollback()
+    if bind is None:
+        raise HTTPException(503, "reconciliation database unavailable")
+    sessions = async_sessionmaker(bind, expire_on_commit=False)
+    try:
+        state = await reconcile_effect(
+            sessions, SimulatorAdapter(sessions), effect_id,
+        )
+    except EffectConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"effect_id": str(effect_id), "state": state}
