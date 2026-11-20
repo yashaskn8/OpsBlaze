@@ -98,6 +98,9 @@ async def record_case(
                 version=1, case_count=0, quarantined=False,
             )
             session.add(cluster)
+            # ORM relationships are intentionally absent: flush the parent
+            # before inserting the FK-linked first case on PostgreSQL.
+            await session.flush()
         cluster.case_count += 1
         case = FailureCase(
             id=uuid4(), tenant_id=tenant_id,
