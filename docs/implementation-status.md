@@ -23,7 +23,7 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 | E5 — Evaluation | Frozen paired smoke manifest, integrity checks, negative controls, bounded costs, conservative intervals, plus separate offline held-out oracle/trials verifier with no promotion authority | Independent hidden-label custody, real measured recovery-cost outcomes, preregistration and separate evaluator authority |
 | E6 — Policy rollout | Content-digested drafts, admission-time known-good pinning, deterministic cohort preview, tenant-scoped persisted shadow decisions and aggregate rehearsal summary | **Live rollout disabled** pending independent real E5 PASS, signed bundle, separate release authority and rollback certification |
 | E7 — Strategy routing | Pinned tenant-scoped RUNBOOK/HANDOFF choice, deterministic cost cap | Evaluated contextual policies, measured route accuracy, memory/agent variants |
-| E8 — Adapter conformance | Sixteen disposable simulator checks (including status-store/retention gaps, external version edits and oracle outages), code-digest pinning and expiry gate | External adapter conformance/fault-injection/retention campaign, real provider effect retention evidence |
+| E8 — Adapter conformance | Seventeen disposable simulator checks (including forged-permit reservation binding) (including status-store/retention gaps, external version edits and oracle outages), code-digest pinning and expiry gate | External adapter conformance/fault-injection/retention campaign, real provider effect retention evidence |
 
 ## Current demonstrated checks
 
