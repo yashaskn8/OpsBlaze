@@ -69,3 +69,37 @@ async def test_revocation_tombstones_captured_metadata(sessions_fixture):
         stored = await session.get(ExperienceCapsule, capsule.id)
         assert stored.status == "REVOKED" and stored.evidence_ids == []
         assert stored.target_digest == ""
+
+
+@pytest.mark.asyncio
+async def test_read_time_excludes_superseded_verified_source(sessions_fixture):
+    """Even out-of-band outcome revision cannot expose an obsolete capsule."""
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "tenant", "superceded", IncidentCreate(target_id="checkout")
+        )
+    async with sessions_fixture() as session:
+        await set_consent(session, "tenant", incident.id, 0, True)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutcomeRevision(
+                id=uuid4(), tenant_id="tenant", incident_id=incident.id,
+                effect_id=None, revision=1, label="VERIFIED",
+                witness_source="SIMULATOR_WITNESS", observed_version=3,
+                reason="initial verification",
+            ))
+    async with sessions_fixture() as session:
+        capsule = await capture_capsule(session, "tenant", incident.id)
+        assert len(await list_capsules(session, "tenant")) == 1
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutcomeRevision(
+                id=uuid4(), tenant_id="tenant", incident_id=incident.id,
+                effect_id=None, revision=2, label="DISPUTED",
+                witness_source="OPERATOR_DISPUTE", observed_version=3,
+                reason="independent reversal",
+            ))
+    async with sessions_fixture() as session:
+        assert await list_capsules(session, "tenant") == []
+        persisted = await session.get(ExperienceCapsule, capsule.id)
+        assert persisted.status == "VALID"

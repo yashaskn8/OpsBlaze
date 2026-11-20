@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import SimulatorAdapter
 from backend.models import EffectReceipt, OutcomeRevision
+from backend.learning.invalidation import invalidate_outcome_dependents
 
 
 class OutcomeConflict(Exception):
@@ -68,6 +69,8 @@ async def adjudicate_simulator(
                 reason="simulator postcondition observed" if verified else "simulator postcondition mismatch",
             )
             session.add(row)
+            if label != "VERIFIED":
+                await invalidate_outcome_dependents(session, tenant_id, incident_id)
     return label
 
 
@@ -81,7 +84,7 @@ async def dispute_outcome(
         prior = await session.scalar(
             select(OutcomeRevision).where(
                 OutcomeRevision.id == outcome_id, OutcomeRevision.tenant_id == tenant_id
-            )
+            ).with_for_update()
         )
         if prior is None:
             return None
@@ -98,4 +101,5 @@ async def dispute_outcome(
             observed_version=prior.observed_version, reason=reason.strip(),
         )
         session.add(disputed)
+        await invalidate_outcome_dependents(session, tenant_id, prior.incident_id)
     return disputed

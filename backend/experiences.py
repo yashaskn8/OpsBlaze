@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import (
-    Evidence, ExperienceCapsule, ExperienceConsent, Incident, OutcomeRevision
+    Evidence, ExperienceCapsule, ExperienceConsent, Incident, OperationalLesson, OutcomeRevision
 )
 from backend.settings import get_settings
 
@@ -48,6 +48,12 @@ async def set_consent(
             consent.decided_at = datetime.now(timezone.utc)
         if not allowed:
             # Keep minimum audit metadata; revoke all previously captured content.
+            ids = list((await session.scalars(
+                select(ExperienceCapsule.id).where(
+                    ExperienceCapsule.tenant_id == tenant_id,
+                    ExperienceCapsule.incident_id == incident_id,
+                )
+            )).all())
             await session.execute(
                 update(ExperienceCapsule)
                 .where(
@@ -56,6 +62,20 @@ async def set_consent(
                 )
                 .values(status="REVOKED", evidence_ids=[], target_digest="")
             )
+            if ids:
+                await session.execute(
+                    update(OperationalLesson)
+                    .where(
+                        OperationalLesson.tenant_id == tenant_id,
+                        OperationalLesson.source_capsule_id.in_(ids),
+                        OperationalLesson.status != "REVOKED",
+                    )
+                    .values(
+                        status="REVOKED",
+                        version=OperationalLesson.version + 1,
+                        target_digest="",
+                    )
+                )
     return consent
 
 
@@ -97,8 +117,8 @@ async def capture_capsule(
             )
         )
         if existing is not None:
-            if existing.status == "REVOKED":
-                raise ConsentConflict("revoked capsule cannot be restored")
+            if existing.status != "VALID":
+                raise ConsentConflict("revoked or quarantined capsule cannot be restored")
             return existing
         evidence = (await session.scalars(
             select(Evidence.id)
@@ -125,11 +145,26 @@ async def capture_capsule(
 
 async def list_capsules(session: AsyncSession, tenant_id: str) -> list[ExperienceCapsule]:
     # Consent and expiry checks happen at read-time as well as capture-time.
+    latest_outcome_id = (
+        select(OutcomeRevision.id)
+        .where(
+            OutcomeRevision.tenant_id == tenant_id,
+            OutcomeRevision.incident_id == ExperienceCapsule.incident_id,
+        )
+        .order_by(OutcomeRevision.revision.desc())
+        .limit(1)
+        .correlate(ExperienceCapsule)
+        .scalar_subquery()
+    )
     rows = (await session.scalars(
         select(ExperienceCapsule)
         .join(
             ExperienceConsent,
             ExperienceConsent.incident_id == ExperienceCapsule.incident_id,
+        )
+        .join(
+            OutcomeRevision,
+            OutcomeRevision.id == ExperienceCapsule.outcome_revision_id,
         )
         .where(
             ExperienceCapsule.tenant_id == tenant_id,
@@ -137,6 +172,9 @@ async def list_capsules(session: AsyncSession, tenant_id: str) -> list[Experienc
             ExperienceConsent.allowed.is_(True),
             ExperienceCapsule.consent_epoch == ExperienceConsent.epoch,
             ExperienceCapsule.status == "VALID",
+            ExperienceCapsule.outcome_revision_id == latest_outcome_id,
+            OutcomeRevision.tenant_id == tenant_id,
+            OutcomeRevision.label == "VERIFIED",
             ExperienceCapsule.expires_at > datetime.now(timezone.utc),
         )
         .limit(50)

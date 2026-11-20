@@ -95,3 +95,20 @@ async def test_lesson_revocation_and_allowlist(lesson_source):
     async with sessions() as session:
         with pytest.raises(LessonConflict):
             await validate_draft(session, "t", lesson.id, 1)
+
+
+@pytest.mark.asyncio
+async def test_consent_revocation_cascades_to_lessons(lesson_source):
+    sessions, incident_id, capsule_id = lesson_source
+    async with sessions() as session:
+        lesson = await create_draft(session, "t", capsule_id, "CHECK_VERSION")
+    async with sessions() as session:
+        await validate_draft(session, "t", lesson.id, 1)
+    async with sessions() as session:
+        await set_consent(session, "t", incident_id, 1, False)
+    async with sessions() as session:
+        updated = await session.get(OperationalLesson, lesson.id)
+        assert updated.status == "REVOKED"
+        assert updated.version == 3
+        assert updated.target_digest == ""
+        assert await retrieve_active_lessons(session, "t", "checkout") == []
