@@ -1,11 +1,15 @@
 
+import hashlib
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
+
 import pytest
 from sqlalchemy import select
 
 from backend.investigator.abstain import assess_decision
 from backend.investigator.baseline import inspect
 from backend.models import (
-    DecisionAssessment, Evidence, SimulatorTarget,
+    DecisionAssessment, Evidence, ProbeCall, SimulatorTarget,
 )
 from backend.probes.gateway import invoke_probe
 from backend.schemas import IncidentCreate
@@ -68,3 +72,46 @@ async def test_evidence_hash_mismatch_is_not_repaired_or_ignored(assessment_lab)
     assessment = await assess_decision(sessions, "t", incident_id, 2, ids)
     assert assessment.outcome == "ABSTAINED"
     assert assessment.reason == "HASH_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_rehashed_but_false_observation_abstains_before_plan(assessment_lab):
+    sessions, incident_id, ids = assessment_lab
+    async with sessions() as session:
+        async with session.begin():
+            evidence = await session.get(Evidence, UUID(ids[0]))
+            evidence.redacted_excerpt = '{"healthy":true}'
+            evidence.sha256 = hashlib.sha256(
+                evidence.redacted_excerpt.encode()
+            ).hexdigest()
+    assessment = await assess_decision(sessions, "t", incident_id, 2, ids)
+    assert assessment.outcome == "ABSTAINED"
+    assert assessment.reason == "INVALID_OBSERVATION"
+
+
+@pytest.mark.asyncio
+async def test_probe_link_change_abstains(assessment_lab):
+    sessions, incident_id, ids = assessment_lab
+    async with sessions() as session:
+        async with session.begin():
+            call = await session.scalar(
+                select(ProbeCall).where(
+                    ProbeCall.incident_id == incident_id, ProbeCall.step_no == 1,
+                )
+            )
+            call.evidence_id = UUID(ids[1])
+    assessment = await assess_decision(sessions, "t", incident_id, 2, ids)
+    assert assessment.outcome == "ABSTAINED"
+    assert assessment.reason == "UNLINKED_EVIDENCE"
+
+
+@pytest.mark.asyncio
+async def test_future_dated_evidence_abstains(assessment_lab):
+    sessions, incident_id, ids = assessment_lab
+    async with sessions() as session:
+        async with session.begin():
+            evidence = await session.get(Evidence, UUID(ids[0]))
+            evidence.observed_at = datetime.now(timezone.utc) + timedelta(days=1)
+    assessment = await assess_decision(sessions, "t", incident_id, 2, ids)
+    assert assessment.outcome == "ABSTAINED"
+    assert assessment.reason == "STALE_EVIDENCE"
