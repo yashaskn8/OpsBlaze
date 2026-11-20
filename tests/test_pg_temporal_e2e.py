@@ -164,3 +164,51 @@ async def test_parallel_postgres_admission_is_one_logical_incident() -> None:
             ) == 1
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_active_capacity_is_atomic_under_parallel_admissions() -> None:
+    from sqlalchemy import func, select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.models import Incident
+    from backend.schemas import IncidentCreate
+    from backend.services import RateLimited, admit_incident
+    from backend.settings import Settings
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "cap-" + uuid4().hex[:12]
+
+    # A local settings override applies only to service capacity accounting,
+    # not the database URL, and is restored before returning.
+    import backend.services as services
+    original_settings = services.get_settings
+    services.get_settings = lambda: Settings(
+        max_active_incidents_per_tenant=2,
+        max_active_incidents_global=100,
+    )
+    try:
+        async def attempt(index: int) -> bool:
+            async with sessions() as session:
+                try:
+                    await admit_incident(
+                        session, tenant, f"key-{index}",
+                        IncidentCreate(target_id=f"fixture-{index}"),
+                    )
+                    return True
+                except RateLimited:
+                    return False
+
+        accepted = await asyncio.gather(*(attempt(i) for i in range(6)))
+        assert sum(accepted) == 2
+        async with sessions() as session:
+            assert await session.scalar(
+                select(func.count()).select_from(Incident)
+                .where(Incident.tenant_id == tenant)
+            ) == 2
+    finally:
+        services.get_settings = original_settings
+        await engine.dispose()

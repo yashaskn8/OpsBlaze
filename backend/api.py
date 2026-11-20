@@ -124,6 +124,7 @@ async def tenant_queues(
 ) -> dict[str, int]:
     from sqlalchemy import func, select
     from backend.models import Incident, OutboxEntry
+    from backend.services import ACTIVE_STATES
 
     pending = await session.scalar(
         select(func.count())
@@ -136,10 +137,7 @@ async def tenant_queues(
         .select_from(Incident)
         .where(
             Incident.tenant_id == tenant_id,
-            Incident.status_projection.in_(
-                ["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL",
-                 "CANCEL_REQUESTED", "REVIEW_ACKNOWLEDGED"]
-            ),
+            Incident.status_projection.in_(ACTIVE_STATES),
         )
     )
     return {"pending_outbox": pending or 0, "active_incidents": active or 0}

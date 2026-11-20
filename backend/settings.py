@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     temporal_namespace: str = "default"
     temporal_task_queue: str = "opsblaze-incidents-v1"
     admission_limit_per_minute: int = 30
+    max_active_incidents_per_tenant: int = 20
+    max_active_incidents_global: int = 100
     stuck_after_seconds: int = 300
     max_probe_calls_per_incident: int = 3
     experience_retention_days: int = 7

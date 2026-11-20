@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,12 @@ from backend.models import AdmissionUsage, Incident, OutboxEntry, PolicyAssignme
 from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.schemas import IncidentCreate
 from backend.settings import get_settings
+
+
+ACTIVE_STATES = (
+    "DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL",
+    "PLAN_DECIDED", "EXECUTING", "CANCEL_REQUESTED", "REVIEW_ACKNOWLEDGED",
+)
 
 
 class IdempotencyConflict(Exception):
@@ -44,6 +50,10 @@ async def admit_incident(
     )
     try:
         async with session.begin():
+            # Serialize global admission-capacity reads across PostgreSQL
+            # processes. No lock is held over network or workflow calls.
+            if session.bind.dialect.name == "postgresql":
+                await session.execute(text("SELECT pg_advisory_xact_lock(817263)"))
             existing = await session.scalar(
                 select(Incident).where(
                     Incident.tenant_id == tenant_id,
@@ -54,6 +64,7 @@ async def admit_incident(
                 if existing.request_sha256 != fingerprint:
                     raise IdempotencyConflict("idempotency key reused for different payload")
                 return existing
+            await enforce_active_capacity(session, tenant_id)
             await reserve_admission_slot(session, tenant_id)
             session.add(incident)
             session.add(
@@ -178,3 +189,27 @@ async def reserve_admission_slot(
     )
     if result.rowcount != 1:
         raise RateLimited("tenant admission limit reached")
+
+
+async def enforce_active_capacity(
+    session: AsyncSession,
+    tenant_id: str,
+) -> None:
+    """Recount durable active work; a crash cannot strand capacity counters."""
+    settings = get_settings()
+    tenant_limit = settings.max_active_incidents_per_tenant
+    global_limit = settings.max_active_incidents_global
+    if tenant_limit < 1 or global_limit < 1:
+        raise ValueError("active incident limits must be positive")
+    active = (
+        select(func.count()).select_from(Incident)
+        .where(Incident.status_projection.in_(ACTIVE_STATES))
+    )
+    global_count = await session.scalar(active)
+    if (global_count or 0) >= global_limit:
+        raise RateLimited("global active-incident capacity exhausted")
+    tenant_count = await session.scalar(
+        active.where(Incident.tenant_id == tenant_id)
+    )
+    if (tenant_count or 0) >= tenant_limit:
+        raise RateLimited("tenant active-incident capacity exhausted")

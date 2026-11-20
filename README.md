@@ -106,3 +106,12 @@ Terminal `VERIFIED` requires `EXECUTING`, and repeated Temporal activity
 delivery does not increment the version or duplicate UI events. Cancellation
 is accepted only before the execution checkpoint; it never replaces an
 in-flight effect with an untrue `CANCELLED` projection.
+
+B4 admission now additionally enforces `OPSBLAZE_MAX_ACTIVE_INCIDENTS_PER_TENANT`
+and `OPSBLAZE_MAX_ACTIVE_INCIDENTS_GLOBAL` by recounting durable
+nonterminal incidents in PostgreSQL, under an admission transaction
+advisory lock. Crash recovery does not depend on an in-memory counter,
+and idempotent retries do not consume another slot. The global lock is
+a simple lab baseline; measure contention before expanding worker
+capacity. Expired/abandoned work requires B1 recovery or operator review,
+not silent capacity forgiveness.
