@@ -35,7 +35,14 @@ async def test_heartbeat_presence_is_tenant_independent_and_age_bounded(sessions
 
 
 @pytest.mark.asyncio
-async def test_production_readiness_checks_both_worker_roles(sessions_fixture):
+async def test_production_readiness_checks_both_worker_roles(sessions_fixture, monkeypatch):
+    async def healthy_temporal(_settings):
+        return True
+
+    monkeypatch.setattr(
+        "backend.workers.temporal_health.check_temporal_health",
+        healthy_temporal,
+    )
     async def session_override():
         async with sessions_fixture() as session:
             yield session
@@ -56,5 +63,35 @@ async def test_production_readiness_checks_both_worker_roles(sessions_fixture):
             await record_heartbeat(sessions_fixture, "incident_worker")
             both = await client.get("/v1/health/ready")
             assert both.status_code == 200 and both.json() == {"status": "ready"}
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_readiness_fails_closed_if_temporal_unreachable(sessions_fixture, monkeypatch):
+    async def session_override():
+        async with sessions_fixture() as session:
+            yield session
+
+    async def unavailable_temporal(_settings):
+        raise ConnectionError("synthetic outage")
+
+    monkeypatch.setattr(
+        "backend.workers.temporal_health.check_temporal_health",
+        unavailable_temporal,
+    )
+    app.dependency_overrides[get_session] = session_override
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        environment="production", worker_stale_seconds=30,
+    )
+    try:
+        await record_heartbeat(sessions_fixture, "dispatcher")
+        await record_heartbeat(sessions_fixture, "incident_worker")
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://api.test"
+        ) as client:
+            response = await client.get("/v1/health/ready")
+            assert response.status_code == 503
+            assert response.json()["detail"] == "Temporal unreachable"
     finally:
         app.dependency_overrides.clear()

@@ -222,3 +222,10 @@ repeat. Active windows remain intact. The command deliberately
 does not remove any incident, approval, effect, outcome or experience
 audit records. Provider billing and historical cost reporting require
 a separate immutable metering system.
+
+Production `GET /v1/health/ready` additionally performs a bounded
+live Temporal gRPC health check after releasing its PostgreSQL
+transaction. An unreachable workflow server returns 503 even if
+stale workers still have recent heartbeat records. Temporal liveness
+does not prove that individual workflows are executing correctly;
+use the read-only anti-entropy scan and end-to-end recovery tests.

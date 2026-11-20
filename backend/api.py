@@ -117,6 +117,8 @@ async def readiness(
     from sqlalchemy import text
     from backend.workers.heartbeat import REQUIRED_ROLES, present_workers
 
+    from backend.workers.temporal_health import check_temporal_health
+
     try:
         await session.execute(text("SELECT 1"))
         if settings.environment == "production":
@@ -126,10 +128,21 @@ async def readiness(
             )
             if not REQUIRED_ROLES.issubset(present):
                 raise HTTPException(503, "required worker heartbeat missing or stale")
+        # Never hold an active PostgreSQL read transaction over an RPC.
+        await session.rollback()
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(503, "database unavailable") from exc
+
+    if settings.environment == "production":
+        try:
+            if not await check_temporal_health(settings):
+                raise HTTPException(503, "Temporal health check failed")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(503, "Temporal unreachable") from exc
     return {"status": "ready"}
 
 @app.get("/v1/operations/queues")
