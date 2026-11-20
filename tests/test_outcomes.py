@@ -174,7 +174,7 @@ async def test_redteam_untyped_independent_outcome_cannot_certify_recovery(
     async with sessions() as session:
         rows = (await session.scalars(select(OutcomeRevision))).all()
         assert len(rows) == 1 and rows[0].label == "DISPUTED"
-        if type(fake[0]) is int:
+        if len(fake) == 2 and type(fake[0]) is int:
             assert rows[0].observed_version == fake[0]
         else:
             assert rows[0].observed_version is None
