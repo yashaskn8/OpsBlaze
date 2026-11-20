@@ -45,6 +45,7 @@ def signer(monkeypatch):
         expires_in: int = 120,
         signing_private=None,
         algorithm: str = "RS256",
+        jwt_headers: dict | None = None,
     ) -> str:
         now = int(time.time())
         claims = {
@@ -59,7 +60,7 @@ def signer(monkeypatch):
         return jwt.encode(
             claims, signing_private or private,
             algorithm=algorithm,
-            headers={"kid": "fixture-1"},
+            headers={"kid": "fixture-1", **(jwt_headers or {})},
         )
 
     return issue
@@ -394,3 +395,32 @@ async def test_redteam_dual_operator_reviewer_role_cannot_approve(
         json={"decision": "APPROVE"},
     )
     assert permitted_to_reach_plan_lookup.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("jwt_headers", [
+    {"crit": ["unknown-extension"], "unknown-extension": "required"},
+    {"kid": "k" * 129},
+    {"kid": ""},
+    {"kid": "invalid\\nkey"},
+])
+async def test_redteam_signed_access_token_rejects_unsupported_header(
+    signer, production_client, jwt_headers,
+):
+    token = signer(jwt_headers=jwt_headers)
+    rejected = await production_client.get(
+        "/v1/auth/me", headers=bearer(token),
+    )
+    assert rejected.status_code == 401
+
+
+def test_redteam_strict_jws_header_applies_to_both_token_types():
+    from backend.auth import supported_jws_header
+
+    assert supported_jws_header({"alg": "RS256", "kid": "kid-01"})
+    assert not supported_jws_header({
+        "alg": "RS256", "kid": "kid-01", "crit": ["custom"],
+    })
+    assert not supported_jws_header({
+        "alg": "RS256", "kid": "kid-01", "b64": False,
+    })
