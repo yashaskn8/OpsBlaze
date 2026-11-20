@@ -100,3 +100,9 @@ incidents are pinned by migration 0019. E7 verifies that assignment before
 routing and safely hands off when the pin is missing or changed. The policy
 view is `GET /v1/incidents/{id}/policy`. Experimental E6 rollout drafts
 still cannot assign themselves to incidents or enable real effects.
+
+Workflow status projection is now an explicit phase-predecessor state machine.
+Terminal `VERIFIED` requires `EXECUTING`, and repeated Temporal activity
+delivery does not increment the version or duplicate UI events. Cancellation
+is accepted only before the execution checkpoint; it never replaces an
+in-flight effect with an untrue `CANCELLED` projection.

@@ -111,8 +111,10 @@ async def request_cancellation(
             return None
         if incident.status_version != expected_version:
             raise VersionConflict("incident version changed; refetch before retrying")
-        if incident.status_projection in {"CANCELLED", "VERIFIED", "FAILED", "NEEDS_REVIEW", "CANCEL_REQUESTED", "REVIEW_ACKNOWLEDGED"}:
-            raise VersionConflict("incident is terminal or cancellation is pending")
+        if incident.status_projection not in {
+            "DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL",
+        }:
+            raise VersionConflict("incident is past the cancellable checkpoint")
         incident.status_projection = "CANCEL_REQUESTED"
         incident.status_version += 1
         session.add(OutboxEntry(incident_id=incident.id, kind="CANCEL_WORKFLOW"))
