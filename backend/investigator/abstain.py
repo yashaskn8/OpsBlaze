@@ -47,9 +47,10 @@ async def assess_decision(
                 )
             )
             if existing is not None:
-                # A different evidence snapshot cannot overwrite an old assessment.
+                # An old positive decision is never reusable for a new snapshot.
+                # Keep the durable assessment immutable; the caller must abstain.
                 if existing.evidence_digest != digest:
-                    return existing
+                    return None
                 return existing
 
             reason = "ACCEPTED"
