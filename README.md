@@ -154,3 +154,8 @@ requires a current, classified source case both when drafting and when
 submitting an improvement candidate for evaluation. A later outcome
 revision therefore blocks stale candidates even if a separate invalidation
 worker has not yet updated the cluster projection.
+
+The P2 execution gate also checks the **meaning** of the pinned observations:
+the initial health must have been false, the version observation must match
+the exact pinned integer, and the target must still be unhealthy. Rehashing
+an invented healthy observation does not make it authorization evidence.

@@ -105,3 +105,40 @@ async def test_approval_rejects_modified_plan_digest(proposed_lab):
     async with sessions() as session:
         with pytest.raises(PlanConflict):
             await decide_plan(session, "a", plan_id, 1, "APPROVE")
+
+
+@pytest.mark.asyncio
+async def test_healthy_target_blocks_approval_without_version_change(proposed_lab):
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        async with session.begin():
+            target = await session.get(SimulatorTarget, ("a", "checkout"))
+            target.healthy = True
+    async with sessions() as session:
+        with pytest.raises(PlanConflict, match="evidence"):
+            await decide_plan(session, "a", plan_id, 1, "APPROVE")
+
+
+@pytest.mark.asyncio
+async def test_rehashed_but_semantically_false_evidence_cannot_trigger_effect(proposed_lab):
+    import hashlib
+    from uuid import UUID
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        plan = await decide_plan(session, "a", plan_id, 1, "APPROVE")
+        evidence_id = plan.evidence_ids[0]
+    async with sessions() as session:
+        async with session.begin():
+            row = await session.get(Evidence, UUID(evidence_id))
+            row.redacted_excerpt = '{"healthy":true}'
+            row.sha256 = hashlib.sha256(row.redacted_excerpt.encode()).hexdigest()
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+    assert (
+        await execute_approved_simulator_plan(sessions, "a", incident_id, plan_id)
+        == "NEEDS_REVIEW"
+    )
+    async with sessions() as session:
+        assert (await session.scalars(select(EffectReceipt))).all() == []
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert target.healthy is False and target.version == 3

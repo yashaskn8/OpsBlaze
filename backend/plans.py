@@ -93,7 +93,18 @@ async def current_plan_evidence_is_intact(
     target = await session.get(
         SimulatorTarget, (plan.tenant_id, plan.target_id)
     )
-    return target is not None and target.version == plan.expected_version
+    if (
+        target is None or target.version != plan.expected_version
+        or target.healthy
+    ):
+        return False
+    observed = {row.source: row.redacted_excerpt for row in items}
+    # Check the exact typed observation, not only its self-reported hash.
+    return (
+        observed["simulator.health"] == '{"healthy":false}'
+        and observed["simulator.version"]
+            == json.dumps({"version": plan.expected_version}, separators=(",", ":"))
+    )
 
 
 async def propose_simulator_plan(
