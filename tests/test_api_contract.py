@@ -158,3 +158,41 @@ async def test_stream_rejects_invalid_resume_cursor_before_open(api_client):
         path, headers=headers("alpha", **{"Last-Event-ID": "nope"})
     )
     assert malformed.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_plan_decision_requires_distinct_reviewer_token(api_client):
+    plan_id = uuid4()
+    path = f"/v1/plans/{plan_id}/decisions"
+    body = {"decision": "APPROVE"}
+    base = headers("alpha", **{"If-Match": "1"})
+
+    not_configured = await api_client.post(path, json=body, headers=base)
+    assert not_configured.status_code == 503
+
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        local_token=TOKEN, review_token="separate-reviewer-credential",
+        environment="development",
+    )
+    missing = await api_client.post(path, json=body, headers=base)
+    assert missing.status_code == 403
+    wrong = await api_client.post(
+        path, json=body,
+        headers={**base, "X-OpsBlaze-Reviewer-Token": TOKEN},
+    )
+    assert wrong.status_code == 403
+    authorized = await api_client.post(
+        path, json=body,
+        headers={**base, "X-OpsBlaze-Reviewer-Token": "separate-reviewer-credential"},
+    )
+    assert authorized.status_code == 404
+
+    # The same token cannot be both operator and reviewer.
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        local_token=TOKEN, review_token=TOKEN, environment="development",
+    )
+    same = await api_client.post(
+        path, json=body,
+        headers={**base, "X-OpsBlaze-Reviewer-Token": TOKEN},
+    )
+    assert same.status_code == 503

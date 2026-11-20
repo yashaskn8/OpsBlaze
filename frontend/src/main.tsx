@@ -79,6 +79,7 @@ function detail(value: unknown): string {
 function App() {
   const [tenant, setTenant] = useState("demo");
   const [token, setToken] = useState("");
+  const [reviewToken, setReviewToken] = useState("");
   const [target, setTarget] = useState("checkout");
   const [key, setKey] = useState(() => crypto.randomUUID());
   const [incident, setIncident] = useState<Incident | null>(null);
@@ -313,7 +314,8 @@ function App() {
         headers: {
           ...headers(),
           "Content-Type": "application/json",
-          "If-Match": String(plan.version)
+          "If-Match": String(plan.version),
+          "X-OpsBlaze-Reviewer-Token": reviewToken,
         },
         body: JSON.stringify({ decision: choice })
       });
@@ -373,6 +375,8 @@ function App() {
           <form onSubmit={admit}>
             <label>Tenant ID<input required maxLength={64} value={tenant} onChange={e => setTenant(e.target.value)} /></label>
             <label>Local API token<input type="password" autoComplete="off" required value={token} onChange={e => setToken(e.target.value)} /></label>
+            <label>Local reviewer token<input type="password" autoComplete="off"
+              value={reviewToken} onChange={e => setReviewToken(e.target.value)} /></label>
             <label>Target ID<input required maxLength={256} value={target} onChange={e => setTarget(e.target.value)} /></label>
             <p className="key">Idempotency key <code>{key}</code></p>
             <div className="actions">
@@ -415,8 +419,8 @@ function App() {
               <p className="muted">Digest</p><code>{plan.plan_digest}</code>
               {plan.status === "PROPOSED" && incident.status_projection === "AWAITING_APPROVAL" &&
                 <div className="actions">
-                  <button type="button" disabled={busy || connection !== "LIVE"} onClick={() => decidePlan("APPROVE")}>Approve simulator plan</button>
-                  <button type="button" className="secondary" disabled={busy || connection !== "LIVE"} onClick={() => decidePlan("REJECT")}>Reject</button>
+                  <button type="button" disabled={busy || connection !== "LIVE" || !reviewToken} onClick={() => decidePlan("APPROVE")}>Approve simulator plan</button>
+                  <button type="button" className="secondary" disabled={busy || connection !== "LIVE" || !reviewToken} onClick={() => decidePlan("REJECT")}>Reject</button>
                 </div>
               }
             </div>}

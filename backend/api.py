@@ -284,15 +284,30 @@ async def decide_incident_plan(
     if_match: Annotated[str, Header()],
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    reviewer_token: Annotated[str | None, Header(alias="X-OpsBlaze-Reviewer-Token")] = None,
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     from backend.plans import PlanConflict, decide_plan
+
+    if (
+        not settings.review_token
+        or not settings.local_token
+        or secrets.compare_digest(settings.review_token, settings.local_token)
+    ):
+        raise HTTPException(503, "distinct local reviewer credential is not configured")
+    if (
+        reviewer_token is None
+        or not secrets.compare_digest(reviewer_token, settings.review_token)
+    ):
+        raise HTTPException(403, "reviewer credential required")
 
     version = if_match.strip('"')
     if not version.isdecimal():
         raise HTTPException(400, "If-Match must be the plan version")
     try:
         plan = await decide_plan(
-            session, tenant_id, plan_id, int(version), payload.decision
+            session, tenant_id, plan_id, int(version), payload.decision,
+            decided_by="DEV_REVIEWER_CREDENTIAL",
         )
     except PlanConflict as exc:
         raise HTTPException(409, str(exc)) from exc

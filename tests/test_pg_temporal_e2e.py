@@ -89,7 +89,11 @@ async def test_postgres_temporal_simulator_recovery() -> None:
                 assert plan["status"] == "PROPOSED"
                 decision = await client.post(
                     f"/v1/plans/{plan['id']}/decisions",
-                    headers={**headers, "If-Match": str(plan["version"])},
+                    headers={
+                        **headers,
+                        "If-Match": str(plan["version"]),
+                        "X-OpsBlaze-Reviewer-Token": settings.review_token,
+                    },
                     json={"decision": "APPROVE"},
                 )
                 assert decision.status_code == 201, decision.text

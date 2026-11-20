@@ -172,3 +172,14 @@ The native PostgreSQL integration suite also races five different incidents
 for one simulator resource. Only one may hold the active fence, and a
 superseded permit cannot apply an effect after a newer epoch is reserved.
 This checks the database lock behavior instead of relying on SQLite mocks.
+
+### Separate local reviewer credential (P2)
+
+To approve or reject simulator plans through HTTP, also configure
+`OPSBLAZE_REVIEW_TOKEN` with a different value than
+`OPSBLAZE_LOCAL_TOKEN`. Supply it in the UI's local reviewer field.
+The plan decision endpoint checks the second secret and persists
+`decided_by=DEV_REVIEWER_CREDENTIAL` with the existing exact-plan
+version and evidence checks. The operator token alone cannot decide
+plans. These are still local shared secrets, **not real user identity**
+or production separation of duties: production mode remains closed.

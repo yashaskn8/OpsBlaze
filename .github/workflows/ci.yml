@@ -45,6 +45,7 @@ jobs:
     env:
       OPSBLAZE_DATABASE_URL: postgresql+asyncpg://opsblaze:opsblaze@127.0.0.1:5432/opsblaze
       OPSBLAZE_LOCAL_TOKEN: ci-local-token
+      OPSBLAZE_REVIEW_TOKEN: ci-separate-reviewer-token
       OPSBLAZE_ENVIRONMENT: development
     steps:
       - uses: actions/checkout@v4

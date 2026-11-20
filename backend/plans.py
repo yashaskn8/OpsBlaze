@@ -146,6 +146,7 @@ async def propose_simulator_plan(
 async def decide_plan(
     session: AsyncSession, tenant_id: str, plan_id: UUID,
     expected_version: int, decision: str,
+    decided_by: str = "LOCAL_SERVICE_CALL",
 ) -> IncidentPlan | None:
     if decision not in {"APPROVE", "REJECT"}:
         raise PlanConflict("unsupported decision")
@@ -174,6 +175,7 @@ async def decide_plan(
         plan.status = "APPROVED" if decision == "APPROVE" else "REJECTED"
         plan.version += 1
         plan.decided_at = datetime.now(timezone.utc)
+        plan.decided_by = decided_by
         incident.status_projection = "PLAN_DECIDED"
         incident.status_version += 1
         incident.phase_entered_at = datetime.now(timezone.utc)
