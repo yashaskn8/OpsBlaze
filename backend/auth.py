@@ -167,8 +167,11 @@ def local_reviewer(
     settings: Settings = Depends(get_settings),
 ) -> str:
     if settings.environment == "production":
-        if "reviewer" not in actor.roles:
-            raise HTTPException(403, "reviewer role required")
+        if (
+            "reviewer" not in actor.roles
+            or actor.roles.intersection({"operator", "security_admin"})
+        ):
+            raise HTTPException(403, "independent reviewer role required")
         return actor.subject
     if (
         not settings.review_token or not settings.local_token
