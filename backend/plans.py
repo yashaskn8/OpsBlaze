@@ -13,7 +13,7 @@ from backend.adapters.simulator import SimulatorAdapter, utc
 from backend.adapters.conformance import current_simulator_is_conformant
 from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
-from backend.models import DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, SimulatorTarget, UIEvent
+from backend.models import ApprovalGrant, ApprovalRevocation, DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, SimulatorTarget, UIEvent
 from backend.outcomes import adjudicate_simulator
 from backend.settings import get_settings
 
@@ -149,12 +149,18 @@ async def decide_plan(
     expected_version: int, decision: str,
     decided_by: str = "LOCAL_SERVICE_CALL",
     review_epoch: int | None = None,
+    reason: str = "simulator plan reviewed",
 ) -> IncidentPlan | None:
     if decision not in {"APPROVE", "REJECT"}:
         raise PlanConflict("unsupported decision")
     epoch = get_settings().review_epoch if review_epoch is None else review_epoch
     if epoch < 1:
         raise PlanConflict("review policy epoch must be positive")
+    if not 8 <= len(reason.strip()) <= 256:
+        raise PlanConflict("review reason must have 8–256 characters")
+    ttl = get_settings().approval_ttl_seconds
+    if not 1 <= ttl <= 3600:
+        raise PlanConflict("approval TTL must be 1–3600 seconds")
     async with session.begin():
         plan = await session.scalar(
             select(IncidentPlan)
@@ -184,9 +190,20 @@ async def decide_plan(
             raise PlanConflict("plan evidence, assessment, or target version changed")
         plan.status = "APPROVED" if decision == "APPROVE" else "REJECTED"
         plan.version += 1
-        plan.decided_at = datetime.now(timezone.utc)
+        decided_at = datetime.now(timezone.utc)
+        plan.decided_at = decided_at
         plan.decided_by = decided_by
         plan.review_epoch = epoch
+        grant = ApprovalGrant(
+            id=uuid5(NAMESPACE_URL, f"opsblaze/approval/{plan.id}"),
+            tenant_id=tenant_id, plan_id=plan.id,
+            plan_digest=plan.plan_digest, reviewer_id=decided_by,
+            scope=plan.action_id,
+            decision=decision, state=decision,
+            reason=reason.strip(), version=1,
+            expires_at=decided_at + timedelta(seconds=ttl),
+        )
+        session.add(grant)
         incident.status_projection = "PLAN_DECIDED"
         incident.status_version += 1
         incident.phase_entered_at = datetime.now(timezone.utc)
@@ -203,6 +220,52 @@ async def decide_plan(
             )
         )
     return plan
+
+
+
+async def revoke_approval(
+    session: AsyncSession, tenant_id: str, approval_id: UUID,
+    expected_version: int, reviewer_identity: str,
+    reason: str,
+) -> ApprovalGrant | None:
+    if not 8 <= len(reason.strip()) <= 256:
+        raise PlanConflict("revocation reason must be 8–256 characters")
+    async with session.begin():
+        grant = await session.scalar(
+            select(ApprovalGrant).where(
+                ApprovalGrant.id == approval_id,
+                ApprovalGrant.tenant_id == tenant_id,
+            ).with_for_update()
+        )
+        if grant is None:
+            return None
+        if grant.version != expected_version or grant.state != "APPROVED":
+            raise PlanConflict("approval already consumed, revoked or version changed")
+        plan = await session.scalar(
+            select(IncidentPlan).where(
+                IncidentPlan.id == grant.plan_id,
+                IncidentPlan.tenant_id == tenant_id,
+            ).with_for_update()
+        )
+        if plan is None or plan.status != "APPROVED":
+            raise PlanConflict("approved plan no longer available")
+        grant.state = "REVOKED"
+        grant.revoked_at = datetime.now(timezone.utc)
+        grant.version += 1
+        plan.status = "REVOKED"
+        plan.version += 1
+        # Preserve the original approving actor and use a separate revocation
+        # audit record for attributed action, without overwriting the decision.
+        session.add(
+            ApprovalRevocation(
+                id=uuid5(NAMESPACE_URL, f"opsblaze/revocation/{grant.id}"),
+                tenant_id=tenant_id,
+                approval_id=grant.id,
+                revoked_by=reviewer_identity,
+                reason=reason.strip(),
+            )
+        )
+    return grant
 
 
 async def execute_approved_simulator_plan(
@@ -233,11 +296,22 @@ async def execute_approved_simulator_plan(
                 EffectReceipt.plan_digest == digest,
             )
         )
-        if existing is None and (
-            plan.review_epoch != get_settings().review_epoch
-            or not await current_plan_evidence_is_intact(session, plan)
-        ):
-            return "NEEDS_REVIEW"
+        if existing is None:
+            grant = await session.scalar(
+                select(ApprovalGrant).where(
+                    ApprovalGrant.plan_id == plan_id,
+                    ApprovalGrant.tenant_id == tenant_id,
+                )
+            )
+            if (
+                grant is None or grant.state != "APPROVED"
+                or grant.plan_digest != plan.plan_digest
+                or grant.scope != "SIMULATOR_MARK_HEALTHY"
+                or grant.expires_at <= datetime.now(timezone.utc)
+                or plan.review_epoch != get_settings().review_epoch
+                or not await current_plan_evidence_is_intact(session, plan)
+            ):
+                return "NEEDS_REVIEW"
     adapter = SimulatorAdapter(sessions)
     if existing is not None:
         state = await reconcile_effect(sessions, adapter, existing.id)
@@ -254,7 +328,9 @@ async def execute_approved_simulator_plan(
     if permit.expected_version != target_version:
         return "NEEDS_REVIEW"
 
-    state = await execute_simulator_effect(sessions, adapter, permit)
+    state = await execute_simulator_effect(
+        sessions, adapter, permit, plan_id=plan_id,
+    )
     if state != "VERIFIED":
         return state
     async with sessions() as session:

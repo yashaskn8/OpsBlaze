@@ -239,6 +239,7 @@ from pydantic import BaseModel, ConfigDict
 class PlanDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     decision: Literal["APPROVE", "REJECT"]
+    reason: str = Field(default="simulator plan reviewed", min_length=8, max_length=256)
 
 
 @app.get("/v1/incidents/{incident_id}/plans")
@@ -287,6 +288,7 @@ async def decide_incident_plan(
             session, tenant_id, plan_id, int(version), payload.decision,
             decided_by=reviewer_identity,
             review_epoch=settings.review_epoch,
+            reason=payload.reason,
         )
     except PlanConflict as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -1186,4 +1188,83 @@ async def tenant_model_budget(
         "reserved_tokens": window.reserved_tokens if window else 0,
         "reported_used_tokens": window.used_tokens if window else 0,
         "provider_enabled": get_settings().ai_advisory_enabled,
+    }
+
+
+class RevokeApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=8, max_length=256)
+
+
+@app.get("/v1/plans/{plan_id}")
+async def plan_preview(
+    plan_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from sqlalchemy import select
+    from backend.models import ApprovalGrant, IncidentPlan
+
+    plan = await session.scalar(
+        select(IncidentPlan).where(
+            IncidentPlan.id == plan_id,
+            IncidentPlan.tenant_id == tenant_id,
+        )
+    )
+    if plan is None:
+        raise HTTPException(404, "plan not found")
+    approval = await session.scalar(
+        select(ApprovalGrant).where(
+            ApprovalGrant.plan_id == plan_id,
+            ApprovalGrant.tenant_id == tenant_id,
+        )
+    )
+    return {
+        "id": str(plan.id), "incident_id": str(plan.incident_id),
+        "action_id": plan.action_id, "target_id": plan.target_id,
+        "plan_digest": plan.plan_digest, "expected_version": plan.expected_version,
+        "evidence_ids": plan.evidence_ids, "status": plan.status,
+        "version": plan.version,
+        "approval": (
+            {
+                "id": str(approval.id),
+                "state": approval.state,
+                "version": approval.version,
+                "expires_at": approval.expires_at.isoformat(),
+                "reviewer": approval.reviewer_id,
+                "scope": approval.scope,
+                "reason": approval.reason,
+            }
+            if approval else None
+        ),
+    }
+
+
+@app.post("/v1/approvals/{approval_id}/revoke", status_code=202)
+async def revoke_plan_approval(
+    approval_id: UUID,
+    payload: RevokeApprovalRequest,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+    reviewer_identity: str = Depends(local_reviewer),
+) -> dict:
+    from backend.plans import PlanConflict, revoke_approval
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be approval version")
+    try:
+        approval = await revoke_approval(
+            session, tenant_id, approval_id, int(version),
+            reviewer_identity, payload.reason,
+        )
+    except PlanConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if approval is None:
+        raise HTTPException(404, "approval not found")
+    return {
+        "id": str(approval.id),
+        "state": approval.state,
+        "version": approval.version,
     }

@@ -242,6 +242,33 @@ class IncidentPlan(Base):
     review_epoch: Mapped[int | None] = mapped_column(Integer)
 
 
+class ApprovalGrant(Base):
+    __tablename__ = "approval_grant"
+    __table_args__ = (
+        UniqueConstraint("plan_id", name="uq_approval_plan"),
+        Index("ix_approval_tenant_state", "tenant_id", "state", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    plan_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident_plan.id"), nullable=False
+    )
+    plan_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    reviewer_id: Mapped[str] = mapped_column(String(48), nullable=False)
+    scope: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(String(256), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class OutcomeRevision(Base):
     __tablename__ = "outcome_revision"
     __table_args__ = (
@@ -672,3 +699,18 @@ class ModelTokenWindow(Base):
     )
     reserved_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
     used_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class ApprovalRevocation(Base):
+    __tablename__ = "approval_revocation"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("approval_grant.id"), nullable=False
+    )
+    revoked_by: Mapped[str] = mapped_column(String(48), nullable=False)
+    reason: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

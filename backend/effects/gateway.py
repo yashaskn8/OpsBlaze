@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.adapters.simulator import (
     Permit, SimulatorAdapter, StaleFence, TargetVersionConflict
 )
-from backend.models import EffectReceipt
+from backend.models import ApprovalGrant, EffectReceipt, IncidentPlan
 
 
 class EffectConflict(Exception):
@@ -68,9 +68,10 @@ async def set_state(
     effect_id: UUID,
     state: str,
     observed_version: int | None = None,
+    plan_id: UUID | None = None,
 ) -> None:
     allowed = {
-        "PREPARED": {"SENT", "UNKNOWN"},
+        "PREPARED": {"SENT", "UNKNOWN", "NEEDS_REVIEW"},
         "SENT": {"UNKNOWN", "CONFIRMED", "FAILED"},
         "UNKNOWN": {"CONFIRMED", "FAILED", "NEEDS_REVIEW"},
         "CONFIRMED": {"VERIFIED", "NEEDS_REVIEW"},
@@ -84,6 +85,39 @@ async def set_state(
                 return
             if state not in allowed.get(receipt.state, set()):
                 raise EffectConflict(f"invalid receipt transition {receipt.state} -> {state}")
+            if state == "SENT" and plan_id is not None:
+                from datetime import datetime, timezone
+                from backend.plans import current_plan_evidence_is_intact
+                from backend.settings import get_settings
+
+                approval = await session.scalar(
+                    select(ApprovalGrant).where(
+                        ApprovalGrant.plan_id == plan_id,
+                        ApprovalGrant.tenant_id == receipt.tenant_id,
+                    ).with_for_update()
+                )
+                plan = await session.scalar(
+                    select(IncidentPlan).where(
+                        IncidentPlan.id == plan_id,
+                        IncidentPlan.tenant_id == receipt.tenant_id,
+                        IncidentPlan.incident_id == receipt.incident_id,
+                    )
+                )
+                if (
+                    approval is None or plan is None
+                    or approval.state != "APPROVED"
+                    or approval.plan_digest != receipt.plan_digest
+                    or approval.scope != "SIMULATOR_MARK_HEALTHY"
+                    or approval.expires_at <= datetime.now(timezone.utc)
+                    or plan.status != "APPROVED"
+                    or plan.review_epoch != get_settings().review_epoch
+                    or not await current_plan_evidence_is_intact(session, plan)
+                ):
+                    raise EffectConflict("approval expired, revoked or evidence changed")
+                # Approval and SENT cross the dispatch boundary atomically.
+                approval.state = "CONSUMED"
+                approval.consumed_at = datetime.now(timezone.utc)
+                approval.version += 1
             receipt.state = state
             if observed_version is not None:
                 receipt.observed_version = observed_version
@@ -127,8 +161,9 @@ async def execute_simulator_effect(
     sessions: async_sessionmaker[AsyncSession],
     adapter: SimulatorAdapter,
     permit: Permit,
+    plan_id: UUID | None = None,
 ) -> str:
-    """Internal laboratory call. P2 approval is required before any real connector."""
+    """The API path passes plan_id; direct use is reserved for simulator tests."""
     effect_id = await prepare_receipt(sessions, permit)
     async with sessions() as session:
         receipt = await session.get(EffectReceipt, effect_id)
@@ -136,7 +171,11 @@ async def execute_simulator_effect(
     if state != "PREPARED":
         return await reconcile_effect(sessions, adapter, effect_id)
 
-    await set_state(sessions, effect_id, "SENT")
+    try:
+        await set_state(sessions, effect_id, "SENT", plan_id=plan_id)
+    except EffectConflict:
+        await set_state(sessions, effect_id, "NEEDS_REVIEW")
+        return "NEEDS_REVIEW"
     try:
         observed_version = await adapter.apply(effect_id, permit)
     except (TimeoutError, ConnectionError):

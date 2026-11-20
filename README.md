@@ -116,3 +116,19 @@ development credentials; deployment must supply an OAuth2/OIDC login
 client and HTTPS reverse proxy before humans can use this boundary.
 This auth milestone does not authorize real infrastructure effects:
 the simulator gateway and independent E5/E6 release blocks remain.
+
+## Durable plan approvals (P2)
+
+A plan review now records a separate tenant-scoped approval grant with
+the exact plan digest, reviewer pseudonym, action scope, reason and expiry
+(default 15 minutes, configurable up to one hour). The signed JWT verifies
+a reviewer role at decision time. `GET /v1/plans/{id}` exposes a redacted
+approval summary. `POST /v1/approvals/{id}/revoke` requires a reviewer
+and `If-Match` version; it also invalidates the approved plan.
+
+The simulator effect gateway rechecks the grant, evidence and policy epoch
+inside its transaction before moving the receipt to `SENT`. That same
+transaction consumes the grant, preventing a subsequent revocation
+from falsely cancelling an already-started effect. Existing receipts
+remain independently reconcilable. Legacy approved plans without grants
+cannot initiate new effects. The real-adapter boundary remains disabled.

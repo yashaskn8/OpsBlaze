@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     local_token: str | None = None
     review_token: str | None = None
     review_epoch: int = 1
+    approval_ttl_seconds: int = 900
     oidc_issuer: str = ""
     oidc_audience: str = ""
     oidc_jwks_url: str = ""
