@@ -29,6 +29,7 @@ def workflow_id(tenant_id: str, incident_id: UUID) -> str:
 
 async def claim_intent(
     sessions: async_sessionmaker[AsyncSession],
+    tenant_filter: str | None = None,
 ) -> tuple[int, str, str, str, dict | None] | None:
     now = datetime.now(timezone.utc)
     start = aliased(OutboxEntry)
@@ -72,6 +73,8 @@ async def claim_intent(
                 .limit(1)
                 .with_for_update(of=OutboxEntry, skip_locked=True)
             )
+            if tenant_filter is not None:
+                stmt = stmt.where(Incident.tenant_id == tenant_filter)
             result = (await session.execute(stmt)).first()
             if result is None:
                 return None

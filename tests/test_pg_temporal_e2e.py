@@ -856,18 +856,18 @@ async def test_parallel_dispatchers_do_not_reorder_same_incident_signals():
                 )
 
         claimed = await asyncio.gather(
-            claim_intent(sessions), claim_intent(sessions),
+            claim_intent(sessions, tenant), claim_intent(sessions, tenant),
         )
         assert {item[0] for item in claimed if item} == {first_id, other_id}
         assert second_id not in [item[0] for item in claimed if item]
-        assert await claim_intent(sessions) is None
+        assert await claim_intent(sessions, tenant) is None
 
         async with sessions() as session:
             async with session.begin():
                 (await session.get(OutboxEntry, first_id)).delivered_at = (
                     datetime.now(timezone.utc)
                 )
-        new_claim = await claim_intent(sessions)
+        new_claim = await claim_intent(sessions, tenant)
         assert new_claim is not None and new_claim[0] == second_id
     finally:
         await engine.dispose()
