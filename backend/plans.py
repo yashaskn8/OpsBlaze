@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.adapters.simulator import SimulatorAdapter
 from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
-from backend.models import EffectReceipt, Incident, IncidentPlan, OutboxEntry, SimulatorTarget
+from backend.models import EffectReceipt, Incident, IncidentPlan, OutboxEntry, SimulatorTarget, UIEvent
 from backend.outcomes import adjudicate_simulator
 
 
@@ -103,6 +103,12 @@ async def decide_plan(
         incident.status_projection = "PLAN_DECIDED"
         incident.status_version += 1
         incident.phase_entered_at = datetime.now(timezone.utc)
+        session.add(
+            UIEvent(
+                tenant_id=tenant_id, incident_id=incident.id,
+                kind="PLAN_DECIDED", projection_version=incident.status_version,
+            )
+        )
         session.add(
             OutboxEntry(
                 incident_id=incident.id, kind="PLAN_DECIDED",

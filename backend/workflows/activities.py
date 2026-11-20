@@ -5,7 +5,7 @@ from sqlalchemy import update
 from temporalio import activity
 
 from backend.database import get_session_maker
-from backend.models import Incident
+from backend.models import Incident, UIEvent
 
 
 @activity.defn(name="project_incident_status")
@@ -28,7 +28,7 @@ async def project_incident_status(
                 valid_states = ["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL", "PLAN_DECIDED", "EXECUTING"]
                 if state == "NEEDS_REVIEW":
                     valid_states.append("REVIEW_ACKNOWLEDGED")
-            await session.execute(
+            result = await session.execute(
                 update(Incident)
                 .where(
                     Incident.id == UUID(incident_id),
@@ -41,6 +41,14 @@ async def project_incident_status(
                     phase_entered_at=datetime.now(timezone.utc),
                 )
             )
+            if result.rowcount == 1:
+                projected = await session.get(Incident, UUID(incident_id))
+                session.add(
+                    UIEvent(
+                        tenant_id=tenant_id, incident_id=projected.id,
+                        kind=state, projection_version=projected.status_version,
+                    )
+                )
 
 
 @activity.defn(name="inspect_incident_read_only")

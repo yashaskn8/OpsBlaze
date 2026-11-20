@@ -505,3 +505,25 @@ class PolicyRollout(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class UIEvent(Base):
+    __tablename__ = "ui_event"
+    __table_args__ = (
+        Index("ix_ui_event_incident", "tenant_id", "incident_id", "id"),
+        Index("ix_ui_event_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True, autoincrement=True,
+    )
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    projection_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

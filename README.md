@@ -267,3 +267,17 @@ Approval always returns 409 because a smoke run is insufficient.
 No live canary, signed bundle attestation, true evaluation PASS, independent
 release identity, or policy exposure is enabled. This prevents unreviewed
 self-modification and makes incomplete gates explicit.
+
+## P1 authoritative snapshots and durable events
+
+GET /v1/incidents returns up to 50 recent tenant incidents.
+GET /v1/incidents/{id} exposes its current version as an ETag.
+GET /v1/incidents/{id}/events?after_id=N returns sequenced
+lightweight status-change notifications with a continuation ID. Admission,
+cancellation, plan decision and Temporal projection commit their event in
+the same database transaction. Notifications never authorize an action:
+the client must refetch the snapshot and send a version-bound mutation.
+
+The event endpoint is bounded polling JSON, not yet SSE. Frontend
+reconnect/gap recovery, a complete role-aware approval cockpit and load
+testing remain for P1 production readiness.

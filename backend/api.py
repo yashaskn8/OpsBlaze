@@ -3,7 +3,7 @@ import secrets
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_session
@@ -55,12 +55,14 @@ async def create_incident(
 @app.get("/v1/incidents/{incident_id}", response_model=IncidentView)
 async def get_incident(
     incident_id: UUID,
+    response: Response,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
 ) -> IncidentView:
     incident = await find_incident(session, tenant_id, incident_id)
     if incident is None:
         raise HTTPException(404, "incident not found")
+    response.headers["ETag"] = f'"{incident.status_version}"'
     return IncidentView.model_validate(incident)
 
 @app.post("/v1/incidents/{incident_id}/cancel", response_model=IncidentView, status_code=202)
@@ -888,4 +890,56 @@ async def preview_policy_rollout(
         "rollout_id": str(rollout.id),
         "would_assign": dry_run_assignment(rollout, tenant_id, incident_id),
         "preview_only": True, "exposure_enabled": False,
+    }
+
+
+@app.get("/v1/incidents")
+async def recent_incidents(
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[IncidentView]:
+    from sqlalchemy import select
+    from backend.models import Incident
+
+    rows = (await session.scalars(
+        select(Incident)
+        .where(Incident.tenant_id == tenant_id)
+        .order_by(Incident.created_at.desc(), Incident.id)
+        .limit(50)
+    )).all()
+    return [IncidentView.model_validate(row) for row in rows]
+
+
+@app.get("/v1/incidents/{incident_id}/events")
+async def incident_ui_events(
+    incident_id: UUID,
+    after_id: int = 0,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from sqlalchemy import select
+    from backend.models import UIEvent
+
+    if after_id < 0:
+        raise HTTPException(422, "after_id cannot be negative")
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    rows = (await session.scalars(
+        select(UIEvent)
+        .where(
+            UIEvent.tenant_id == tenant_id,
+            UIEvent.incident_id == incident_id,
+            UIEvent.id > after_id,
+        )
+        .order_by(UIEvent.id)
+        .limit(100)
+    )).all()
+    return {
+        "events": [
+            {"id": event.id, "kind": event.kind,
+             "projection_version": event.projection_version,
+             "created_at": event.created_at.isoformat()}
+            for event in rows
+        ],
+        "last_id": rows[-1].id if rows else after_id,
     }

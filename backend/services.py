@@ -7,7 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models import AdmissionUsage, Incident, OutboxEntry
+from backend.models import AdmissionUsage, Incident, OutboxEntry, UIEvent
 from backend.schemas import IncidentCreate
 from backend.settings import get_settings
 
@@ -56,6 +56,7 @@ async def admit_incident(
             await reserve_admission_slot(session, tenant_id)
             session.add(incident)
             session.add(OutboxEntry(incident_id=incident.id, kind="START_WORKFLOW"))
+            session.add(UIEvent(tenant_id=tenant_id, incident_id=incident.id, kind="ADMITTED", projection_version=1))
             await session.flush()
         return incident
     except IntegrityError:
@@ -104,6 +105,7 @@ async def request_cancellation(
         incident.status_projection = "CANCEL_REQUESTED"
         incident.status_version += 1
         session.add(OutboxEntry(incident_id=incident.id, kind="CANCEL_WORKFLOW"))
+        session.add(UIEvent(tenant_id=tenant_id, incident_id=incident.id, kind="CANCEL_REQUESTED", projection_version=incident.status_version))
     return incident
 
 async def acknowledge_review(
@@ -125,6 +127,7 @@ async def acknowledge_review(
         incident.status_projection = "REVIEW_ACKNOWLEDGED"
         incident.status_version += 1
         session.add(OutboxEntry(incident_id=incident.id, kind="ACKNOWLEDGE_REVIEW"))
+        session.add(UIEvent(tenant_id=tenant_id, incident_id=incident.id, kind="REVIEW_ACKNOWLEDGED", projection_version=incident.status_version))
     return incident
 
 
