@@ -178,3 +178,31 @@ async def test_redteam_untyped_independent_outcome_cannot_certify_recovery(
             assert rows[0].observed_version == fake[0]
         else:
             assert rows[0].observed_version is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tamper", [
+    "target", "adapter", "send_count", "observed_version",
+])
+async def test_redteam_outcome_cannot_be_attributed_to_forged_effect_lineage(
+    witnessed_effect, tamper,
+):
+    sessions, adapter, incident_id, effect_id = witnessed_effect
+    async with sessions() as session:
+        async with session.begin():
+            receipt = await session.get(EffectReceipt, effect_id)
+            if tamper == "target":
+                receipt.target_id = "unrelated-service"
+            elif tamper == "adapter":
+                receipt.adapter_id = "external-unqualified"
+            elif tamper == "send_count":
+                receipt.attempt_count = 0
+            else:
+                receipt.observed_version += 3
+
+    with pytest.raises(OutcomeConflict, match="incident target"):
+        await adjudicate_simulator(
+            sessions, adapter, "a", incident_id, effect_id,
+        )
+    async with sessions() as session:
+        assert (await session.scalars(select(OutcomeRevision))).all() == []
