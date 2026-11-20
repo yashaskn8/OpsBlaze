@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -758,5 +759,31 @@ class IdentityProviderEvent(Base):
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
     actor_id: Mapped[str] = mapped_column(String(48), nullable=False)
     received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PolicyShadowObservation(Base):
+    """Dry-run E6 cohort decision; never installed into policy_assignment."""
+
+    __tablename__ = "policy_shadow_observation"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "rollout_id", "incident_id",
+            name="uq_shadow_tenant_rollout_incident",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    rollout_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("policy_rollout.id"), nullable=False
+    )
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False
+    )
+    bundle_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    would_assign: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
