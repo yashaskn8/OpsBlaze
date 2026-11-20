@@ -21,9 +21,9 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 | E3 — Failure learning | Fact-backed cases, concurrent outcome-revision and reviewer fencing, corrected taxonomy, candidate→rollout invalidation | Independent reviewers, causal attribution beyond typed simulator facts |
 | E4 — Validated memory | Typed lesson drafts, incident-locked consent/outcome validation and revocation, plus read-time lesson-text, target and validity-window checks | Release gate for activation, measured retrieval effect and revocation propagation |
 | E5 — Evaluation | Frozen paired smoke manifest, integrity checks, negative controls, bounded costs, conservative intervals, plus separate offline held-out oracle/trials verifier with no promotion authority | Independent hidden-label custody, real measured recovery-cost outcomes, preregistration and separate evaluator authority |
-| E6 — Policy rollout | Content-digested drafts, admission-time known-good pinning, cohort preview and disabled rollout | **Live rollout disabled** pending real E5 PASS, signed bundle and release authorization |
+| E6 — Policy rollout | Content-digested drafts, admission-time known-good pinning, deterministic cohort preview, tenant-scoped persisted shadow decisions and aggregate rehearsal summary | **Live rollout disabled** pending independent real E5 PASS, signed bundle, separate release authority and rollback certification |
 | E7 — Strategy routing | Pinned tenant-scoped RUNBOOK/HANDOFF choice, deterministic cost cap | Evaluated contextual policies, measured route accuracy, memory/agent variants |
-| E8 — Adapter conformance | Thirteen disposable simulator checks (including status-store and oracle outages), code-digest pinning and expiry gate | External adapter conformance/fault-injection/retention campaign |
+| E8 — Adapter conformance | Sixteen disposable simulator checks (including status-store/retention gaps, external version edits and oracle outages), code-digest pinning and expiry gate | External adapter conformance/fault-injection/retention campaign, real provider effect retention evidence |
 
 ## Current demonstrated checks
 
