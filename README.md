@@ -55,7 +55,7 @@ The local token is **not** reviewer authentication or a real multi-tenant securi
 
 ## Verification
 
-Fast unit tests, a native Temporal workflow smoke test, a native PostgreSQL/Temporal end-to-end test and a TypeScript production build run in GitHub Actions on `main` without Docker.
+Fast unit tests, native Temporal smoke and JSON-history replay tests, a native PostgreSQL/Temporal end-to-end test and a TypeScript production build run in GitHub Actions on `main` without Docker.
 
 ```bash
 python -m pytest -q
