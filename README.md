@@ -265,3 +265,9 @@ The operator workbench keeps OIDC access tokens in memory and verifies
 the signed principal using `GET /v1/auth/me` before enabling a session.
 Viewers may refresh incident evidence without acquiring the `operator`
 or `reviewer` role; all mutating controls remain role-gated at the API.
+
+The native PostgreSQL integration suite also races plan revocation
+against the `PREPARED → SENT` effect checkpoint. Exactly one operation
+may win: either the grant is consumed with the receipt in `SENT`,
+or revocation persists and the receipt stays `PREPARED`. The test
+isolates approval locking; separate tests check evidence validity.

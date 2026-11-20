@@ -301,3 +301,105 @@ async def test_parallel_target_reservations_are_epoch_fenced() -> None:
         assert await adapter.observe(tenant, target_id) == (1, False)
     finally:
         await engine.dispose()
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_postgres_approval_revoke_and_dispatch_race_is_serialized(monkeypatch):
+    """Either one effect crosses the boundary or the approval is revoked."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.effects.gateway import EffectConflict, set_state
+    from backend.models import (
+        ApprovalGrant, ApprovalRevocation, EffectReceipt, IncidentPlan,
+    )
+    from backend.plans import PlanConflict, revoke_approval
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    async def valid_simulator_evidence(*_args):
+        # This test isolates the approval lock-order; separate suites verify
+        # evidence fingerprints, target versions and conformance.
+        return True
+
+    monkeypatch.setattr(
+        "backend.plans.current_plan_evidence_is_intact",
+        valid_simulator_evidence,
+    )
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant_id = "approval-race-" + uuid4().hex[:10]
+    plan_id, grant_id, receipt_id = uuid4(), uuid4(), uuid4()
+    digest = "a" * 64
+    try:
+        async with sessions() as session:
+            incident = await admit_incident(
+                session, tenant_id, "one",
+                IncidentCreate(target_id="isolated-simulator"),
+            )
+        async with sessions() as session:
+            async with session.begin():
+                session.add(IncidentPlan(
+                    id=plan_id, tenant_id=tenant_id, incident_id=incident.id,
+                    target_id="isolated-simulator",
+                    action_id="SIMULATOR_MARK_HEALTHY",
+                    plan_digest=digest, expected_version=1,
+                    evidence_ids=[], status="APPROVED", version=2,
+                    decided_by="reviewer-2", review_epoch=get_settings().review_epoch,
+                ))
+                session.add(ApprovalGrant(
+                    id=grant_id, tenant_id=tenant_id, plan_id=plan_id,
+                    plan_digest=digest, reviewer_id="reviewer-2",
+                    scope="SIMULATOR_MARK_HEALTHY", decision="APPROVE",
+                    state="APPROVED", reason="reviewed exact fixture",
+                    version=1,
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=2),
+                ))
+                session.add(EffectReceipt(
+                    id=receipt_id, tenant_id=tenant_id,
+                    incident_id=incident.id, plan_digest=digest,
+                    target_id="isolated-simulator", adapter_id="simulator",
+                    idempotency_key=str(receipt_id), fence=1,
+                    expected_version=1, state="PREPARED", attempt_count=0,
+                ))
+
+        async def dispatch():
+            return await set_state(
+                sessions, receipt_id, "SENT", plan_id=plan_id,
+            )
+
+        async def revoke():
+            async with sessions() as session:
+                return await revoke_approval(
+                    session, tenant_id, grant_id, 1, "reviewer-3",
+                    "revoked just before effect dispatch",
+                )
+
+        outcomes = await asyncio.gather(
+            dispatch(), revoke(), return_exceptions=True,
+        )
+        conflicts = [outcome for outcome in outcomes if isinstance(
+            outcome, (EffectConflict, PlanConflict)
+        )]
+        assert len(conflicts) == 1, outcomes
+        async with sessions() as session:
+            grant = await session.get(ApprovalGrant, grant_id)
+            receipt = await session.get(EffectReceipt, receipt_id)
+            if grant.state == "CONSUMED":
+                assert receipt.state == "SENT" and receipt.attempt_count == 1
+                assert isinstance(outcomes[1], PlanConflict)
+                assert grant.consumed_at is not None
+            else:
+                assert grant.state == "REVOKED"
+                assert receipt.state == "PREPARED" and receipt.attempt_count == 0
+                assert isinstance(outcomes[0], EffectConflict)
+                assert (await session.get(IncidentPlan, plan_id)).status == "REVOKED"
+                audit = await session.scalar(
+                    select(ApprovalRevocation).where(
+                        ApprovalRevocation.approval_id == grant_id
+                    )
+                )
+                assert audit.revoked_by == "reviewer-3"
+    finally:
+        await engine.dispose()
