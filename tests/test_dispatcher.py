@@ -124,3 +124,22 @@ async def test_later_signals_wait_for_oldest_unacknowledged_intent(sessions_fixt
                 datetime.now(timezone.utc)
             )
     assert (await claim_intent(sessions_fixture))[0] == later_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [
+    {"plan_id": str(uuid4()), "approved": "false"},
+    {"plan_id": str(uuid4()), "approved": 1},
+    {"plan_id": "not-a-uuid", "approved": True},
+    {"plan_id": str(uuid4()), "approved": True, "override": "yes"},
+    {"approved": True},
+    None,
+])
+async def test_redteam_poisoned_approval_outbox_cannot_signal_temporal(payload):
+    from backend.workers.dispatcher import deliver_intent
+
+    client = AsyncMock()
+    intent = (1, "tenant", str(uuid4()), "PLAN_DECIDED", payload)
+    with pytest.raises(ValueError):
+        await deliver_intent(client, intent)
+    client.get_workflow_handle.assert_not_called()
