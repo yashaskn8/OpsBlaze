@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from backend.adapters.conformance import execute_suite, simulator_digest
 from backend.models import (
-    AdapterConformanceRun, Incident, SimulatorAppliedEffect, SimulatorTarget,
+    AdapterConformanceRun, Incident, PolicyAssignment, SimulatorAppliedEffect, SimulatorTarget,
 )
 
 
@@ -24,3 +24,4 @@ async def test_adapter_conformance_is_isolated_and_persisted(sessions_fixture):
         assert (await session.scalars(select(SimulatorTarget))).all() == []
         assert (await session.scalars(select(SimulatorAppliedEffect))).all() == []
         assert (await session.scalars(select(Incident))).all() == []
+        assert (await session.scalars(select(PolicyAssignment))).all() == []

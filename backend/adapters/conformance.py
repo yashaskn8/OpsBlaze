@@ -22,7 +22,7 @@ from backend.effects.reservations import reserve_simulator_target
 from backend.models import (
     AdapterConformanceRun, AdmissionUsage, Incident, OutboxEntry,
     ResourceEpoch, ResourceReservation, SimulatorAppliedEffect, SimulatorTarget,
-    UIEvent,
+    UIEvent, PolicyAssignment,
 )
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
@@ -175,6 +175,12 @@ async def execute_suite(
                     )
                 )
                 if incident_id:
+                    await session.execute(
+                        delete(PolicyAssignment).where(
+                            PolicyAssignment.tenant_id == tenant,
+                            PolicyAssignment.incident_id == incident_id,
+                        )
+                    )
                     await session.execute(
                         delete(UIEvent).where(UIEvent.incident_id == incident_id)
                     )
