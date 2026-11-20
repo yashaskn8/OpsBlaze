@@ -170,7 +170,10 @@ async def reconcile_effect(
         except (TimeoutError, ConnectionError):
             # Lookup failure is not proof of non-application. No blind retry.
             if state != "UNKNOWN":
-                await set_state(sessions, effect_id, "UNKNOWN")
+                try:
+                    await set_state(sessions, effect_id, "UNKNOWN")
+                except EffectConflict:
+                    return await reconcile_effect(sessions, adapter, effect_id)
             return "UNKNOWN"
         if observed_version is None:
             if state != "UNKNOWN":
