@@ -26,7 +26,7 @@ async def set_consent(
         incident = await session.scalar(
             select(Incident).where(
                 Incident.tenant_id == tenant_id, Incident.id == incident_id
-            )
+            ).with_for_update()
         )
         if incident is None:
             return None
@@ -90,7 +90,7 @@ async def capture_capsule(
         incident = await session.scalar(
             select(Incident).where(
                 Incident.id == incident_id, Incident.tenant_id == tenant_id
-            )
+            ).with_for_update()
         )
         if incident is None:
             return None

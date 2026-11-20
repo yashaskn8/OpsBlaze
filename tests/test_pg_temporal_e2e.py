@@ -506,3 +506,71 @@ async def test_parallel_outcome_witnesses_and_disputes_serialize_by_incident() -
             ]
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_capture_cannot_remain_eligible_when_outcome_disputed_concurrently():
+    """E1 capture and E2 reversal serialize on the same PostgreSQL parent row."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.experiences import (
+        ConsentConflict, capture_capsule, list_capsules, set_consent,
+    )
+    from backend.models import ExperienceCapsule, OutcomeRevision
+    from backend.outcomes import dispute_outcome
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "capture-race-" + uuid4().hex[:12]
+    try:
+        async with sessions() as session:
+            incident = await admit_incident(
+                session, tenant, "capsule", IncidentCreate(target_id="checkout"),
+            )
+        async with sessions() as session:
+            await set_consent(session, tenant, incident.id, 0, True)
+        async with sessions() as session:
+            async with session.begin():
+                initial = OutcomeRevision(
+                    id=uuid4(), tenant_id=tenant, incident_id=incident.id,
+                    effect_id=None, revision=1, label="VERIFIED",
+                    witness_source="SIMULATOR_WITNESS", observed_version=1,
+                    reason="isolated database concurrency fixture",
+                )
+                session.add(initial)
+
+        async def capture():
+            async with sessions() as session:
+                try:
+                    return await capture_capsule(session, tenant, incident.id)
+                except ConsentConflict:
+                    return None
+
+        async def dispute():
+            async with sessions() as session:
+                return await dispute_outcome(
+                    session, tenant, initial.id, 1,
+                    "independent reviewer disputes the simulated witness",
+                )
+
+        captured, disputed = await asyncio.gather(capture(), dispute())
+        assert disputed.label == "DISPUTED"
+        async with sessions() as session:
+            assert await list_capsules(session, tenant) == []
+            rows = (await session.scalars(
+                select(ExperienceCapsule).where(
+                    ExperienceCapsule.incident_id == incident.id,
+                )
+            )).all()
+            if captured is None:
+                assert rows == []
+            else:
+                assert len(rows) == 1
+                assert rows[0].status == "QUARANTINED"
+    finally:
+        await engine.dispose()
