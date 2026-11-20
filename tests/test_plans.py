@@ -165,3 +165,21 @@ async def test_reviewer_policy_epoch_revocation_blocks_new_effect(proposed_lab, 
         assert (await session.scalars(select(EffectReceipt))).all() == []
         target = await session.get(SimulatorTarget, ("a", "checkout"))
         assert target.healthy is False
+
+
+@pytest.mark.asyncio
+async def test_incident_creator_cannot_approve_own_plan(proposed_lab):
+    sessions, incident_id, plan_id = proposed_lab
+    actor = "oidc:synthetic-subject-identifier"
+    async with sessions() as session:
+        async with session.begin():
+            incident = await session.get(Incident, incident_id)
+            incident.created_by = actor
+    async with sessions() as session:
+        with pytest.raises(PlanConflict, match="creator"):
+            await decide_plan(
+                session, "a", plan_id, 1, "APPROVE", decided_by=actor,
+            )
+    async with sessions() as session:
+        plan = await session.get(IncidentPlan, plan_id)
+        assert plan.status == "PROPOSED" and plan.version == 1
