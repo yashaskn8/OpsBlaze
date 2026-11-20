@@ -32,6 +32,17 @@ async def claim_intent(
 ) -> tuple[int, str, str, str, dict | None] | None:
     now = datetime.now(timezone.utc)
     start = aliased(OutboxEntry)
+    older = aliased(OutboxEntry)
+    earlier_pending = (
+        select(older.id)
+        .where(
+            older.incident_id == OutboxEntry.incident_id,
+            older.id < OutboxEntry.id,
+            older.delivered_at.is_(None),
+        )
+        .correlate(OutboxEntry)
+        .exists()
+    )
     start_delivered = (
         select(start.id)
         .where(
@@ -50,6 +61,9 @@ async def claim_intent(
                 .where(
                     OutboxEntry.delivered_at.is_(None),
                     OutboxEntry.available_at <= now,
+                    # Preserve per-incident signal ordering across parallel
+                    # dispatchers, including lost-ack leases and retries.
+                    ~earlier_pending,
                     # A signal may not overtake the stable workflow start,
                     # even when another dispatcher leases the older row.
                     or_(OutboxEntry.kind == "START_WORKFLOW", start_delivered),

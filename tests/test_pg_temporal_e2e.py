@@ -802,3 +802,72 @@ async def test_failure_review_serializes_with_outcome_dispute():
                 assert stored.origin_code == "EFFECT_UNKNOWN"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_parallel_dispatchers_do_not_reorder_same_incident_signals():
+    """B1: two claimers may handle different incidents but not a later signal."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.models import OutboxEntry
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+    from backend.workers.dispatcher import claim_intent
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "ordered-outbox-" + uuid4().hex[:12]
+    try:
+        async with sessions() as session:
+            first = await admit_incident(
+                session, tenant, "one", IncidentCreate(target_id="checkout"),
+            )
+        async with sessions() as session:
+            second = await admit_incident(
+                session, tenant, "two", IncidentCreate(target_id="checkout"),
+            )
+        async with sessions() as session:
+            async with session.begin():
+                starts = (await session.scalars(
+                    select(OutboxEntry).where(
+                        OutboxEntry.incident_id.in_([first.id, second.id])
+                    )
+                )).all()
+                for row in starts:
+                    row.delivered_at = datetime.now(timezone.utc)
+                first_signal = OutboxEntry(
+                    incident_id=first.id, kind="ACKNOWLEDGE_REVIEW",
+                )
+                session.add(first_signal)
+                await session.flush()
+                second_signal = OutboxEntry(
+                    incident_id=first.id, kind="CANCEL_WORKFLOW",
+                )
+                other_signal = OutboxEntry(
+                    incident_id=second.id, kind="CANCEL_WORKFLOW",
+                )
+                session.add_all([second_signal, other_signal])
+                await session.flush()
+                first_id, second_id, other_id = (
+                    first_signal.id, second_signal.id, other_signal.id,
+                )
+
+        claimed = await asyncio.gather(
+            claim_intent(sessions), claim_intent(sessions),
+        )
+        assert {item[0] for item in claimed if item} == {first_id, other_id}
+        assert second_id not in [item[0] for item in claimed if item]
+        assert await claim_intent(sessions) is None
+
+        async with sessions() as session:
+            async with session.begin():
+                (await session.get(OutboxEntry, first_id)).delivered_at = (
+                    datetime.now(timezone.utc)
+                )
+        new_claim = await claim_intent(sessions)
+        assert new_claim is not None and new_claim[0] == second_id
+    finally:
+        await engine.dispose()

@@ -63,3 +63,64 @@ async def test_cancel_signal_cannot_overtake_unacknowledged_start(sessions_fixtu
 
     claimed = await claim_intent(sessions_fixture)
     assert claimed is not None and claimed[3] == "CANCEL_WORKFLOW"
+
+
+@pytest.mark.asyncio
+async def test_later_signals_wait_for_oldest_unacknowledged_intent(sessions_fixture):
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    async with sessions_fixture() as session:
+        first = await admit_incident(
+            session, "tenant-a", "a", IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        second = await admit_incident(
+            session, "tenant-b", "b", IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        async with session.begin():
+            starts = (await session.scalars(
+                select(OutboxEntry).where(OutboxEntry.kind == "START_WORKFLOW")
+            )).all()
+            for row in starts:
+                row.delivered_at = datetime.now(timezone.utc)
+            oldest = OutboxEntry(
+                incident_id=first.id, kind="ACKNOWLEDGE_REVIEW",
+                available_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+            )
+            session.add(oldest)
+            await session.flush()
+            later = OutboxEntry(
+                incident_id=first.id, kind="CANCEL_WORKFLOW",
+            )
+            other = OutboxEntry(
+                incident_id=second.id, kind="CANCEL_WORKFLOW",
+            )
+            session.add_all([later, other])
+            await session.flush()
+            oldest_id, later_id, other_id = oldest.id, later.id, other.id
+
+    claimed = await claim_intent(sessions_fixture)
+    assert claimed is not None and claimed[0] == other_id
+    # The earlier signal is backed off; the later one must not leapfrog it.
+    assert await claim_intent(sessions_fixture) is None
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            (await session.get(OutboxEntry, oldest_id)).available_at = (
+                datetime.now(timezone.utc) - timedelta(seconds=1)
+            )
+            (await session.get(OutboxEntry, other_id)).delivered_at = (
+                datetime.now(timezone.utc)
+            )
+
+    assert (await claim_intent(sessions_fixture))[0] == oldest_id
+    assert await claim_intent(sessions_fixture) is None
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            (await session.get(OutboxEntry, oldest_id)).delivered_at = (
+                datetime.now(timezone.utc)
+            )
+    assert (await claim_intent(sessions_fixture))[0] == later_id
