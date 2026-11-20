@@ -241,6 +241,20 @@ async def test_shadow_http_tenant_permissions_and_live_gate_remain_closed(
             assert incumbent.json()["bundle_id"] is None
             assert incumbent.json()["rollout_id"] is None
 
+            # Adversarial prediction of another tenant's or invented ID
+            # must not reveal the cohort result for a foreign incident.
+            preview = f"/v1/rollouts/{rollout.id}/preview"
+            assert (await client.get(
+                preview,
+                params={"incident_id": str(incident.id)},
+                headers=headers,
+            )).status_code == 200
+            assert (await client.get(
+                preview,
+                params={"incident_id": str(uuid4())},
+                headers=headers,
+            )).status_code == 404
+
             wrong = {
                 "X-Tenant-Id": "unrelated", "X-OpsBlaze-Token": "test-operator",
             }
