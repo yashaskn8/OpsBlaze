@@ -396,7 +396,7 @@ human release authority and real canary fail-safe evidence exist.
 
 ## Expanded E8 adapter conformance
 
-The development-only conformance suite now requires sixteen scenarios,
+The development-only conformance suite now requires seventeen scenarios,
 including missing effect-status retention, status recovery, and external
 target-version changes. It pins the current simulator source digest and suite
 version. A green `LAB_PASS` applies **only** to the disposable simulator:
