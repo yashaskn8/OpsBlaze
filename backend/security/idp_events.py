@@ -17,7 +17,7 @@ from backend import auth
 from backend.settings import Settings
 
 EVENT_TYPE = "IDENTITY_ACCESS_REVOKED"
-JTI_PATTERN = re.compile(r"[A-Za-z0-9_-]{16,128}\\Z")
+JTI_PATTERN = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
 
 
 @dataclass(frozen=True)
