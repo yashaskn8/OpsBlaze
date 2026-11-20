@@ -1,8 +1,5 @@
-"""Browser-only OIDC authorization-code/PKCE session.
-
-The identity provider validates the user's login. OpsBlaze validates the
-resulting access token again on every API request. No password flow.
-"""
+/* Browser-only authorization-code/PKCE session.
+   API validates the signed access token again on every request. */
 import { UserManager, WebStorageStateStore } from "oidc-client-ts";
 
 const authority = import.meta.env.VITE_OIDC_AUTHORITY?.trim();
