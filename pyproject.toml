@@ -32,3 +32,5 @@ include = ["backend*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = ["integration: requires the native local Temporal test server"]
+addopts = "-m not\\ integration"
