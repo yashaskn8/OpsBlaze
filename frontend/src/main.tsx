@@ -360,10 +360,12 @@ function App() {
     async function recordEvents(incoming: UIEvent[]) {
       const unseen = incoming.filter(event => event.id > cursor);
       if (unseen.length === 0 || controller.signal.aborted) return;
+      // An event cannot advance the cursor until its authoritative snapshot
+      // has been fetched; failed fetches must be retried on reconnect.
+      await refreshSnapshot();
+      if (controller.signal.aborted) return;
       cursor = unseen[unseen.length - 1].id;
       setEvents(previous => [...previous, ...unseen].slice(-20));
-      // Event payloads never authorize controls; always fetch current truth.
-      await refreshSnapshot();
     }
 
     async function resyncAfterGap(response: Response): Promise<boolean> {
@@ -374,10 +376,11 @@ function App() {
       if (!Number.isSafeInteger(minimum) || minimum === undefined || minimum < 0) {
         throw new Error("invalid event retention watermark");
       }
-      cursor = Math.max(cursor, minimum);
-      setEvents([]);
       setConnection("SYNCING");
       await refreshSnapshot();
+      if (controller.signal.aborted) return true;
+      cursor = Math.max(cursor, minimum);
+      setEvents([]);
       return true;
     }
 
@@ -389,9 +392,13 @@ function App() {
       const body: unknown = await response.json();
       if (!response.ok) throw new Error(detail(body));
       const page = body as UIEventPage;
+      const hasNewEvents = page.events.some(event => event.id > cursor);
       await recordEvents(page.events);
+      // An empty event page does not prove the cached incident is current.
+      if (!hasNewEvents) await refreshSnapshot();
+      if (controller.signal.aborted) return;
       cursor = Math.max(cursor, page.last_id);
-      if (!controller.signal.aborted) setConnection("LIVE");
+      setConnection("LIVE");
     }
 
     async function subscribe() {
@@ -403,6 +410,9 @@ function App() {
           });
           if (await resyncAfterGap(response)) continue;
           if (!response.ok || !response.body) throw new Error("stream unavailable");
+          setConnection("SYNCING");
+          await refreshSnapshot();
+          if (controller.signal.aborted) break;
           setConnection("LIVE");
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
@@ -422,10 +432,11 @@ function App() {
                 if (!Number.isSafeInteger(gap.min_after_id) || gap.min_after_id < 0) {
                   throw new Error("invalid gap notification");
                 }
-                cursor = Math.max(cursor, gap.min_after_id);
-                setEvents([]);
                 setConnection("SYNCING");
                 await refreshSnapshot();
+                if (controller.signal.aborted) return;
+                cursor = Math.max(cursor, gap.min_after_id);
+                setEvents([]);
               } else if (data) {
                 const event = JSON.parse(data.slice(6)) as UIEvent;
                 if (Number.isSafeInteger(event.id) && event.id > cursor) {
@@ -448,7 +459,10 @@ function App() {
           }
         }
         if (!controller.signal.aborted) {
-          await new Promise(resolve => window.setTimeout(resolve, 2000));
+          // Jitter prevents multiple operator tabs reconnecting in lockstep.
+          await new Promise(resolve => window.setTimeout(
+            resolve, 1500 + Math.floor(Math.random() * 1500),
+          ));
         }
       }
     }
