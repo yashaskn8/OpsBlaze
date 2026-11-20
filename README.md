@@ -287,3 +287,17 @@ durable-event timeline, and four-second event polling that refetches the
 authoritative versioned snapshot after changes. Controls are disabled if
 the last event poll failed or has not synchronized. The API remains the
 source of authorization; the UI never trusts event notifications as approval.
+
+## S1 time-sealed paired simulator replay
+
+POST /v1/experiments accepts one of three bounded laboratory fixtures
+and a deterministic seed. It persists two isolated simulator arms:
+RUNBOOK and ADAPTIVE_BASELINE, with identical initial state,
+allowlisted probes, the same two-call budget and virtual-time evidence
+release. The independent oracle checks target state rather than trusting
+an effect acknowledgment. GET /v1/experiments/{id}/results returns
+the per-arm traces, virtual time and oracle outcomes.
+
+This is an isolated **deterministic baseline**, not a real LLM run,
+statistically powered paired trial, hidden-label evaluation, or external
+service workload. There is no Docker and no connection to live targets.

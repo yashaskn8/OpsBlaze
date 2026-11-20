@@ -527,3 +527,40 @@ class UIEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ReplayExperiment(Base):
+    __tablename__ = "replay_experiment"
+    __table_args__ = (
+        Index("ix_replay_tenant_created", "tenant_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    fixture_id: Mapped[str] = mapped_column(String(48), nullable=False)
+    fixture_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    seed: Mapped[int] = mapped_column(Integer, nullable=False)
+    budget: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ReplayArm(Base):
+    __tablename__ = "replay_arm"
+    __table_args__ = (
+        UniqueConstraint("experiment_id", "kind", name="uq_replay_arm"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    experiment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("replay_experiment.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    namespace: Mapped[str] = mapped_column(String(128), nullable=False)
+    virtual_time: Mapped[int] = mapped_column(Integer, nullable=False)
+    outcome: Mapped[str] = mapped_column(String(24), nullable=False)
+    probe_cost: Mapped[int] = mapped_column(Integer, nullable=False)
+    oracle_passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    trace: Mapped[list[dict]] = mapped_column(JSON, nullable=False)

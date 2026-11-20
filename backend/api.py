@@ -943,3 +943,38 @@ async def incident_ui_events(
         ],
         "last_id": rows[-1].id if rows else after_id,
     }
+
+
+class ExperimentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    fixture_id: Literal[
+        "recoverable-v1", "false-ack-v1", "already-healthy-v1"
+    ]
+    seed: int = Field(ge=0, le=1_000_000)
+
+
+@app.post("/v1/experiments", status_code=201)
+async def create_replay_experiment(
+    payload: ExperimentRequest,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.experiments.replay import create_pair
+
+    experiment = await create_pair(session, tenant_id, payload.fixture_id, payload.seed)
+    return {"id": str(experiment.id), "status": experiment.status,
+            "fixture_digest": experiment.fixture_digest}
+
+
+@app.get("/v1/experiments/{experiment_id}/results")
+async def replay_experiment_results(
+    experiment_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.experiments.replay import pair_report
+
+    result = await pair_report(session, tenant_id, experiment_id)
+    if result is None:
+        raise HTTPException(404, "experiment not found")
+    return result
