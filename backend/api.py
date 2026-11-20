@@ -422,3 +422,154 @@ async def tenant_experiences(
          "expires_at": row.expires_at.isoformat()}
         for row in rows
     ]
+
+
+class ImprovementDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_cluster_id: UUID
+    kind: Literal["PROBE_ORDER", "CONTEXT_LIMIT", "ROUTE_SWITCH"]
+    base_policy_id: str = Field(min_length=1, max_length=64)
+    change_spec: dict
+    hypothesis: str = Field(min_length=8, max_length=512)
+    risk: Literal["LOW", "MEDIUM", "HIGH"]
+    evaluation_manifest_id: str = Field(min_length=1, max_length=64)
+
+
+@app.post("/v1/failures/classify/{outcome_id}", status_code=201)
+async def classify_failure(
+    outcome_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.learning.failures import FailureConflict, record_case
+
+    try:
+        case = await record_case(session, tenant_id, outcome_id)
+    except FailureConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if case is None:
+        raise HTTPException(404, "outcome not found")
+    return {
+        "id": str(case.id), "cluster_id": str(case.cluster_id),
+        "origin_code": case.origin_code, "review_status": case.review_status,
+        "classification_version": case.classification_version,
+    }
+
+
+@app.get("/v1/failures")
+async def list_failure_cases(
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    from sqlalchemy import select
+    from backend.models import FailureCase
+
+    cases = (await session.scalars(
+        select(FailureCase).where(FailureCase.tenant_id == tenant_id)
+        .order_by(FailureCase.created_at.desc(), FailureCase.id)
+        .limit(50)
+    )).all()
+    return [
+        {"id": str(case.id), "incident_id": str(case.incident_id),
+         "outcome_revision_id": str(case.outcome_revision_id),
+         "cluster_id": str(case.cluster_id), "origin_code": case.origin_code,
+         "review_status": case.review_status,
+         "classification_version": case.classification_version}
+        for case in cases
+    ]
+
+
+@app.get("/v1/failure-clusters/{cluster_id}")
+async def failure_cluster_view(
+    cluster_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from sqlalchemy import select
+    from backend.models import FailureCase, FailureCluster
+
+    cluster = await session.scalar(
+        select(FailureCluster).where(
+            FailureCluster.id == cluster_id, FailureCluster.tenant_id == tenant_id
+        )
+    )
+    if cluster is None:
+        raise HTTPException(404, "cluster not found")
+    cases = (await session.scalars(
+        select(FailureCase).where(
+            FailureCase.cluster_id == cluster.id,
+            FailureCase.tenant_id == tenant_id,
+        ).order_by(FailureCase.created_at).limit(50)
+    )).all()
+    return {"id": str(cluster.id), "signature": cluster.signature,
+            "version": cluster.version, "case_count": cluster.case_count,
+            "quarantined": cluster.quarantined,
+            "source_incidents": [str(case.incident_id) for case in cases]}
+
+
+@app.post("/v1/improvements/draft", status_code=201)
+async def create_improvement_draft(
+    payload: ImprovementDraft,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.learning.failures import FailureConflict, draft_candidate
+
+    try:
+        row = await draft_candidate(
+            session, tenant_id, payload.source_cluster_id, payload.kind,
+            payload.base_policy_id, payload.change_spec,
+            payload.hypothesis, payload.risk, payload.evaluation_manifest_id,
+        )
+    except FailureConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"id": str(row.id), "state": row.state,
+            "version": row.version, "kind": row.kind}
+
+
+@app.post("/v1/improvements/{candidate_id}/submit", status_code=202)
+async def submit_improvement(
+    candidate_id: UUID,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.learning.failures import FailureConflict, submit_candidate
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be the candidate version")
+    try:
+        candidate = await submit_candidate(
+            session, tenant_id, candidate_id, int(version)
+        )
+    except FailureConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if candidate is None:
+        raise HTTPException(404, "candidate not found")
+    return {"id": str(candidate.id), "state": candidate.state,
+            "version": candidate.version}
+
+
+@app.get("/v1/improvements")
+async def list_improvements(
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    from sqlalchemy import select
+    from backend.models import ImprovementCandidate
+
+    rows = (await session.scalars(
+        select(ImprovementCandidate)
+        .where(ImprovementCandidate.tenant_id == tenant_id)
+        .order_by(ImprovementCandidate.created_at.desc())
+        .limit(50)
+    )).all()
+    return [
+        {"id": str(row.id), "source_cluster_id": str(row.source_cluster_id),
+         "kind": row.kind, "base_policy_id": row.base_policy_id,
+         "change_spec": row.change_spec, "hypothesis": row.hypothesis,
+         "risk": row.risk, "state": row.state, "version": row.version,
+         "evaluation_manifest_id": row.evaluation_manifest_id}
+        for row in rows
+    ]

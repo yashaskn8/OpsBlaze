@@ -279,3 +279,65 @@ class ExperienceCapsule(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FailureCluster(Base):
+    __tablename__ = "failure_cluster"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "signature", "version", name="uq_failure_cluster_signature"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    signature: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    case_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    quarantined: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class FailureCase(Base):
+    __tablename__ = "failure_case"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "outcome_revision_id", name="uq_failure_outcome"),
+        Index("ix_failure_tenant_origin", "tenant_id", "origin_code", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False)
+    outcome_revision_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("outcome_revision.id"), nullable=False
+    )
+    cluster_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("failure_cluster.id"), nullable=False)
+    origin_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    first_bad_step: Mapped[int | None] = mapped_column(Integer)
+    classification_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    review_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ImprovementCandidate(Base):
+    __tablename__ = "improvement_candidate"
+    __table_args__ = (
+        Index("ix_improvement_state", "tenant_id", "state", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_cluster_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("failure_cluster.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    base_policy_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    change_spec: Mapped[dict] = mapped_column(JSON, nullable=False)
+    hypothesis: Mapped[str] = mapped_column(String(512), nullable=False)
+    risk: Mapped[str] = mapped_column(String(16), nullable=False)
+    evaluation_manifest_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="DRAFT")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[str] = mapped_column(String(32), nullable=False, default="local_operator")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

@@ -177,3 +177,17 @@ GET /v1/experiences checks current consent and expiry at read time.
 
 This is a laboratory privacy baseline; a production system needs reviewed
 classification, retention, cross-store revocation propagation and a consent UI.
+
+## E3 failure classification and improvement queue
+
+The E3 baseline classifies E2 outcome revisions using typed facts (not a
+model-authored postmortem). Disputed outcomes remain UNCERTAIN and cannot
+seed an evaluation-ready candidate without a reviewed classification.
+Failure signatures are tenant-scoped. Improvement drafts accept only fixed
+safe change classes: read-only simulator probe order, bounded context limit,
+or deterministic routing; SQL, arbitrary code, and permission expansion are
+rejected. Submission uses a version check and never deploys the change.
+
+The draft and submit endpoints currently use a development-only token;
+production reviewer identity and auditable classification corrections are
+not implemented. E5 offline evaluations must be built before rollout.
