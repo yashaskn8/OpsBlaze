@@ -747,3 +747,16 @@ class RevokedIdentity(Base):
     )
     revoked_by: Mapped[str] = mapped_column(String(48), nullable=False)
     reason: Mapped[str] = mapped_column(String(256), nullable=False)
+
+
+class IdentityProviderEvent(Base):
+    """IdP signed-event replay ledger; stores no raw subject or token."""
+
+    __tablename__ = "identity_provider_event"
+
+    event_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(48), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
