@@ -115,3 +115,10 @@ and idempotent retries do not consume another slot. The global lock is
 a simple lab baseline; measure contention before expanding worker
 capacity. Expired/abandoned work requires B1 recovery or operator review,
 not silent capacity forgiveness.
+
+Run `python -m backend.workers.retention` as a one-shot maintenance
+command to scrub at most 500 expired E1 capsules per invocation. It removes
+their target digests and evidence references and revokes linked lessons in
+the same transaction. Repeated runs are idempotent and leave minimal audit
+IDs; no raw incident logs are added. Production retention scheduling and
+backup/restore purge verification remain separate operational gates.

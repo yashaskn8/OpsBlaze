@@ -16,7 +16,7 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 | P2 — Approval boundary | Exact-plan digest and version-bound local decision, revalidation before simulator effects | Real authenticated separate approver role and two-person policy |
 | P3 — Forensic graph | Evidence→hypothesis→plan→effect→outcome lineage, explicitly missing refs | Comprehensive OpenTelemetry span linking and performance checks |
 | S1 — Paired replay | Isolated, time-sealed deterministic twin fixtures with an independent postcondition | Actual paired model-vs-runbook controlled trial, statistical inference |
-| E1 — Experience capture | Consent-scoped metadata capsules with revocation/TTL and read-time outcome-revision checks | Cross-store deletion and approved classification/retention controls |
+| E1 — Experience capture | Consent-scoped capsules with revocation, one-shot expiry scrubbing, and read-time outcome checks | Cross-store deletion and approved classification/retention controls |
 | E2 — Outcome adjudication | Separate simulator witness, append-only outcomes and disputes | Independent real-world recovery oracle and delayed outcome reconciliation |
 | E3 — Failure learning | Fact-backed taxonomy, reviewer corrections, allowlisted change candidates | Independent reviewers, causal attribution beyond typed simulator facts |
 | E4 — Validated memory | Typed lesson drafts, source/consent checks, validation/revoke | Release gate for activation, measured retrieval effect and revocation propagation |
