@@ -219,3 +219,29 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+async def current_simulator_is_conformant(
+    session: AsyncSession,
+) -> bool:
+    """Check current local code digest and recent passing test evidence."""
+    from backend.adapters.simulator import utc
+
+    run = await session.scalar(
+        select(AdapterConformanceRun)
+        .where(AdapterConformanceRun.adapter_id == "simulator-v1")
+        .order_by(AdapterConformanceRun.created_at.desc(), AdapterConformanceRun.id)
+        .limit(1)
+    )
+    if run is None:
+        return False
+    age = datetime.now(timezone.utc) - utc(run.created_at)
+    return (
+        run.state == "LAB_PASS"
+        and run.code_digest == simulator_digest()
+        and run.suite_version == SUITE_VERSION
+        and run.retention_seconds >= RETENTION_SECONDS
+        and timedelta(0) <= age <= timedelta(days=7)
+        and all(item.get("passed") is True for item in run.results)
+        and len(run.results) >= 8
+    )

@@ -3,6 +3,7 @@ import pytest
 from sqlalchemy import select, update
 
 from backend.investigator.baseline import inspect
+from backend.adapters.conformance import execute_suite
 from backend.models import Incident, IncidentPlan, OutboxEntry, ResourceEpoch, SimulatorTarget
 from backend.plans import PlanConflict, decide_plan, execute_approved_simulator_plan
 from backend.schemas import IncidentCreate
@@ -39,6 +40,8 @@ async def test_approval_is_version_bound_and_simulator_only(proposed_lab):
     async with sessions() as session:
         plan = await decide_plan(session, "a", plan_id, 1, "APPROVE")
         assert plan.status == "APPROVED"
+    assert await execute_approved_simulator_plan(sessions, "a", incident_id, plan_id) == "NEEDS_REVIEW"
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
     assert await execute_approved_simulator_plan(sessions, "a", incident_id, plan_id) == "VERIFIED"
     assert await execute_approved_simulator_plan(sessions, "a", incident_id, plan_id) == "VERIFIED"
     async with sessions() as session:

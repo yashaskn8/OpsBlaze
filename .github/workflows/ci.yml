@@ -58,6 +58,6 @@ jobs:
           sudo -u postgres createdb -O opsblaze opsblaze
       - run: python -m pip install -e ".[dev]"
       - run: alembic upgrade head
-      - run: python -m pytest -q -o addopts= -m pg_e2e
       - run: python -m backend.adapters.conformance
+      - run: python -m pytest -q -o addopts= -m pg_e2e
       - run: alembic downgrade base

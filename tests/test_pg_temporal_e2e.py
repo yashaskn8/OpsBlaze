@@ -10,6 +10,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from backend.api import app
+from backend.adapters.conformance import execute_suite
 from backend.database import get_session_maker
 from backend.settings import get_settings
 from backend.workers.dispatcher import dispatch_once
@@ -31,6 +32,7 @@ async def test_postgres_temporal_simulator_recovery() -> None:
     assert settings.database_url.startswith("postgresql+asyncpg:")
     await seed("demo", "checkout")
     sessions = get_session_maker()
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
 
     async with await WorkflowEnvironment.start_local() as env:
         async with Worker(

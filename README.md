@@ -340,3 +340,15 @@ typed signature cluster and quarantines proposals/evaluations from the
 previous signature. It cannot invent a root cause from persuasive text.
 Real reviewer identities and independent review policy remain required
 before production use.
+
+## Simulator conformance execution gate
+
+Before starting a new approved simulator effect, the action gateway now
+requires a passing conformance report for the **currently installed simulator
+code digest**, from the current suite version, within seven days. On missing,
+stale, failed or mismatched evidence it returns NEEDS_REVIEW without
+applying a new effect. Existing receipt reconciliation remains available
+even if a previously approved adapter version becomes disabled.
+Run `python -m backend.adapters.conformance` after changing simulator
+code and before using the local approval flow. This is a laboratory
+safety gate, not external production certification.

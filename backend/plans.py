@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import SimulatorAdapter
+from backend.adapters.conformance import current_simulator_is_conformant
 from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
 from backend.models import EffectReceipt, Incident, IncidentPlan, OutboxEntry, SimulatorTarget, UIEvent
@@ -148,6 +149,9 @@ async def execute_approved_simulator_plan(
     if existing is not None:
         state = await reconcile_effect(sessions, adapter, existing.id)
         return (await adjudicate_simulator(sessions, adapter, tenant_id, incident_id, existing.id)) if state == "VERIFIED" else state
+    async with sessions() as session:
+        if not await current_simulator_is_conformant(session):
+            return "NEEDS_REVIEW"
     try:
         permit = await reserve_simulator_target(
             sessions, tenant_id, target_id, incident_id, digest
