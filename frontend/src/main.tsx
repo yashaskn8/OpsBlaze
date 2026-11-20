@@ -1,10 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
-import {
-  currentAccessToken, endLocalSession, finishLoginCallback,
-  oidcManager, productionIdentityMode, startLogin,
-} from "./auth";
 import { authManager, oidcConfigError, usingOidc } from "./auth";
 
 type AuthIdentity = {
@@ -103,11 +99,6 @@ function App() {
   const [tenant, setTenant] = useState("demo");
   const [token, setToken] = useState("");
   const [reviewToken, setReviewToken] = useState("");
-  const [accessToken, setAccessToken] = useState("");
-  const [loginBusy, setLoginBusy] = useState(false);
-  const [loginError, setLoginError] = useState("");
-  const authenticated = productionIdentityMode ? Boolean(accessToken) : Boolean(token);
-  const canReview = productionIdentityMode ? authenticated : Boolean(reviewToken);
   const [accessToken, setAccessToken] = useState("");
   const [identity, setIdentity] = useState<AuthIdentity | null>(null);
   const [signInError, setSignInError] = useState("");
@@ -268,7 +259,9 @@ function App() {
   }
 
   async function refresh() {
-    if (!incident || !canOperate) return;
+    // Viewer and reviewer roles may inspect authoritative evidence.
+    // Only the API grants mutation rights; this is read-only.
+    if (!incident || !authenticated) return;
     setBusy(true);
     setError("");
     try {
@@ -465,7 +458,7 @@ function App() {
   }, [incident?.id, tenant, token, accessToken, identity?.actor_id]);
 
   async function decide(action: "cancel" | "acknowledge") {
-    if (!incident || !authenticated) return;
+    if (!incident) return;
     setBusy(true);
     setError("");
     try {

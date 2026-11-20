@@ -261,25 +261,7 @@ The frontend now commits the runner-resolved npm v3 lockfile. CI uses
 `frontend/package-lock.json` matches `frontend/package.json`.
 Local installs can use `npm ci` for the same dependency tree.
 
-## Browser OIDC PKCE login
-
-The React workbench supports two explicit modes. Without browser OIDC
-variables it uses local development tokens. With both
-`VITE_OIDC_AUTHORITY` and `VITE_OIDC_CLIENT_ID` configured at build
-time, it uses a public browser OIDC client with authorization-code/PKCE
-redirects and no password or embedded client secret. Optionally set
-`VITE_OIDC_SCOPE` to the provider's dedicated API-access scope.
-Register the exact browser redirect URI `https://your-origin/auth/callback`
-at the identity provider. Serve the SPA and API behind the same HTTPS
-origin, with the SPA fallback routing the callback path to its index.
-
-The browser stores the OIDC session in sessionStorage (same tab), does
-not silently renew tokens, and clears its local session on sign-out.
-API calls carry an Authorization bearer token and **do not** trust a
-user-entered tenant header. Reviewer decisions send the same bearer
-token and require the server's distinct reviewer role. The backend
-must be configured with the same provider issuer, audience and JWKS URL,
-and the provider must issue signed API **access tokens** with the
-server-required tenant/role claims. An ID token is not an API access token.
-Provider-specific login/logout, key rotation, CORS, PKCE code exchange
-and real HTTPS deployment need separate integration tests.
+The operator workbench keeps OIDC access tokens in memory and verifies
+the signed principal using `GET /v1/auth/me` before enabling a session.
+Viewers may refresh incident evidence without acquiring the `operator`
+or `reviewer` role; all mutating controls remain role-gated at the API.
