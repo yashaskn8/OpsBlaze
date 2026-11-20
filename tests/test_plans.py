@@ -4,7 +4,7 @@ from sqlalchemy import select, update
 
 from backend.investigator.baseline import inspect
 from backend.adapters.conformance import execute_suite
-from backend.models import EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, ResourceEpoch, SimulatorTarget
+from backend.models import EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, ProbeCall, ResourceEpoch, SimulatorTarget
 from backend.plans import PlanConflict, decide_plan, execute_approved_simulator_plan
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
@@ -298,3 +298,33 @@ async def test_oidc_reviewer_rejects_legacy_incident_without_creator(proposed_la
     async with sessions() as session:
         plan = await session.get(IncidentPlan, plan_id)
         assert plan.status == "PROPOSED"
+
+
+@pytest.mark.asyncio
+async def test_approved_plan_rechecks_original_probe_evidence_links(proposed_lab):
+    from uuid import UUID
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        plan = await decide_plan(session, "a", plan_id, 1, "APPROVE")
+        second_evidence = UUID(plan.evidence_ids[1])
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+
+    async with sessions() as session:
+        async with session.begin():
+            first_probe = await session.scalar(
+                select(ProbeCall).where(
+                    ProbeCall.incident_id == incident_id,
+                    ProbeCall.step_no == 1,
+                )
+            )
+            first_probe.evidence_id = second_evidence
+
+    assert (
+        await execute_approved_simulator_plan(sessions, "a", incident_id, plan_id)
+        == "NEEDS_REVIEW"
+    )
+    async with sessions() as session:
+        assert (await session.scalars(select(EffectReceipt))).all() == []
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert not target.healthy and target.version == 3
