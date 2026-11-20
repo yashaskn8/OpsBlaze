@@ -71,7 +71,7 @@ async def test_two_dispatchers_then_worker_handoff_preserves_one_effect():
             raise AssertionError(f"incident did not reach {expected}: {state}")
 
         async with await WorkflowEnvironment.start_local() as env:
-            queue = "failover-" + uuid4().hex
+            queue = settings.temporal_task_queue
             config = dict(
                 client=env.client, task_queue=queue,
                 workflows=[IncidentWorkflow],
@@ -126,7 +126,7 @@ async def test_two_dispatchers_then_worker_handoff_preserves_one_effect():
             assert receipts[0].attempt_count == 1
             assert await session.scalar(
                 select(func.count()).select_from(SimulatorAppliedEffect).where(
-                    SimulatorAppliedEffect.effect_id == receipts[0].id,
+                    SimulatorAppliedEffect.id == receipts[0].id,
                 )
             ) == 1
             outbox = (await session.scalars(
