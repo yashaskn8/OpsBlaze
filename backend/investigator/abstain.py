@@ -13,6 +13,7 @@ from backend.adapters.simulator import utc
 from backend.models import (
     DecisionAssessment, Evidence, Incident, ProbeCall, SimulatorTarget,
 )
+from backend.probes.gateway import evidence_links_intact
 from backend.settings import get_settings
 
 FEATURE_VERSION = "simulator-evidence-v1"
@@ -92,10 +93,16 @@ async def assess_decision(
                         ):
                             reason = "HASH_MISMATCH"
                         elif any(
-                            utc(row.observed_at) < datetime.now(timezone.utc) - timedelta(minutes=5)
+                            not timedelta(0)
+                            <= datetime.now(timezone.utc) - utc(row.observed_at)
+                            <= timedelta(minutes=5)
                             for row in evidence
                         ):
                             reason = "STALE_EVIDENCE"
+                        elif not await evidence_links_intact(
+                            session, incident_id, refs
+                        ):
+                            reason = "UNLINKED_EVIDENCE"
                         else:
                             target = await session.get(
                                 SimulatorTarget, (tenant_id, incident.target_id)
@@ -107,6 +114,18 @@ async def assess_decision(
                                 or any(row.target_id != incident.target_id for row in evidence)
                             ):
                                 reason = "VERSION_CHANGED"
+                            else:
+                                observations = {
+                                    row.source: row.redacted_excerpt for row in evidence
+                                }
+                                if (
+                                    observations["simulator.health"] != '{"healthy":false}'
+                                    or observations["simulator.version"] != json.dumps(
+                                        {"version": target.version},
+                                        sort_keys=True, separators=(",", ":"),
+                                    )
+                                ):
+                                    reason = "INVALID_OBSERVATION"
 
             assessment = DecisionAssessment(
                 id=uuid4(), tenant_id=tenant_id, incident_id=incident_id,
