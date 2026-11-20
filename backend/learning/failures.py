@@ -44,6 +44,18 @@ async def record_case(
         )
         if outcome is None:
             return None
+        # E2 disputes lock this same parent before appending or invalidating.
+        # Classification must not create a trusted case after invalidation.
+        current_incident = await session.scalar(
+            select(Incident.id)
+            .where(
+                Incident.id == outcome.incident_id,
+                Incident.tenant_id == tenant_id,
+            )
+            .with_for_update()
+        )
+        if current_incident is None:
+            raise FailureConflict("incident missing")
         newest = await session.scalar(
             select(OutcomeRevision.id)
             .where(

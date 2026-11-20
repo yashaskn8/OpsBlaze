@@ -656,3 +656,68 @@ async def test_security_revocation_serializes_with_new_reviewer_grant(monkeypatc
             assert state.status != "APPROVED"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_failure_case_not_trusted_after_concurrent_outcome_dispute():
+    """E3 case creation cannot outrun E2 invalidation without quarantine."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.learning.failures import FailureConflict, record_case
+    from backend.models import FailureCase, FailureCluster, OutcomeRevision
+    from backend.outcomes import dispute_outcome
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "failure-race-" + uuid4().hex[:12]
+    try:
+        async with sessions() as session:
+            incident = await admit_incident(
+                session, tenant, "case", IncidentCreate(target_id="checkout"),
+            )
+        initial_id = uuid4()
+        async with sessions() as session:
+            async with session.begin():
+                session.add(OutcomeRevision(
+                    id=initial_id, tenant_id=tenant, incident_id=incident.id,
+                    effect_id=None, revision=1, label="DISPUTED",
+                    witness_source="SIMULATOR_WITNESS", observed_version=None,
+                    reason="uncertain isolated simulator observation",
+                ))
+
+        async def classify_case():
+            async with sessions() as session:
+                try:
+                    return await record_case(session, tenant, initial_id)
+                except FailureConflict:
+                    return None
+
+        async def dispute_case():
+            async with sessions() as session:
+                return await dispute_outcome(
+                    session, tenant, initial_id, 1,
+                    "reviewer confirmed source evidence was superseded",
+                )
+
+        classified, disputed = await asyncio.gather(
+            classify_case(), dispute_case(),
+        )
+        assert disputed.revision == 2
+        async with sessions() as session:
+            cases = (await session.scalars(
+                select(FailureCase).where(FailureCase.incident_id == incident.id)
+            )).all()
+            if classified is None:
+                assert cases == []
+            else:
+                assert len(cases) == 1
+                assert cases[0].review_status == "STALE"
+                cluster = await session.get(FailureCluster, cases[0].cluster_id)
+                assert cluster.quarantined
+    finally:
+        await engine.dispose()
