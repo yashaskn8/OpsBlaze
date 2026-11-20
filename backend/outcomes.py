@@ -42,6 +42,21 @@ async def adjudicate_simulator(
         )
         if receipt is None:
             raise OutcomeConflict("effect receipt missing")
+        incident_target = await session.scalar(
+            select(Incident.target_id).where(
+                Incident.id == incident_id, Incident.tenant_id == tenant_id,
+            )
+        )
+        if (
+            incident_target is None
+            or receipt.target_id != incident_target
+            or receipt.adapter_id != "simulator"
+            or receipt.attempt_count != 1
+            or type(receipt.expected_version) is not int
+            or type(receipt.observed_version) is not int
+            or receipt.observed_version != receipt.expected_version + 1
+        ):
+            raise OutcomeConflict("effect receipt is not bound to this incident target")
         target_id = receipt.target_id
         effect_version = receipt.observed_version
         effect_state = receipt.state
