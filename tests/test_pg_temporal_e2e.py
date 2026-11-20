@@ -955,14 +955,14 @@ async def test_postgres_racing_sent_checkpoint_only_calls_adapter_once(monkeypat
     reached = asyncio.Event()
     sent_state = gateway.set_state
 
-    async def release_together(sessions_arg, effect_id, state, **kwargs):
+    async def release_together(sessions_arg, effect_id, state, *args, **kwargs):
         nonlocal entering
         if state == "SENT":
             entering += 1
             if entering == 2:
                 reached.set()
             await asyncio.wait_for(reached.wait(), timeout=10)
-        return await sent_state(sessions_arg, effect_id, state, **kwargs)
+        return await sent_state(sessions_arg, effect_id, state, *args, **kwargs)
 
     monkeypatch.setattr(gateway, "set_state", release_together)
     calls = 0
