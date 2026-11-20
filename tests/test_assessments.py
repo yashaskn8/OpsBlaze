@@ -179,3 +179,21 @@ async def test_redteam_positive_assessment_replay_rechecks_current_safety(
         )
         assert persisted.id == accepted.id
         assert persisted.outcome == "PROPOSED"  # immutable forensic history
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [
+    ("source_version", "untrusted-provider-v9"),
+    ("classification", "PUBLIC"),
+])
+async def test_redteam_untrusted_probe_metadata_abstains_at_first_assessment(
+    assessment_lab, field, value,
+):
+    sessions, incident_id, ids = assessment_lab
+    async with sessions() as session:
+        async with session.begin():
+            evidence = await session.get(Evidence, UUID(ids[0]))
+            setattr(evidence, field, value)
+    assessment = await assess_decision(sessions, "t", incident_id, 2, ids)
+    assert assessment.outcome == "ABSTAINED"
+    assert assessment.reason == "INVALID_EVIDENCE"
