@@ -183,7 +183,18 @@ async def reconcile_effect(
         expected_observed = receipt.observed_version
         original_version = receipt.expected_version
         attempts = receipt.attempt_count
+        adapter_id = receipt.adapter_id
 
+    if state == "VERIFIED" and (
+        adapter_id != "simulator"
+        or attempts != 1
+        or type(original_version) is not int
+        or type(expected_observed) is not int
+        or expected_observed != original_version + 1
+    ):
+        # An inconsistent persisted terminal receipt cannot be a
+        # successful read-time attestation, even on an idempotent retry.
+        return "NEEDS_REVIEW"
     if state in {"VERIFIED", "FAILED", "NEEDS_REVIEW"}:
         return state
     if state in {"SENT", "UNKNOWN", "CONFIRMED"} and attempts != 1:
