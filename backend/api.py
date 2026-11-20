@@ -5,13 +5,25 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth import local_operator, local_reviewer, local_tenant
+from backend.auth import Principal, get_principal, local_operator, local_reviewer, local_tenant
 from backend.database import get_session
 from backend.schemas import IncidentCreate, IncidentView
 from backend.services import IdempotencyConflict, RateLimited, admit_incident, find_incident
 from backend.settings import Settings, get_settings
 
 app = FastAPI(title="OpsBlaze", version="0.1.0")
+
+
+@app.get("/v1/auth/me")
+async def authenticated_identity(
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    # Never return an email, raw sub, bearer token, or unverified header.
+    return {
+        "tenant_id": principal.tenant_id,
+        "actor_id": principal.subject,
+        "roles": sorted(principal.roles),
+    }
 
 
 @app.get("/healthz")

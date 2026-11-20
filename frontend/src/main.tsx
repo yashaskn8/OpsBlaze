@@ -1,6 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
+import { authManager, oidcConfigError, usingOidc } from "./auth";
+
+type AuthIdentity = {
+  tenant_id: string;
+  actor_id: string;
+  roles: string[];
+};
 
 type Incident = {
   id: string;
@@ -92,6 +99,11 @@ function App() {
   const [tenant, setTenant] = useState("demo");
   const [token, setToken] = useState("");
   const [reviewToken, setReviewToken] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [identity, setIdentity] = useState<AuthIdentity | null>(null);
+  const [signInError, setSignInError] = useState("");
+  const [authLoading, setAuthLoading] = useState(usingOidc);
+
   const [target, setTarget] = useState("checkout");
   const [key, setKey] = useState(() => crypto.randomUUID());
   const [incident, setIncident] = useState<Incident | null>(null);
@@ -117,7 +129,108 @@ function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const headers = () => ({ "X-Tenant-Id": tenant, "X-OpsBlaze-Token": token });
+  const headers = (): Record<string, string> => usingOidc
+    ? { Authorization: "Bearer " + accessToken }
+    : { "X-Tenant-Id": tenant, "X-OpsBlaze-Token": token };
+  const authenticated = usingOidc
+    ? Boolean(accessToken && identity)
+    : Boolean(token && tenant);
+  const canOperate = usingOidc ? Boolean(identity?.roles.includes("operator")) : authenticated;
+  const canReview = usingOidc ? Boolean(identity?.roles.includes("reviewer")) : Boolean(reviewToken);
+
+  useEffect(() => {
+    if (!usingOidc) return;
+    if (!authManager) {
+      setAuthLoading(false);
+      setSignInError(oidcConfigError);
+      return;
+    }
+    let active = true;
+    const manager = authManager;
+    async function loadOidcSession() {
+      try {
+        const user = window.location.pathname === "/auth/callback"
+          ? await manager.signinRedirectCallback()
+          : await manager.getUser();
+        if (!active) return;
+        if (user && !user.expired && user.access_token) {
+          setAccessToken(user.access_token);
+        } else {
+          setAccessToken("");
+          setIdentity(null);
+        }
+      } catch (cause) {
+        if (active) setSignInError(
+          cause instanceof Error ? cause.message : "Sign-in failed"
+        );
+      } finally {
+        if (window.location.pathname === "/auth/callback") {
+          // Remove the authorization code and state from browser history.
+          window.history.replaceState(null, "", "/");
+        }
+        if (active) setAuthLoading(false);
+      }
+    }
+    void loadOidcSession();
+    const expired = () => { setAccessToken(""); setIdentity(null); };
+    manager.events.addAccessTokenExpired(expired);
+    return () => {
+      active = false;
+      manager.events.removeAccessTokenExpired(expired);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!usingOidc || !accessToken) {
+      setIdentity(null);
+      return;
+    }
+    const controller = new AbortController();
+    async function verifyIdentity() {
+      try {
+        const response = await fetch("/v1/auth/me", {
+          headers: { Authorization: "Bearer " + accessToken },
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Access token rejected by OpsBlaze API");
+        const actor = await response.json() as AuthIdentity;
+        if (!controller.signal.aborted) {
+          setTenant(actor.tenant_id);
+          setIdentity(actor);
+          setSignInError("");
+        }
+      } catch (cause) {
+        if (!controller.signal.aborted) {
+          setIdentity(null);
+          setAccessToken("");
+          setSignInError(cause instanceof Error ? cause.message : "Identity check failed");
+        }
+      }
+    }
+    void verifyIdentity();
+    return () => controller.abort();
+  }, [accessToken]);
+
+  async function signIn() {
+    if (!authManager) return;
+    setSignInError("");
+    try {
+      await authManager.signinRedirect();
+    } catch (cause) {
+      setSignInError(cause instanceof Error ? cause.message : "Sign-in failed");
+    }
+  }
+
+  async function signOut() {
+    await authManager?.removeUser();
+    setAccessToken("");
+    setIdentity(null);
+    setIncident(null);
+    setPlan(null);
+    setApproval(null);
+    setEvents([]);
+    setConnection("SYNCING");
+  }
 
   async function admit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -146,7 +259,7 @@ function App() {
   }
 
   async function refresh() {
-    if (!incident) return;
+    if (!incident || !canOperate) return;
     setBusy(true);
     setError("");
     try {
@@ -221,10 +334,10 @@ function App() {
 
   useEffect(() => {
     const selectedId = incident?.id;
-    if (!selectedId || !token || !tenant) return;
+    if (!selectedId || !authenticated) return;
 
     const controller = new AbortController();
-    const auth = { "X-Tenant-Id": tenant, "X-OpsBlaze-Token": token };
+    const auth = headers();
     const url = "/v1/incidents/" + selectedId;
     let cursor = 0;
     setConnection("SYNCING");
@@ -340,7 +453,7 @@ function App() {
 
     void subscribe();
     return () => controller.abort();
-  }, [incident?.id, tenant, token]);
+  }, [incident?.id, tenant, token, accessToken, identity?.actor_id]);
 
   async function decide(action: "cancel" | "acknowledge") {
     if (!incident) return;
@@ -363,7 +476,7 @@ function App() {
 
 
   async function decidePlan(choice: "APPROVE" | "REJECT") {
-    if (!plan || !incident) return;
+    if (!plan || !incident || !canReview) return;
     setBusy(true);
     setError("");
     try {
@@ -373,7 +486,7 @@ function App() {
           ...headers(),
           "Content-Type": "application/json",
           "If-Match": String(plan.version),
-          "X-OpsBlaze-Reviewer-Token": reviewToken,
+          ...(usingOidc ? {} : { "X-OpsBlaze-Reviewer-Token": reviewToken }),
         },
         body: JSON.stringify({
           decision: choice, reason: decisionReason.trim()
@@ -408,7 +521,7 @@ function App() {
           method: "POST",
           headers: {
             ...headers(),
-            "X-OpsBlaze-Reviewer-Token": reviewToken,
+            ...(usingOidc ? {} : { "X-OpsBlaze-Reviewer-Token": reviewToken }),
             "If-Match": String(approval.version),
             "Content-Type": "application/json",
           },
@@ -463,16 +576,33 @@ function App() {
       <div className="intro"><p className="eyebrow">TITAN-20 / OPERATOR WORKBENCH</p><h1>Incident operations</h1><p>Admit incidents, inspect evidence, and review simulator-only recovery.</p></div>
       <div className="layout">
         <section>
-          <h2>New incident</h2><p className="muted">Development only. Token stays in browser memory.</p>
+          <h2>New incident</h2><p className="muted">{usingOidc
+            ? "Verified role-based access. Access tokens stay in browser memory."
+            : "Development only. Token stays in browser memory."}</p>
+          {usingOidc && <div className="auth-session" aria-live="polite">
+            {authLoading && <p>Checking sign-in…</p>}
+            {signInError && <p role="alert" className="error">{signInError}</p>}
+            {identity ? <>
+              <p>Signed in · Tenant <strong>{identity.tenant_id}</strong></p>
+              <p className="muted">Roles: {identity.roles.join(", ")}</p>
+              <p className="muted mono">{identity.actor_id}</p>
+              <button className="secondary" type="button" onClick={() => void signOut()}>
+                Clear browser session
+              </button>
+            </> : !authLoading && authManager && <button type="button"
+              onClick={() => void signIn()}>Sign in with identity provider</button>}
+          </div>}
           <form onSubmit={admit}>
-            <label>Tenant ID<input required maxLength={64} value={tenant} onChange={e => setTenant(e.target.value)} /></label>
-            <label>Local API token<input type="password" autoComplete="off" required value={token} onChange={e => setToken(e.target.value)} /></label>
-            <label>Local reviewer token<input type="password" autoComplete="off"
-              value={reviewToken} onChange={e => setReviewToken(e.target.value)} /></label>
+            {!usingOidc && <>
+              <label>Tenant ID<input required maxLength={64} value={tenant} onChange={e => setTenant(e.target.value)} /></label>
+              <label>Local API token<input type="password" autoComplete="off" required value={token} onChange={e => setToken(e.target.value)} /></label>
+              <label>Local reviewer token<input type="password" autoComplete="off"
+                value={reviewToken} onChange={e => setReviewToken(e.target.value)} /></label>
+            </>}
             <label>Target ID<input required maxLength={256} value={target} onChange={e => setTarget(e.target.value)} /></label>
             <p className="key">Idempotency key <code>{key}</code></p>
             <div className="actions">
-              <button type="submit" disabled={busy}>{busy ? "Working..." : "Admit incident"}</button>
+              <button type="submit" disabled={busy || !canOperate}>{busy ? "Working..." : "Admit incident"}</button>
               <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setPlan(null); setApproval(null); setEvidence([]); setEffects([]); setLineage(null); setEvents([]); setConnection("SYNCING"); setError(""); }}>New request key</button>
             </div>
           </form>
@@ -497,7 +627,7 @@ function App() {
               <button type="button" className="secondary" disabled={busy} onClick={refresh}>Refresh status</button>
               {incident.status_projection === "AWAITING_APPROVAL" && (
                 <>
-                  {!plan && <button type="button" disabled={busy || connection !== "LIVE"} onClick={() => decide("acknowledge")}>Acknowledge review</button>}
+                  {!plan && <button type="button" disabled={busy || !canOperate || connection !== "LIVE"} onClick={() => decide("acknowledge")}>Acknowledge review</button>}
                 </>
               )}
               {["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL"].includes(incident.status_projection) && (
@@ -518,8 +648,8 @@ function App() {
                 </label>}
               {plan.status === "PROPOSED" && incident.status_projection === "AWAITING_APPROVAL" &&
                 <div className="actions">
-                  <button type="button" disabled={busy || connection !== "LIVE" || !reviewToken || decisionReason.trim().length < 8} onClick={() => decidePlan("APPROVE")}>Approve simulator plan</button>
-                  <button type="button" className="secondary" disabled={busy || connection !== "LIVE" || !reviewToken || decisionReason.trim().length < 8} onClick={() => decidePlan("REJECT")}>Reject</button>
+                  <button type="button" disabled={busy || connection !== "LIVE" || !canReview || decisionReason.trim().length < 8} onClick={() => decidePlan("APPROVE")}>Approve simulator plan</button>
+                  <button type="button" className="secondary" disabled={busy || connection !== "LIVE" || !canReview || decisionReason.trim().length < 8} onClick={() => decidePlan("REJECT")}>Reject</button>
                 </div>
               }
               {approval && <div className="approval-review">
@@ -537,7 +667,7 @@ function App() {
                     />
                   </label>
                   <button type="button" className="secondary"
-                    disabled={busy || connection !== "LIVE" || !reviewToken || revocationReason.trim().length < 8}
+                    disabled={busy || connection !== "LIVE" || !canReview || revocationReason.trim().length < 8}
                     onClick={revokeApproval}>
                     Revoke unconsumed approval
                   </button>
@@ -577,7 +707,7 @@ function App() {
       <section className="incident-history">
         <div className="history-header">
           <h2>Recent incidents</h2>
-          <button type="button" className="secondary" disabled={!token || busy} onClick={loadRecent}>
+          <button type="button" className="secondary" disabled={!authenticated || busy} onClick={loadRecent}>
             Load from server
           </button>
         </div>
@@ -622,7 +752,7 @@ function App() {
             <input type="number" min="0" max="1000000" step="1"
               value={replaySeed} onChange={event => setReplaySeed(event.target.value)} />
           </label>
-          <button type="submit" disabled={!token || replayBusy}>
+          <button type="submit" disabled={!canOperate || replayBusy}>
             {replayBusy ? "Running..." : "Run paired replay"}
           </button>
         </form>
@@ -643,7 +773,7 @@ function App() {
           }
         </>}
       </section>
-      <footer>Simulator-only recovery. Real targets, production identities, calibrated model evaluation and policy rollout are not enabled.</footer>
+      <footer>Simulator-only recovery. External identity integration must be configured and verified for production use. Real targets, calibrated evaluation and policy rollout remain disabled.</footer>
     </main>
   );
 }

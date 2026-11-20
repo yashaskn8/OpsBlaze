@@ -180,3 +180,33 @@ acknowledged, then reports the actual Temporal status or
 `UNKNOWN` without changing incident state. A human approval wait
 is excluded from the stuck-worker classification. This is a
 read-only diagnostic, not automatic recovery or failover.
+
+## Browser sign-in (OAuth2/OIDC authorization code with PKCE)
+
+The React UI has two explicitly separated authentication modes. Without
+Vite OIDC configuration it remains the existing local-development token
+workbench. For a configured public SPA client, set these **public** build
+variables (never an OAuth client secret):
+
+```env
+VITE_OIDC_AUTHORITY=https://idp.example.com/realms/ops
+VITE_OIDC_CLIENT_ID=opsblaze-spa
+VITE_OIDC_SCOPE=openid profile opsblaze-api
+```
+
+Register `https://your-opsblaze-origin/auth/callback` (or
+`http://127.0.0.1:5173/auth/callback` for a local SPA test) as the
+redirect URI at the IdP. The authority itself must be HTTPS. Enable
+authorization-code + PKCE, configure the SPA's token endpoint CORS policy,
+and issue RS256 **JWT access tokens** with the pinned API audience,
+`tenant_id`, `sub`, and `roles` claims required by the backend.
+The frontend sends bearer tokens only in authorization headers and
+fetches `GET /v1/auth/me` to learn server-verified tenant and roles.
+No raw identity-provider password or token is placed in URLs or
+localStorage; redirect state temporarily uses sessionStorage and access
+tokens stay in memory. Refreshing a signed-in page requires sign-in
+again. No silent renewal or long-lived refresh token is enabled.
+The "Clear browser session" control clears only this app's memory;
+it is not IdP-wide logout. Production must use HTTPS, a same-origin API,
+appropriate CSP and a trusted configured IdP. Browser E2E and actual
+IdP integration remain unverified release gates.
