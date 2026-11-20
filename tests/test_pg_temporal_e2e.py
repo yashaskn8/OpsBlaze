@@ -348,6 +348,9 @@ async def test_postgres_approval_revoke_and_dispatch_race_is_serialized(monkeypa
                     evidence_ids=[], status="APPROVED", version=2,
                     decided_by="reviewer-2", review_epoch=get_settings().review_epoch,
                 ))
+                # Flush the referenced plan before inserting the grant; these
+                # objects have no ORM relationship to order the SQL statements.
+                await session.flush()
                 session.add(ApprovalGrant(
                     id=grant_id, tenant_id=tenant_id, plan_id=plan_id,
                     plan_digest=digest, reviewer_id="reviewer-2",
