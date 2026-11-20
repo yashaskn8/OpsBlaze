@@ -175,3 +175,78 @@ async def test_shadow_rejects_wrong_tenant_and_tampered_bundle(safe_evaluation):
             )
     async with sessions() as session:
         assert (await session.scalars(select(PolicyShadowObservation))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_shadow_http_tenant_permissions_and_live_gate_remain_closed(
+    safe_evaluation,
+):
+    from httpx import ASGITransport, AsyncClient
+
+    from backend.api import app
+    from backend.database import get_session
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+    from backend.settings import Settings, get_settings
+
+    sessions, candidate_id, eval_id = safe_evaluation
+    async with sessions() as session:
+        bundle = await register_bundle(session, "tenant", candidate_id, eval_id)
+    async with sessions() as session:
+        rollout = await create_rollout(session, "tenant", bundle.id, 5)
+    async with sessions() as session:
+        incident = await admit_incident(
+            session, "tenant", "shadow-http", IncidentCreate(target_id="checkout"),
+        )
+
+    async def override_session():
+        async with sessions() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        local_token="test-operator", review_token="separate-reviewer",
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+        ) as client:
+            headers = {
+                "X-Tenant-Id": "tenant", "X-OpsBlaze-Token": "test-operator",
+            }
+            route = f"/v1/rollouts/{rollout.id}/shadow/{incident.id}"
+            response = await client.post(route, headers=headers)
+            assert response.status_code == 202, response.text
+            assert response.json()["exposure_enabled"] is False
+
+            repeated = await client.post(route, headers=headers)
+            assert repeated.status_code == 202
+            assert repeated.json()["id"] == response.json()["id"]
+            summary = await client.get(
+                f"/v1/rollouts/{rollout.id}/shadow-summary", headers=headers,
+            )
+            assert summary.status_code == 200
+            assert summary.json()["shadow_count"] == 1
+            assert summary.json()["candidate_exposure"] == 0
+
+            blocked = await client.post(
+                f"/v1/rollouts/{rollout.id}/approve", headers=headers,
+            )
+            assert blocked.status_code == 409
+
+            incumbent = await client.get(
+                f"/v1/incidents/{incident.id}/policy", headers=headers,
+            )
+            assert incumbent.status_code == 200
+            assert incumbent.json()["bundle_id"] is None
+            assert incumbent.json()["rollout_id"] is None
+
+            wrong = {
+                "X-Tenant-Id": "unrelated", "X-OpsBlaze-Token": "test-operator",
+            }
+            assert (await client.post(route, headers=wrong)).status_code == 404
+            assert (await client.get(
+                f"/v1/rollouts/{rollout.id}/shadow-summary", headers=wrong,
+            )).status_code == 404
+    finally:
+        app.dependency_overrides.clear()
