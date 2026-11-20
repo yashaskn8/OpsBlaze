@@ -12,6 +12,7 @@ from sqlalchemy import (
     Uuid,
     func,
     text,
+    JSON,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 

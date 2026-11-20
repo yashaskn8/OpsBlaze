@@ -13,7 +13,8 @@ async def project_incident_status(
     tenant_id: str, incident_id: str, state: str
 ) -> None:
     if state not in {
-        "INVESTIGATING", "AWAITING_APPROVAL", "NEEDS_REVIEW", "CANCELLED"
+        "INVESTIGATING", "AWAITING_APPROVAL", "NEEDS_REVIEW", "CANCELLED",
+        "EXECUTING", "VERIFIED", "FAILED"
     }:
         raise ValueError("unsupported workflow projection")
 
@@ -24,7 +25,7 @@ async def project_incident_status(
             if state == "CANCELLED":
                 valid_states = ["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL", "CANCEL_REQUESTED"]
             else:
-                valid_states = ["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL"]
+                valid_states = ["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL", "PLAN_DECIDED", "EXECUTING"]
                 if state == "NEEDS_REVIEW":
                     valid_states.append("REVIEW_ACKNOWLEDGED")
             await session.execute(
@@ -49,3 +50,14 @@ async def inspect_incident_read_only(
     from backend.investigator.baseline import inspect
 
     return await inspect(get_session_maker(), tenant_id, UUID(incident_id))
+
+
+@activity.defn(name="apply_approved_simulator_plan")
+async def apply_approved_simulator_plan(
+    tenant_id: str, incident_id: str, plan_id: str,
+) -> str:
+    from backend.plans import execute_approved_simulator_plan
+
+    return await execute_approved_simulator_plan(
+        get_session_maker(), tenant_id, UUID(incident_id), UUID(plan_id)
+    )

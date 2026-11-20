@@ -25,7 +25,7 @@ def workflow_id(tenant_id: str, incident_id: UUID) -> str:
 
 async def claim_intent(
     sessions: async_sessionmaker[AsyncSession],
-) -> tuple[int, str, str, str] | None:
+) -> tuple[int, str, str, str, dict | None] | None:
     now = datetime.now(timezone.utc)
     async with sessions() as session:
         async with session.begin():
@@ -49,11 +49,11 @@ async def claim_intent(
             # transaction. After a crash the intent becomes eligible again.
             retry_seconds = min(300, 2 ** min(entry.attempt, 8))
             entry.available_at = now + timedelta(seconds=retry_seconds)
-            return (entry.id, tenant_id, str(entry.incident_id), entry.kind)
+            return (entry.id, tenant_id, str(entry.incident_id), entry.kind, entry.payload)
 
 
-async def deliver_intent(client: Client, intent: tuple[int, str, str, str]) -> None:
-    _, tenant_id, incident_id, kind = intent
+async def deliver_intent(client: Client, intent: tuple[int, str, str, str, dict | None]) -> None:
+    _, tenant_id, incident_id, kind, payload = intent
     wid = workflow_id(tenant_id, UUID(incident_id))
     if kind == "START_WORKFLOW":
         try:
@@ -74,6 +74,13 @@ async def deliver_intent(client: Client, intent: tuple[int, str, str, str]) -> N
     elif kind == "ACKNOWLEDGE_REVIEW":
         await client.get_workflow_handle(wid).signal(
             IncidentWorkflow.acknowledge_review
+        )
+    elif kind == "PLAN_DECIDED":
+        if not isinstance(payload, dict):
+            raise ValueError("plan signal missing payload")
+        await client.get_workflow_handle(wid).signal(
+            IncidentWorkflow.plan_decided,
+            args=[payload["plan_id"], payload["approved"]],
         )
     else:
         raise ValueError("unsupported outbox kind")
