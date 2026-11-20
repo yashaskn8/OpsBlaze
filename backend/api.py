@@ -1101,3 +1101,26 @@ async def stream_incident_updates(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/v1/incidents/{incident_id}/policy")
+async def pinned_incident_policy(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.models import PolicyAssignment
+
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    assignment = await session.get(PolicyAssignment, (tenant_id, incident_id))
+    if assignment is None:
+        return {"state": "UNPINNED", "execution_enabled": False}
+    return {
+        "state": assignment.source,
+        "policy_id": assignment.policy_id,
+        "bundle_id": str(assignment.bundle_id) if assignment.bundle_id else None,
+        "rollout_id": str(assignment.rollout_id) if assignment.rollout_id else None,
+        "execution_enabled": assignment.bundle_id is None and assignment.rollout_id is None,
+        "assigned_at": assignment.assigned_at.isoformat(),
+    }

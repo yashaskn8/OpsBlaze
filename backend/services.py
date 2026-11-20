@@ -7,7 +7,8 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models import AdmissionUsage, Incident, OutboxEntry, UIEvent
+from backend.models import AdmissionUsage, Incident, OutboxEntry, PolicyAssignment, UIEvent
+from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.schemas import IncidentCreate
 from backend.settings import get_settings
 
@@ -55,6 +56,16 @@ async def admit_incident(
                 return existing
             await reserve_admission_slot(session, tenant_id)
             session.add(incident)
+            session.add(
+                PolicyAssignment(
+                    tenant_id=tenant_id,
+                    incident_id=incident.id,
+                    policy_id=INCUMBENT_POLICY_ID,
+                    bundle_id=None,
+                    rollout_id=None,
+                    source="PINNED_INCUMBENT",
+                )
+            )
             session.add(OutboxEntry(incident_id=incident.id, kind="START_WORKFLOW"))
             session.add(UIEvent(tenant_id=tenant_id, incident_id=incident.id, kind="ADMITTED", projection_version=1))
             await session.flush()

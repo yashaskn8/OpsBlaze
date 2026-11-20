@@ -626,3 +626,26 @@ class DecisionAssessment(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class PolicyAssignment(Base):
+    __tablename__ = "policy_assignment"
+    __table_args__ = (
+        Index("ix_policy_assignment_policy", "tenant_id", "policy_id"),
+    )
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id"), primary_key=True
+    )
+    policy_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    bundle_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("policy_bundle.id")
+    )
+    rollout_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("policy_rollout.id")
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

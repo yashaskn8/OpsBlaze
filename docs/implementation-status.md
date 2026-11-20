@@ -21,7 +21,7 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 | E3 — Failure learning | Fact-backed taxonomy, reviewer corrections, allowlisted change candidates | Independent reviewers, causal attribution beyond typed simulator facts |
 | E4 — Validated memory | Typed lesson drafts, source/consent checks, validation/revoke | Release gate for activation, measured retrieval effect and revocation propagation |
 | E5 — Evaluation | Frozen candidate/incumbent manifest, deterministic paired fixtures and hard smoke gates | Hidden-label evaluation store, measured effect outcomes, confidence bounds, independent evaluator |
-| E6 — Policy rollout | Content-digested drafts, deterministic cohort preview, pause/rollback records | **Live rollout disabled** pending real E5 PASS, signed bundle and release authorization |
+| E6 — Policy rollout | Content-digested drafts, admission-time incumbent pinning, deterministic cohort preview, pause/rollback records | **Live rollout disabled** pending real E5 PASS, signed bundle and release authorization |
 | E7 — Strategy routing | Pinned tenant-scoped RUNBOOK/HANDOFF choice, deterministic cost cap | Evaluated contextual policies, measured route accuracy, memory/agent variants |
 | E8 — Adapter conformance | Eight disposable simulator checks, code-digest pinning and expiry gate | External adapter conformance/fault-injection/retention campaign |
 

@@ -117,7 +117,7 @@ async def test_parallel_postgres_admission_is_one_logical_incident() -> None:
     from sqlalchemy import func, select
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    from backend.models import AdmissionUsage, Incident, OutboxEntry, UIEvent
+    from backend.models import AdmissionUsage, Incident, OutboxEntry, PolicyAssignment, UIEvent
     from backend.schemas import IncidentCreate
     from backend.services import admit_incident
 
@@ -150,6 +150,12 @@ async def test_parallel_postgres_admission_is_one_logical_incident() -> None:
             ) == 1
             assert await session.scalar(
                 count(UIEvent).where(UIEvent.incident_id == incident_id)
+            ) == 1
+            assert await session.scalar(
+                count(PolicyAssignment).where(
+                    PolicyAssignment.tenant_id == tenant,
+                    PolicyAssignment.incident_id == incident_id,
+                )
             ) == 1
             assert await session.scalar(
                 select(func.sum(AdmissionUsage.accepted)).where(

@@ -93,3 +93,10 @@ reconnects with its last event ID, and falls back to JSON polling. Event
 payloads are advisory only; the UI always refreshes the authoritative
 versioned snapshot before acting. The SSE path remains a development-only
 interface until production identity and load/concurrency testing exist.
+
+Every new incident also pins `simulator-lab-route-v1` in
+`policy_assignment` within the atomic admission transaction. Existing
+incidents are pinned by migration 0019. E7 verifies that assignment before
+routing and safely hands off when the pin is missing or changed. The policy
+view is `GET /v1/incidents/{id}/policy`. Experimental E6 rollout drafts
+still cannot assign themselves to incidents or enable real effects.

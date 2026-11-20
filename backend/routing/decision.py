@@ -7,10 +7,11 @@ from uuid import UUID, NAMESPACE_URL, uuid5
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.models import Incident, RouteDecision, SimulatorTarget
+from backend.models import Incident, PolicyAssignment, RouteDecision, SimulatorTarget
+from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.settings import get_settings
 
-ROUTER_POLICY_ID = "simulator-lab-route-v1"
+ROUTER_POLICY_ID = INCUMBENT_POLICY_ID
 
 
 async def select_route(
@@ -37,11 +38,22 @@ async def select_route(
             if existing is not None:
                 return existing
 
+            assignment = await session.get(
+                PolicyAssignment, (tenant_id, incident_id)
+            )
             target = await session.get(
                 SimulatorTarget, (tenant_id, incident.target_id)
             )
             budget = get_settings().max_probe_calls_per_incident
-            if target is None:
+            if (
+                assignment is None
+                or assignment.policy_id != INCUMBENT_POLICY_ID
+                or assignment.bundle_id is not None
+                or assignment.rollout_id is not None
+            ):
+                route, reason = "HANDOFF", "POLICY_PIN_INVALID"
+                cost_cap = 0
+            elif target is None:
                 route, reason = "HANDOFF", "SIMULATOR_TARGET_MISSING"
                 cost_cap = 0
             elif budget < 2:
