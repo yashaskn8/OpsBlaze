@@ -715,3 +715,17 @@ async def get_evaluation(
     if result is None:
         raise HTTPException(404, "manifest not found")
     return result
+
+
+@app.get("/v1/incidents/{incident_id}/lineage")
+async def incident_lineage(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.lineage import build_lineage
+
+    lineage = await build_lineage(session, tenant_id, incident_id)
+    if lineage is None:
+        raise HTTPException(404, "incident not found")
+    return lineage
