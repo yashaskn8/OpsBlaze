@@ -379,3 +379,27 @@ running, then starts a replacement worker. It checks one effect
 receipt, one simulator application and the final target version.
 This is an **independent-worker handoff on one CI host**, not a
 multi-host/region failure campaign or measured availability result.
+
+
+## E6 shadow rehearsal (still no policy promotion)
+
+`POST /v1/rollouts/{id}/shadow/{incident_id}` records a deterministic,
+tenant-scoped **would-assign** decision for an existing incident. It requires
+operator authentication, an untampered draft bundle and an incident pinned to
+the known-good incumbent; the rollout row is locked so pause/rollback cannot
+interleave a new shadow observation. Duplicate calls reuse the same immutable
+record. `GET /v1/rollouts/{id}/shadow-summary` reports only aggregate
+hypothetical membership; it cannot claim outcome or recovery performance.
+Every shadow response explicitly reports `exposure_enabled=false`.
+The `/approve` gate remains closed until independent E5, signing, separate
+human release authority and real canary fail-safe evidence exist.
+
+## Expanded E8 adapter conformance
+
+The development-only conformance suite now requires sixteen scenarios,
+including missing effect-status retention, status recovery, and external
+target-version changes. It pins the current simulator source digest and suite
+version. A green `LAB_PASS` applies **only** to the disposable simulator:
+it is not proof that a third-party adapter has stable idempotency keys,
+atomic fences, independent postconditions or sufficient retention.
+No external effect connector is enabled.
