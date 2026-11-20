@@ -992,6 +992,47 @@ async def stop_policy_rollout(
             "version": rollout.version, "exposure_enabled": False}
 
 
+@app.post("/v1/rollouts/{rollout_id}/shadow/{incident_id}", status_code=202)
+async def record_rollout_shadow(
+    rollout_id: UUID,
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
+) -> dict:
+    """Rehearsal only: never assign candidate policy or dispatch an effect."""
+    from backend.policy.registry import PolicyConflict, record_shadow_observation
+
+    try:
+        shadow = await record_shadow_observation(
+            session, tenant_id, rollout_id, incident_id,
+        )
+    except PolicyConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if shadow is None:
+        raise HTTPException(404, "rollout or incident not found")
+    return {
+        "id": str(shadow.id),
+        "would_assign": shadow.would_assign,
+        "preview_only": True,
+        "exposure_enabled": False,
+    }
+
+
+@app.get("/v1/rollouts/{rollout_id}/shadow-summary")
+async def get_rollout_shadow_summary(
+    rollout_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.policy.registry import shadow_summary
+
+    result = await shadow_summary(session, tenant_id, rollout_id)
+    if result is None:
+        raise HTTPException(404, "rollout not found")
+    return result
+
+
 @app.get("/v1/rollouts/{rollout_id}/preview")
 async def preview_policy_rollout(
     rollout_id: UUID,
