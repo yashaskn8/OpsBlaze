@@ -167,3 +167,8 @@ intents even when a retry has been scheduled into the future.
 `GET /v1/operations/queues` reports the oldest pending intent age
 for the authenticated local tenant. Monitoring remains read-only and
 never marks unresolved work as successful.
+
+The native PostgreSQL integration suite also races five different incidents
+for one simulator resource. Only one may hold the active fence, and a
+superseded permit cannot apply an effect after a newer epoch is reserved.
+This checks the database lock behavior instead of relying on SQLite mocks.

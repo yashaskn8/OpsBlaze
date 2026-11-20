@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 
 """Native PostgreSQL + Temporal vertical slice; no Docker, no production effects."""
 
@@ -211,4 +212,88 @@ async def test_active_capacity_is_atomic_under_parallel_admissions() -> None:
             ) == 2
     finally:
         services.get_settings = original_settings
+        await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_parallel_target_reservations_are_epoch_fenced() -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.adapters.simulator import SimulatorAdapter, StaleFence
+    from backend.effects.reservations import (
+        ReservationBusy, reserve_simulator_target,
+    )
+    from backend.models import ResourceEpoch, ResourceReservation, SimulatorTarget
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "fence-" + uuid4().hex[:12]
+    target_id = "shared-fixture"
+    try:
+        async with sessions() as session:
+            async with session.begin():
+                session.add(SimulatorTarget(
+                    tenant_id=tenant, target_id=target_id,
+                    version=1, healthy=False, last_fence=0,
+                ))
+                session.add(ResourceEpoch(
+                    tenant_id=tenant, target_id=target_id,
+                    latest_fence=0, version_seen=1,
+                ))
+        ids = []
+        for i in range(5):
+            async with sessions() as session:
+                incident = await admit_incident(
+                    session, tenant, f"fence-{i}",
+                    IncidentCreate(target_id=target_id),
+                )
+                ids.append(incident.id)
+
+        async def attempt(index: int):
+            try:
+                permit = await reserve_simulator_target(
+                    sessions, tenant, target_id, ids[index],
+                    f"{index + 1:064x}",
+                )
+                return (index, permit)
+            except ReservationBusy:
+                return (index, None)
+
+        results = await asyncio.gather(*(attempt(i) for i in range(5)))
+        winners = [(i, permit) for i, permit in results if permit is not None]
+        assert len(winners) == 1
+        winner_index, original = winners[0]
+        assert original.fence == 1
+
+        async with sessions() as session:
+            reservation = await session.get(
+                ResourceReservation, (tenant, target_id)
+            )
+            assert reservation.holder_incident == ids[winner_index]
+            assert reservation.fence == original.fence
+
+        async with sessions() as session:
+            async with session.begin():
+                reservation = await session.get(
+                    ResourceReservation, (tenant, target_id), with_for_update=True
+                )
+                reservation.expires_at = (
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                )
+
+        successor = (winner_index + 1) % len(ids)
+        newer = await reserve_simulator_target(
+            sessions, tenant, target_id, ids[successor],
+            f"{successor + 1:064x}",
+        )
+        assert newer.fence > original.fence
+        adapter = SimulatorAdapter(sessions)
+        with pytest.raises(StaleFence):
+            await adapter.apply(uuid4(), original)
+        assert await adapter.observe(tenant, target_id) == (1, False)
+    finally:
         await engine.dispose()
