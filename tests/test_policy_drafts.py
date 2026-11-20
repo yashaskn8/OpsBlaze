@@ -6,11 +6,11 @@ from sqlalchemy import select
 
 from backend.models import (
     EvaluationManifest, FailureCluster, ImprovementCandidate, PolicyBundle,
-    PolicyRollout,
+    PolicyRollout, PolicyAssignment, PolicyShadowObservation,
 )
 from backend.policy.registry import (
     PolicyConflict, create_rollout, dry_run_assignment, register_bundle,
-    stop_rollout,
+    stop_rollout, record_shadow_observation, shadow_summary,
 )
 from backend.evaluation.fixtures import fixture_digest, ORACLE_VERSION
 from backend.evaluation.smoke import sha
@@ -86,3 +86,92 @@ async def test_rollout_scope_and_cohort_are_restricted(safe_evaluation):
     async with sessions() as session:
         with pytest.raises(PolicyConflict):
             await create_rollout(session, "other", bundle.id, 1)
+
+
+@pytest.mark.asyncio
+async def test_shadow_preview_is_idempotent_and_never_changes_assignment(
+    safe_evaluation,
+):
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+    from backend.policy.constants import INCUMBENT_POLICY_ID
+
+    sessions, candidate_id, eval_id = safe_evaluation
+    async with sessions() as session:
+        bundle = await register_bundle(session, "tenant", candidate_id, eval_id)
+    async with sessions() as session:
+        rollout = await create_rollout(session, "tenant", bundle.id, 5)
+    async with sessions() as session:
+        incident = await admit_incident(
+            session, "tenant", "shadow-incident",
+            IncidentCreate(target_id="checkout"),
+        )
+
+    async with sessions() as session:
+        record = await record_shadow_observation(
+            session, "tenant", rollout.id, incident.id,
+        )
+    assert record.would_assign == dry_run_assignment(
+        rollout, "tenant", incident.id,
+    )
+    async with sessions() as session:
+        repeat = await record_shadow_observation(
+            session, "tenant", rollout.id, incident.id,
+        )
+    assert repeat.id == record.id
+
+    async with sessions() as session:
+        assignment = await session.get(
+            PolicyAssignment, ("tenant", incident.id),
+        )
+        shadow_rows = (await session.scalars(
+            select(PolicyShadowObservation)
+        )).all()
+        summary = await shadow_summary(session, "tenant", rollout.id)
+        assert len(shadow_rows) == 1
+        assert assignment.policy_id == INCUMBENT_POLICY_ID
+        assert assignment.bundle_id is None and assignment.rollout_id is None
+        assert summary["shadow_count"] == 1
+        assert summary["candidate_exposure"] == 0
+        assert summary["promotion_eligible"] is False
+
+    async with sessions() as session:
+        await stop_rollout(session, "tenant", rollout.id, 1, "PAUSED")
+    async with sessions() as session:
+        with pytest.raises(PolicyConflict, match="stopped"):
+            await record_shadow_observation(
+                session, "tenant", rollout.id, incident.id,
+            )
+
+
+@pytest.mark.asyncio
+async def test_shadow_rejects_wrong_tenant_and_tampered_bundle(safe_evaluation):
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    sessions, candidate_id, eval_id = safe_evaluation
+    async with sessions() as session:
+        bundle = await register_bundle(session, "tenant", candidate_id, eval_id)
+    async with sessions() as session:
+        rollout = await create_rollout(session, "tenant", bundle.id, 5)
+    async with sessions() as session:
+        incident = await admit_incident(
+            session, "tenant", "shadow-altered",
+            IncidentCreate(target_id="checkout"),
+        )
+    async with sessions() as session:
+        assert await record_shadow_observation(
+            session, "other", rollout.id, incident.id,
+        ) is None
+
+    async with sessions() as session:
+        async with session.begin():
+            original = await session.get(PolicyBundle, bundle.id)
+            original.content = {**original.content, "tool_catalog": "shell.exec"}
+    async with sessions() as session:
+        with pytest.raises(PolicyConflict, match="digest"):
+            await record_shadow_observation(
+                session, "tenant", rollout.id, incident.id,
+            )
+    async with sessions() as session:
+        assert (await session.scalars(select(PolicyShadowObservation))).all() == []
