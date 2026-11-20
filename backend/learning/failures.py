@@ -44,6 +44,17 @@ async def record_case(
         )
         if outcome is None:
             return None
+        newest = await session.scalar(
+            select(OutcomeRevision.id)
+            .where(
+                OutcomeRevision.tenant_id == tenant_id,
+                OutcomeRevision.incident_id == outcome.incident_id,
+            )
+            .order_by(OutcomeRevision.revision.desc())
+            .limit(1)
+        )
+        if newest != outcome.id:
+            raise FailureConflict("outcome source revision was superseded")
         existing = await session.scalar(
             select(FailureCase).where(
                 FailureCase.tenant_id == tenant_id,
@@ -116,6 +127,34 @@ def validate_change(kind: str, spec: dict) -> None:
         raise FailureConflict("change class or content is not allowlisted")
 
 
+async def has_current_classified_case(
+    session: AsyncSession, tenant_id: str, cluster_id: UUID,
+) -> bool:
+    """A signature alone is not enough; its case must cite the newest outcome."""
+    newest_outcome = (
+        select(OutcomeRevision.id)
+        .where(
+            OutcomeRevision.tenant_id == tenant_id,
+            OutcomeRevision.incident_id == FailureCase.incident_id,
+        )
+        .order_by(OutcomeRevision.revision.desc())
+        .limit(1)
+        .correlate(FailureCase)
+        .scalar_subquery()
+    )
+    matching = await session.scalar(
+        select(FailureCase.id)
+        .where(
+            FailureCase.tenant_id == tenant_id,
+            FailureCase.cluster_id == cluster_id,
+            FailureCase.review_status == "CLASSIFIED",
+            FailureCase.outcome_revision_id == newest_outcome,
+        )
+        .limit(1)
+    )
+    return matching is not None
+
+
 async def draft_candidate(
     session: AsyncSession, tenant_id: str, cluster_id: UUID,
     kind: str, base_policy_id: str, change_spec: dict,
@@ -138,17 +177,8 @@ async def draft_candidate(
         )
         if cluster is None or cluster.quarantined or cluster.case_count < 1:
             raise FailureConflict("cluster not available")
-        eligible = await session.scalar(
-            select(FailureCase)
-            .where(
-                FailureCase.tenant_id == tenant_id,
-                FailureCase.cluster_id == cluster_id,
-                FailureCase.review_status == "CLASSIFIED",
-            )
-            .limit(1)
-        )
-        if eligible is None:
-            raise FailureConflict("cluster has no classified source case")
+        if not await has_current_classified_case(session, tenant_id, cluster_id):
+            raise FailureConflict("cluster has no current classified source case")
         candidate = ImprovementCandidate(
             id=uuid4(), tenant_id=tenant_id, source_cluster_id=cluster_id,
             kind=kind, base_policy_id=base_policy_id, change_spec=change_spec,
@@ -179,6 +209,10 @@ async def submit_candidate(
         cluster = await session.get(FailureCluster, candidate.source_cluster_id)
         if cluster is None or cluster.quarantined:
             raise FailureConflict("source cluster quarantined")
+        if not await has_current_classified_case(
+            session, tenant_id, candidate.source_cluster_id,
+        ):
+            raise FailureConflict("candidate source outcome was superseded")
         # Revalidate the exact allowlist at the evaluation transition.
         validate_change(candidate.kind, candidate.change_spec)
         candidate.state = "EVALUATION_READY"

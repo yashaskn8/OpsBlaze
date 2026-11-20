@@ -74,3 +74,90 @@ async def test_uncertain_cluster_cannot_submit_unreviewed_proposal(failure_case)
                 "baseline-v1", {"max_context_tokens": 256},
                 "reduce irrelevant evidence", "LOW", "fixture-v1",
             )
+
+
+@pytest.mark.asyncio
+async def test_old_outcome_revision_cannot_create_failure_case(sessions_fixture):
+    from uuid import uuid4
+    from backend.learning.failures import FailureConflict, record_case
+    from backend.models import OutcomeRevision
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "t", "revision", IncidentCreate(target_id="checkout")
+        )
+    earlier, later = uuid4(), uuid4()
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add_all([
+                OutcomeRevision(
+                    id=earlier, tenant_id="t", incident_id=incident.id,
+                    effect_id=None, revision=1, label="DISPUTED",
+                    witness_source="OPERATOR_DISPUTE", observed_version=None,
+                    reason="original uncertain label",
+                ),
+                OutcomeRevision(
+                    id=later, tenant_id="t", incident_id=incident.id,
+                    effect_id=None, revision=2, label="DISPUTED",
+                    witness_source="OPERATOR_DISPUTE", observed_version=None,
+                    reason="newer independent check",
+                ),
+            ])
+    async with sessions_fixture() as session:
+        with pytest.raises(FailureConflict, match="superseded"):
+            await record_case(session, "t", earlier)
+    async with sessions_fixture() as session:
+        current = await record_case(session, "t", later)
+        assert current.outcome_revision_id == later
+
+
+@pytest.mark.asyncio
+async def test_candidate_submission_rechecks_latest_source_revision(sessions_fixture):
+    from uuid import uuid4
+    from backend.learning.failures import (
+        FailureConflict, record_case, draft_candidate, submit_candidate,
+    )
+    from backend.models import FailureCase, OutcomeRevision
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "t", "candidate", IncidentCreate(target_id="checkout")
+        )
+    first_outcome = uuid4()
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutcomeRevision(
+                id=first_outcome, tenant_id="t", incident_id=incident.id,
+                effect_id=None, revision=1, label="DISPUTED",
+                witness_source="OPERATOR_DISPUTE", observed_version=None,
+                reason="reported uncertain effect",
+            ))
+    async with sessions_fixture() as session:
+        case = await record_case(session, "t", first_outcome)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            source = await session.get(FailureCase, case.id)
+            source.review_status = "CLASSIFIED"
+
+    async with sessions_fixture() as session:
+        candidate = await draft_candidate(
+            session, "t", case.cluster_id,
+            "CONTEXT_LIMIT", "baseline-v1", {"max_context_tokens": 256},
+            "safe context window for simulator evidence", "LOW", "fixed-v1",
+        )
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutcomeRevision(
+                id=uuid4(), tenant_id="t", incident_id=incident.id,
+                effect_id=None, revision=2, label="DISPUTED",
+                witness_source="OPERATOR_DISPUTE", observed_version=None,
+                reason="revised outcome after draft",
+            ))
+    async with sessions_fixture() as session:
+        with pytest.raises(FailureConflict, match="superseded"):
+            await submit_candidate(session, "t", candidate.id, 1)

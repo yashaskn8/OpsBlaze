@@ -149,9 +149,8 @@ policy/rollout drafts in the same transaction as the fact-backed taxonomy
 revision. Stale classification evidence can no longer leave a policy draft
 presented as valid.
 
-E8 conformance v2 also verifies that an applied effect ID is bound to
-the SHA-256 digest of its original tenant, incident, action, target,
-fence, expected version and expiry. A mismatched duplicate is rejected
-without a second mutation. Historical receipts remain queryable for
-reconciliation, but a legacy effect lacking the permit digest cannot be
-re-applied by blind retry.
+E3 classification now rejects older outcome revisions at ingestion and
+requires a current, classified source case both when drafting and when
+submitting an improvement candidate for evaluation. A later outcome
+revision therefore blocks stale candidates even if a separate invalidation
+worker has not yet updated the cluster projection.
