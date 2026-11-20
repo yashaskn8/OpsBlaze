@@ -6,13 +6,15 @@ import json
 import secrets
 from uuid import UUID, NAMESPACE_URL, uuid4, uuid5
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.evaluation.smoke import sha
+from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.learning.failures import validate_change
 from backend.models import (
-    EvaluationManifest, ImprovementCandidate, PolicyBundle, PolicyRollout,
+    EvaluationManifest, ImprovementCandidate, Incident, PolicyAssignment,
+    PolicyBundle, PolicyRollout, PolicyShadowObservation,
 )
 
 
@@ -133,3 +135,102 @@ async def stop_rollout(
         rollout.state = action
         rollout.version += 1
     return rollout
+
+
+async def record_shadow_observation(
+    session: AsyncSession, tenant_id: str, rollout_id: UUID, incident_id: UUID,
+) -> PolicyShadowObservation | None:
+    """Rehearse cohort choice without installing candidate policy or any effect."""
+    async with session.begin():
+        rollout = await session.scalar(
+            select(PolicyRollout).where(
+                PolicyRollout.id == rollout_id,
+                PolicyRollout.tenant_id == tenant_id,
+            ).with_for_update()
+        )
+        if rollout is None:
+            return None
+        if rollout.state != "DRAFT":
+            raise PolicyConflict("stopped rollout cannot record new shadow decisions")
+        bundle = await session.scalar(
+            select(PolicyBundle).where(
+                PolicyBundle.id == rollout.bundle_id,
+                PolicyBundle.tenant_id == tenant_id,
+            )
+        )
+        if (
+            bundle is None or bundle.state != "DRAFT"
+            or sha(bundle.content) != bundle.content_digest
+        ):
+            raise PolicyConflict("candidate bundle digest or state changed")
+        incident = await session.scalar(
+            select(Incident.id).where(
+                Incident.id == incident_id,
+                Incident.tenant_id == tenant_id,
+            )
+        )
+        if incident is None:
+            return None
+        assignment = await session.get(
+            PolicyAssignment, (tenant_id, incident_id)
+        )
+        if (
+            assignment is None
+            or assignment.policy_id != INCUMBENT_POLICY_ID
+            or assignment.bundle_id is not None
+            or assignment.rollout_id is not None
+        ):
+            raise PolicyConflict("incident not pinned to the known-good policy")
+
+        selected = dry_run_assignment(rollout, tenant_id, incident_id)
+        shadow_id = uuid5(
+            NAMESPACE_URL,
+            f"opsblaze/shadow/{tenant_id}/{rollout_id}/{incident_id}",
+        )
+        existing = await session.get(PolicyShadowObservation, shadow_id)
+        if existing is not None:
+            if (
+                existing.tenant_id != tenant_id
+                or existing.bundle_digest != bundle.content_digest
+                or existing.would_assign != selected
+            ):
+                raise PolicyConflict("recorded shadow decision cannot be rewritten")
+            return existing
+        shadow = PolicyShadowObservation(
+            id=shadow_id, tenant_id=tenant_id, rollout_id=rollout_id,
+            incident_id=incident_id, bundle_digest=bundle.content_digest,
+            would_assign=selected,
+        )
+        session.add(shadow)
+    return shadow
+
+
+async def shadow_summary(
+    session: AsyncSession, tenant_id: str, rollout_id: UUID,
+) -> dict | None:
+    rollout = await session.scalar(
+        select(PolicyRollout).where(
+            PolicyRollout.id == rollout_id, PolicyRollout.tenant_id == tenant_id,
+        )
+    )
+    if rollout is None:
+        return None
+    total = await session.scalar(
+        select(func.count()).select_from(PolicyShadowObservation).where(
+            PolicyShadowObservation.tenant_id == tenant_id,
+            PolicyShadowObservation.rollout_id == rollout_id,
+        )
+    )
+    selected = await session.scalar(
+        select(func.count()).select_from(PolicyShadowObservation).where(
+            PolicyShadowObservation.tenant_id == tenant_id,
+            PolicyShadowObservation.rollout_id == rollout_id,
+            PolicyShadowObservation.would_assign.is_(True),
+        )
+    )
+    return {
+        "rollout_id": str(rollout_id), "state": rollout.state,
+        "shadow_count": total or 0, "would_assign_count": selected or 0,
+        "candidate_exposure": 0, "preview_only": True,
+        "promotion_eligible": False,
+    }
