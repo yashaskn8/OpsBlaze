@@ -406,3 +406,103 @@ async def test_postgres_approval_revoke_and_dispatch_race_is_serialized(monkeypa
                 assert audit.revoked_by == "reviewer-3"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_parallel_outcome_witnesses_and_disputes_serialize_by_incident() -> None:
+    """Only one revision per change, even across concurrent PostgreSQL sessions."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.adapters.simulator import SimulatorAdapter
+    from backend.effects.gateway import execute_simulator_effect
+    from backend.effects.reservations import reserve_simulator_target
+    from backend.models import (
+        EffectReceipt, OutcomeRevision, ResourceEpoch, SimulatorTarget,
+    )
+    from backend.outcomes import (
+        OutcomeConflict, adjudicate_simulator, dispute_outcome,
+    )
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant_id = "outcome-race-" + uuid4().hex[:12]
+    try:
+        async with sessions() as session:
+            async with session.begin():
+                session.add(SimulatorTarget(
+                    tenant_id=tenant_id, target_id="checkout",
+                    version=1, healthy=False, last_fence=0,
+                ))
+                session.add(ResourceEpoch(
+                    tenant_id=tenant_id, target_id="checkout",
+                    latest_fence=0, version_seen=1,
+                ))
+        async with sessions() as session:
+            incident = await admit_incident(
+                session, tenant_id, "witness", IncidentCreate(target_id="checkout"),
+            )
+        permit = await reserve_simulator_target(
+            sessions, tenant_id, "checkout", incident.id, "a" * 64,
+        )
+        adapter = SimulatorAdapter(sessions)
+        assert await execute_simulator_effect(
+            sessions, adapter, permit,
+        ) == "VERIFIED"
+        async with sessions() as session:
+            receipt = await session.scalar(
+                select(EffectReceipt).where(EffectReceipt.incident_id == incident.id)
+            )
+            effect_id = receipt.id
+
+        results = await asyncio.gather(*(
+            adjudicate_simulator(
+                sessions, adapter, tenant_id, incident.id, effect_id,
+            )
+            for _ in range(6)
+        ))
+        assert results == ["VERIFIED"] * 6
+
+        async with sessions() as session:
+            outcome = await session.scalar(
+                select(OutcomeRevision).where(
+                    OutcomeRevision.incident_id == incident.id
+                )
+            )
+            assert outcome.revision == 1
+            outcome_id = outcome.id
+
+        async def dispute(index: int) -> str:
+            async with sessions() as session:
+                try:
+                    row = await dispute_outcome(
+                        session, tenant_id, outcome_id, 1,
+                        f"reviewer {index} found contradictory independent evidence",
+                    )
+                    assert row is not None
+                    return "DISPUTED"
+                except OutcomeConflict:
+                    return "STALE"
+
+        disputes = await asyncio.gather(*(dispute(i) for i in range(6)))
+        assert disputes.count("DISPUTED") == 1
+        assert disputes.count("STALE") == 5
+        assert await adjudicate_simulator(
+            sessions, adapter, tenant_id, incident.id, effect_id,
+        ) == "DISPUTED"
+
+        async with sessions() as session:
+            rows = (await session.scalars(
+                select(OutcomeRevision)
+                .where(OutcomeRevision.incident_id == incident.id)
+                .order_by(OutcomeRevision.revision)
+            )).all()
+            assert [(row.revision, row.witness_source) for row in rows] == [
+                (1, "SIMULATOR_WITNESS"), (2, "OPERATOR_DISPUTE"),
+            ]
+    finally:
+        await engine.dispose()

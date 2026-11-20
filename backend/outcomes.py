@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import SimulatorAdapter
-from backend.models import EffectReceipt, OutcomeRevision
+from backend.models import EffectReceipt, Incident, OutcomeRevision
 from backend.learning.invalidation import invalidate_outcome_dependents
 
 
@@ -55,6 +55,15 @@ async def adjudicate_simulator(
     observed_version = None if observation is None else observation[0]
     async with sessions() as session:
         async with session.begin():
+            # Lock the stable parent before allocating a new outcome revision.
+            # PostgreSQL serializes all witnesses and disputes for this incident.
+            incident = await session.scalar(
+                select(Incident.id)
+                .where(Incident.id == incident_id, Incident.tenant_id == tenant_id)
+                .with_for_update()
+            )
+            if incident is None:
+                raise OutcomeConflict("incident missing")
             previous = await latest_outcome(session, tenant_id, incident_id)
             if previous is not None:
                 if previous.witness_source == "OPERATOR_DISPUTE":
@@ -84,10 +93,20 @@ async def dispute_outcome(
         prior = await session.scalar(
             select(OutcomeRevision).where(
                 OutcomeRevision.id == outcome_id, OutcomeRevision.tenant_id == tenant_id
-            ).with_for_update()
+            )
         )
         if prior is None:
             return None
+        # The immutable outcome row itself is not a serialization point:
+        # new revisions insert a different row. Lock the shared incident
+        # first, then recheck the latest revision under that lock.
+        incident = await session.scalar(
+            select(Incident.id)
+            .where(Incident.id == prior.incident_id, Incident.tenant_id == tenant_id)
+            .with_for_update()
+        )
+        if incident is None:
+            raise OutcomeConflict("incident missing")
         latest = await latest_outcome(session, tenant_id, prior.incident_id)
         if (
             latest is None or latest.id != prior.id

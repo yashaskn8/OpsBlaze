@@ -17,7 +17,7 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 | P3 — Forensic graph | Evidence→hypothesis→plan→effect→outcome lineage, explicitly missing refs | Comprehensive OpenTelemetry span linking and performance checks |
 | S1 — Paired replay | Isolated, time-sealed deterministic twin fixtures with an independent postcondition | Actual paired model-vs-runbook controlled trial, statistical inference |
 | E1 — Experience capture | Consent-scoped capsules with scheduled expiry scrubbing, outcome-reversal quarantine and dependent-lesson revocation | Cross-store deletion and approved classification/retention controls |
-| E2 — Outcome adjudication | Separate simulator witness, append-only outcomes and disputes | Independent real-world recovery oracle and delayed outcome reconciliation |
+| E2 — Outcome adjudication | Separate simulator witness, append-only outcomes, parent-row-serialized concurrent disputes | Independent real-world recovery oracle and delayed outcome reconciliation |
 | E3 — Failure learning | Fact-backed cases, superseded-outcome rejection, corrected taxonomy, candidate→rollout invalidation | Independent reviewers, causal attribution beyond typed simulator facts |
 | E4 — Validated memory | Typed lesson drafts, source/consent checks, validation/revoke | Release gate for activation, measured retrieval effect and revocation propagation |
 | E5 — Evaluation | Frozen paired smoke manifest, integrity checks, negative controls, bounded costs and conservative uncertainty interval | Independent hidden-label store, measured recovery-cost outcomes, powered intervals and separate evaluator authority |
