@@ -176,3 +176,50 @@ async def test_redteam_revocation_terminates_open_sse_before_next_event(sessions
         sessions_fixture, "alpha", incident.id, 0,
         actor_id="oidc:" + "d" * 32,
     )) == 1
+
+
+@pytest.mark.asyncio
+async def test_redteam_oversized_sse_and_poll_cursors_are_rejected(sessions_fixture):
+    from httpx import ASGITransport, AsyncClient
+
+    from backend.api import app
+    from backend.database import get_session
+    from backend.settings import Settings, get_settings
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "cursor-bounds",
+            IncidentCreate(target_id="checkout"),
+        )
+
+    async def override_session():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        local_token="cursor-test-token", review_token="distinct-reviewer-token",
+    )
+    headers = {"X-Tenant-Id": "alpha", "X-OpsBlaze-Token": "cursor-test-token"}
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+        ) as client:
+            events_url = f"/v1/incidents/{incident.id}/events"
+            stream_url = f"/v1/incidents/{incident.id}/stream"
+            for cursor in ("-1", "9223372036854775808", "9" * 80):
+                event_response = await client.get(
+                    events_url, params={"after_id": cursor}, headers=headers,
+                )
+                assert event_response.status_code == 422
+                stream_response = await client.get(
+                    stream_url, params={"after_id": cursor}, headers=headers,
+                )
+                assert stream_response.status_code in {400, 422}
+            for header in ("9" * 80, "9223372036854775808", "not-a-number"):
+                response = await client.get(
+                    stream_url, headers={**headers, "Last-Event-ID": header},
+                )
+                assert response.status_code == 400
+    finally:
+        app.dependency_overrides.clear()
