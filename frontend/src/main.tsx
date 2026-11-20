@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 
@@ -43,6 +43,15 @@ type Lineage = {
   missing_refs: { source: string; missing_target: string; relation: string }[];
 };
 
+type UIEvent = {
+  id: number;
+  kind: string;
+  projection_version: number;
+  created_at: string;
+};
+
+type UIEventPage = { events: UIEvent[]; last_id: number };
+
 function detail(value: unknown): string {
   if (value && typeof value === "object" && "detail" in value) {
     const message = (value as { detail: unknown }).detail;
@@ -61,6 +70,9 @@ function App() {
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [effects, setEffects] = useState<Effect[]>([]);
   const [lineage, setLineage] = useState<Lineage | null>(null);
+  const [recent, setRecent] = useState<Incident[]>([]);
+  const [events, setEvents] = useState<UIEvent[]>([]);
+  const [connection, setConnection] = useState<"SYNCING" | "LIVE" | "STALE">("SYNCING");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -83,6 +95,7 @@ function App() {
       setEvidence([]);
       setEffects([]);
       setLineage(null);
+      setEvents([]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
@@ -128,6 +141,79 @@ function App() {
     }
   }
 
+
+
+  async function loadRecent() {
+    setError("");
+    try {
+      const response = await fetch("/v1/incidents", { headers: headers() });
+      const data: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(data));
+      setRecent(data as Incident[]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not list incidents");
+    }
+  }
+
+  function chooseIncident(item: Incident) {
+    setIncident(item);
+    setPlan(null);
+    setEvidence([]);
+    setEffects([]);
+    setLineage(null);
+    setEvents([]);
+    setConnection("SYNCING");
+  }
+
+  useEffect(() => {
+    const selectedId = incident?.id;
+    if (!selectedId || !token || !tenant) return;
+    let disposed = false;
+    let afterId = 0;
+    setConnection("SYNCING");
+
+    async function pollEvents() {
+      try {
+        const response = await fetch(
+          "/v1/incidents/" + selectedId + "/events?after_id=" + afterId,
+          { headers: { "X-Tenant-Id": tenant, "X-OpsBlaze-Token": token } }
+        );
+        const data: unknown = await response.json();
+        if (!response.ok) throw new Error(detail(data));
+        if (disposed) return;
+        const page = data as UIEventPage;
+        afterId = page.last_id;
+        if (page.events.length) {
+          setEvents(previous => [...previous, ...page.events].slice(-20));
+          // Notifications cannot authorize actions; fetch fresh server truth.
+          const snapshot = await fetch(
+            "/v1/incidents/" + selectedId,
+            { headers: { "X-Tenant-Id": tenant, "X-OpsBlaze-Token": token } }
+          );
+          const current: unknown = await snapshot.json();
+          if (!snapshot.ok) throw new Error(detail(current));
+          if (!disposed) {
+            const incoming = current as Incident;
+            setIncident(previous =>
+              previous && previous.id === incoming.id
+                && previous.status_version > incoming.status_version
+                  ? previous : incoming
+            );
+          }
+        }
+        if (!disposed) setConnection("LIVE");
+      } catch {
+        if (!disposed) setConnection("STALE");
+      }
+    }
+
+    void pollEvents();
+    const timer = window.setInterval(() => { void pollEvents(); }, 4000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [incident?.id, tenant, token]);
 
   async function decide(action: "cancel" | "acknowledge") {
     if (!incident) return;
@@ -179,7 +265,7 @@ function App() {
   return (
     <main>
       <header><span className="mark">OB</span><div><strong>OpsBlaze</strong><small>Controlled incident recovery lab</small></div></header>
-      <div className="intro"><p className="eyebrow">TITAN-20 / B1</p><h1>Incident intake</h1><p>Persist an incident and its workflow-start intent.</p></div>
+      <div className="intro"><p className="eyebrow">TITAN-20 / OPERATOR WORKBENCH</p><h1>Incident operations</h1><p>Admit incidents, inspect evidence, and review simulator-only recovery.</p></div>
       <div className="layout">
         <section>
           <h2>New incident</h2><p className="muted">Development only. Token stays in browser memory.</p>
@@ -190,12 +276,17 @@ function App() {
             <p className="key">Idempotency key <code>{key}</code></p>
             <div className="actions">
               <button type="submit" disabled={busy}>{busy ? "Working..." : "Admit incident"}</button>
-              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setPlan(null); setEvidence([]); setEffects([]); setLineage(null); setError(""); }}>New request key</button>
+              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setPlan(null); setEvidence([]); setEffects([]); setLineage(null); setEvents([]); setConnection("SYNCING"); setError(""); }}>New request key</button>
             </div>
           </form>
         </section>
         <section aria-live="polite">
-          <h2>Admission result</h2>
+          <h2>Incident snapshot</h2>
+          <p className={"connection " + connection.toLowerCase()}>
+            {connection === "LIVE" ? "Live polling — server snapshot authoritative"
+              : connection === "STALE" ? "Connection stale — action controls disabled"
+              : "Synchronizing incident events"}
+          </p>
           {error && <p className="error" role="alert">{error}</p>}
           {incident ? <>
             <span className="status">{incident.status_projection.replaceAll("_", " ")}</span>
@@ -209,11 +300,11 @@ function App() {
               <button type="button" className="secondary" disabled={busy} onClick={refresh}>Refresh status</button>
               {incident.status_projection === "AWAITING_APPROVAL" && (
                 <>
-                  {!plan && <button type="button" disabled={busy} onClick={() => decide("acknowledge")}>Acknowledge review</button>}
+                  {!plan && <button type="button" disabled={busy || connection !== "LIVE"} onClick={() => decide("acknowledge")}>Acknowledge review</button>}
                 </>
               )}
               {["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL"].includes(incident.status_projection) && (
-                <button type="button" className="secondary" disabled={busy} onClick={() => decide("cancel")}>Request cancellation</button>
+                <button type="button" className="secondary" disabled={busy || connection !== "LIVE"} onClick={() => decide("cancel")}>Request cancellation</button>
               )}
             </div>
             {plan && <div className="plan">
@@ -223,8 +314,8 @@ function App() {
               <p className="muted">Digest</p><code>{plan.plan_digest}</code>
               {plan.status === "PROPOSED" && incident.status_projection === "AWAITING_APPROVAL" &&
                 <div className="actions">
-                  <button type="button" disabled={busy} onClick={() => decidePlan("APPROVE")}>Approve simulator plan</button>
-                  <button type="button" className="secondary" disabled={busy} onClick={() => decidePlan("REJECT")}>Reject</button>
+                  <button type="button" disabled={busy || connection !== "LIVE"} onClick={() => decidePlan("APPROVE")}>Approve simulator plan</button>
+                  <button type="button" className="secondary" disabled={busy || connection !== "LIVE"} onClick={() => decidePlan("REJECT")}>Reject</button>
                 </div>
               }
             </div>}
@@ -258,6 +349,35 @@ function App() {
           </> : <p className="muted empty">No incident selected yet.</p>}
         </section>
       </div>
+      <section className="incident-history">
+        <div className="history-header">
+          <h2>Recent incidents</h2>
+          <button type="button" className="secondary" disabled={!token || busy} onClick={loadRecent}>
+            Load from server
+          </button>
+        </div>
+        {recent.length === 0 ? <p className="muted">Load the latest tenant-scoped incidents.</p> :
+          <div className="recent-items">
+            {recent.map(item => (
+              <button type="button" className="recent-item" key={item.id}
+                onClick={() => chooseIncident(item)}>
+                <strong>{item.target_id}</strong>
+                <span>{item.status_projection.replaceAll("_", " ")}</span>
+                <code>{item.id}</code>
+              </button>
+            ))}
+          </div>
+        }
+        {incident && <div className="audit">
+          <h3>Durable event history</h3>
+          {events.length === 0 ? <p className="muted">No events loaded yet.</p> :
+            events.map(event => <div className="audit-item" key={event.id}>
+              <strong>#{event.id} — {event.kind.replaceAll("_", " ")}</strong>
+              <span>Version {event.projection_version}</span>
+            </div>)
+          }
+        </div>}
+      </section>
       <footer>Simulator-only recovery. Real targets, production identities, AI model integration and independently calibrated evaluation are not enabled.</footer>
     </main>
   );

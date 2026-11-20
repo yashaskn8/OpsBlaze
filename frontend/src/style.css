@@ -41,3 +41,15 @@ footer { margin-top: 28px; font-size: 13px; }
 .trace-node strong { text-transform: capitalize; margin-right: 10px; }
 .trace-node span { color: #a5e6cc; }
 .trace-node code { font-size: 10px; }
+
+.connection { margin: 12px 0 8px; font-size: 12px; color: #a5d8ff; }
+.connection.stale { color: #ffbfca; }
+.connection.syncing { color: #d9c9a2; }
+.incident-history { margin-top: 20px; min-height: 0; }
+.history-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.history-header h2 { margin: 0; }
+.recent-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 9px; margin-top: 15px; }
+.recent-item { background: #0d1b30; border: 1px solid #35465d; text-align: left; padding: 12px; font-weight: normal; }
+.recent-item strong, .recent-item span { display: block; margin-bottom: 8px; }
+.recent-item span { color: #9ac7e5; font-size: 12px; }
+.recent-item code { font-size: 10px; color: #a9b7c8; }

@@ -281,3 +281,9 @@ the client must refetch the snapshot and send a version-bound mutation.
 The event endpoint is bounded polling JSON, not yet SSE. Frontend
 reconnect/gap recovery, a complete role-aware approval cockpit and load
 testing remain for P1 production readiness.
+
+The React workbench now offers recent tenant incident selection, a bounded
+durable-event timeline, and four-second event polling that refetches the
+authoritative versioned snapshot after changes. Controls are disabled if
+the last event poll failed or has not synchronized. The API remains the
+source of authorization; the UI never trusts event notifications as approval.
