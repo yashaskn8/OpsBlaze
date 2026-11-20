@@ -91,6 +91,10 @@ async def set_state(
             if receipt is None:
                 raise ValueError("unknown receipt")
             if state == receipt.state:
+                # SENT is a one-winner boundary: a second worker must query
+                # by effect identity, not call the mutating adapter again.
+                if state == "SENT":
+                    raise EffectConflict("effect already dispatched")
                 return
             if state not in allowed.get(receipt.state, set()):
                 raise EffectConflict(f"invalid receipt transition {receipt.state} -> {state}")
@@ -210,8 +214,20 @@ async def execute_simulator_effect(
     try:
         await set_state(sessions, effect_id, "SENT", plan_id=plan_id)
     except EffectConflict:
-        await set_state(sessions, effect_id, "NEEDS_REVIEW")
-        return "NEEDS_REVIEW"
+        async with sessions() as session:
+            current = await session.get(EffectReceipt, effect_id)
+            state = current.state if current else None
+        if state == "PREPARED":
+            # Approval/fence refusal before the dispatch boundary.
+            try:
+                await set_state(sessions, effect_id, "NEEDS_REVIEW")
+            except EffectConflict:
+                # A competing worker may have dispatched in the meantime.
+                return await reconcile_effect(sessions, adapter, effect_id)
+            return "NEEDS_REVIEW"
+        # Another worker already sent or completed the exact effect.
+        # Status-only reconciliation is safe even after a lost reply.
+        return await reconcile_effect(sessions, adapter, effect_id)
     try:
         observed_version = await adapter.apply(effect_id, permit)
     except (TimeoutError, ConnectionError):
@@ -221,5 +237,10 @@ async def execute_simulator_effect(
         await set_state(sessions, effect_id, "FAILED")
         return "FAILED"
 
-    await set_state(sessions, effect_id, "CONFIRMED", observed_version)
+    try:
+        await set_state(sessions, effect_id, "CONFIRMED", observed_version)
+    except EffectConflict:
+        # A concurrent status-only reconciler may already have verified the
+        # same effect after it was applied. Never retry apply.
+        return await reconcile_effect(sessions, adapter, effect_id)
     return await reconcile_effect(sessions, adapter, effect_id)
