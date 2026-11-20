@@ -1037,3 +1037,33 @@ async def review_failure(
         "origin_code": case.origin_code,
         "classification_version": case.classification_version,
     }
+
+
+@app.get("/v1/incidents/{incident_id}/assessments")
+async def incident_decision_assessments(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    from sqlalchemy import select
+    from backend.models import DecisionAssessment
+
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    rows = (await session.scalars(
+        select(DecisionAssessment)
+        .where(
+            DecisionAssessment.tenant_id == tenant_id,
+            DecisionAssessment.incident_id == incident_id,
+        )
+        .order_by(DecisionAssessment.step_no)
+        .limit(30)
+    )).all()
+    return [
+        {"id": str(row.id), "step_no": row.step_no,
+         "feature_version": row.feature_version,
+         "threshold_version": row.threshold_version,
+         "risk_score": row.risk_score,
+         "reason": row.reason, "outcome": row.outcome}
+        for row in rows
+    ]

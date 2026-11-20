@@ -352,3 +352,16 @@ even if a previously approved adapter version becomes disabled.
 Run `python -m backend.adapters.conformance` after changing simulator
 code and before using the local approval flow. This is a laboratory
 safety gate, not external production certification.
+
+## A4 typed decision assessments
+
+Before a simulator plan is proposed, the investigator records a
+versioned DecisionAssessment. Hard gates verify both allowed evidence
+sources, tenant/incident scope, evidence hashes, recent observation times,
+target-version consistency, and any denied probe or exhausted budget.
+Failures are explicit ABSTAINED reasons rather than invented confidence.
+GET /v1/incidents/{id}/assessments returns the decision lineage.
+
+The lab risk_score is a deterministic 0/100 guardrail indicator,
+**not an empirically calibrated probability**. A4 calibration
+requires independent development and held-out data before production use.

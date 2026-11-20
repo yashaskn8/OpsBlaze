@@ -1,0 +1,121 @@
+
+"""A4 deterministic hard gates; risk scores are NOT calibrated probabilities."""
+
+import hashlib
+import json
+from datetime import datetime, timedelta, timezone
+from uuid import UUID, uuid4
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from backend.adapters.simulator import utc
+from backend.models import (
+    DecisionAssessment, Evidence, Incident, ProbeCall, SimulatorTarget,
+)
+from backend.settings import get_settings
+
+FEATURE_VERSION = "simulator-evidence-v1"
+THRESHOLD_VERSION = "UNCALIBRATED-hard-gates-v1"
+
+
+async def assess_decision(
+    sessions: async_sessionmaker[AsyncSession],
+    tenant_id: str, incident_id: UUID,
+    step_no: int, evidence_ids: list[str],
+) -> DecisionAssessment | None:
+    if step_no < 1:
+        raise ValueError("assessment step must be positive")
+    canonical = json.dumps(evidence_ids, separators=(",", ":"), sort_keys=False)
+    digest = hashlib.sha256(canonical.encode()).hexdigest()
+
+    async with sessions() as session:
+        async with session.begin():
+            incident = await session.scalar(
+                select(Incident).where(
+                    Incident.tenant_id == tenant_id,
+                    Incident.id == incident_id,
+                ).with_for_update()
+            )
+            if incident is None:
+                return None
+            existing = await session.scalar(
+                select(DecisionAssessment).where(
+                    DecisionAssessment.incident_id == incident_id,
+                    DecisionAssessment.step_no == step_no,
+                )
+            )
+            if existing is not None:
+                # A different evidence snapshot cannot overwrite an old assessment.
+                if existing.evidence_digest != digest:
+                    return existing
+                return existing
+
+            reason = "ACCEPTED"
+            if len(evidence_ids) != 2 or len(set(evidence_ids)) != 2:
+                reason = "MISSING_EVIDENCE"
+            elif incident.probe_used > get_settings().max_probe_calls_per_incident:
+                reason = "BUDGET_EXHAUSTED"
+            else:
+                probes = (await session.scalars(
+                    select(ProbeCall).where(
+                        ProbeCall.incident_id == incident_id,
+                        ProbeCall.outcome == "DENIED",
+                    ).limit(1)
+                )).first()
+                if probes is not None:
+                    reason = "TOOL_BLOCKED"
+                else:
+                    try:
+                        refs = [UUID(value) for value in evidence_ids]
+                    except (ValueError, TypeError):
+                        reason = "INVALID_REFERENCE"
+                    else:
+                        evidence = (await session.scalars(
+                            select(Evidence).where(
+                                Evidence.tenant_id == tenant_id,
+                                Evidence.incident_id == incident_id,
+                                Evidence.id.in_(refs),
+                            )
+                        )).all()
+                        sources = {row.source for row in evidence}
+                        if (
+                            len(evidence) != 2
+                            or sources != {"simulator.health", "simulator.version"}
+                            or any(row.validity != "VALID" for row in evidence)
+                        ):
+                            reason = "INVALID_EVIDENCE"
+                        elif any(
+                            hashlib.sha256(row.redacted_excerpt.encode()).hexdigest()
+                            != row.sha256
+                            for row in evidence
+                        ):
+                            reason = "HASH_MISMATCH"
+                        elif any(
+                            utc(row.observed_at) < datetime.now(timezone.utc) - timedelta(minutes=5)
+                            for row in evidence
+                        ):
+                            reason = "STALE_EVIDENCE"
+                        else:
+                            target = await session.get(
+                                SimulatorTarget, (tenant_id, incident.target_id)
+                            )
+                            versions = {row.target_version for row in evidence}
+                            if (
+                                target is None or len(versions) != 1
+                                or target.version not in versions
+                                or any(row.target_id != incident.target_id for row in evidence)
+                            ):
+                                reason = "VERSION_CHANGED"
+
+            assessment = DecisionAssessment(
+                id=uuid4(), tenant_id=tenant_id, incident_id=incident_id,
+                step_no=step_no, feature_version=FEATURE_VERSION,
+                threshold_version=THRESHOLD_VERSION,
+                evidence_digest=digest,
+                risk_score=0 if reason == "ACCEPTED" else 100,
+                reason=reason,
+                outcome="PROPOSED" if reason == "ACCEPTED" else "ABSTAINED",
+            )
+            session.add(assessment)
+        return assessment

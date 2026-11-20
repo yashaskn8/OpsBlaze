@@ -10,6 +10,7 @@ from backend.models import HypothesisStep
 from backend.probes.gateway import ProbeDenied, invoke_probe
 from backend.plans import PlanConflict, propose_simulator_plan
 from backend.investigator.advisory import advise_after_unhealthy
+from backend.investigator.abstain import assess_decision
 
 
 async def write_step(
@@ -95,14 +96,22 @@ async def inspect(
         return "ABSTAINED"
     if version.evidence_id:
         ids.append(str(version.evidence_id))
+    assessment = await assess_decision(
+        sessions, tenant_id, incident_id, 2, ids
+    )
+    permitted = (
+        version.outcome == "OK"
+        and assessment is not None
+        and assessment.outcome == "PROPOSED"
+    )
     await write_step(
         sessions, incident_id, 2, ids,
-        "SIMULATOR_REVIEW_REQUIRED" if version.outcome == "OK" else "ABSTAINED",
-        {"simulated_target_unhealthy": 1} if version.outcome == "OK" else {},
+        "SIMULATOR_REVIEW_REQUIRED" if permitted else "ABSTAINED",
+        {"simulated_target_unhealthy": 1} if permitted else {},
         "simulator.version",
     )
 
-    if version.outcome != "OK":
+    if not permitted:
         return "ABSTAINED"
     try:
         await propose_simulator_plan(
