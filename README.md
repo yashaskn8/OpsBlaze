@@ -118,3 +118,26 @@ The read-only API offers evidence, hypothesis steps, and effect receipt views.
 A4 conservatively abstains when the simulator target is absent or evidence is
 insufficient. This is **not** a trained LLM or empirically calibrated abstention
 policy; those require a provider, model evaluation fixtures, and held-out data.
+
+## Local plan decision and simulated recovery
+
+Create a single isolated simulator fixture after migrating the database:
+
+```bash
+python -m backend.workers.seed_simulator --tenant demo --target checkout
+```
+
+Start the API, dispatcher, Temporal worker, and React development server as
+documented above. Admit an incident for `checkout`, then refresh its status
+until the read-only investigator creates a simulator plan and reaches
+`AWAITING_APPROVAL`. Use `GET /v1/incidents/{id}/plans` to inspect its
+action, evidence IDs, digest, target version and plan version.
+
+POST `/v1/plans/{plan_id}/decisions` with
+`{"decision":"APPROVE"}` or `{"decision":"REJECT"}` and the current
+numeric `If-Match` plan version. The decision and outbox signal commit
+atomically. On approval the Temporal worker rechecks the plan and applies only
+to the local simulator, with fence/version CAS and an effect receipt. It
+projects VERIFIED only after independent simulator observation. The dev token
+is not production reviewer authentication. Never connect a real adapter
+without a separate role/approval and conformance gate.

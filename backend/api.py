@@ -220,3 +220,77 @@ async def incident_effects(
          "observed_version": row.observed_version}
         for row in items
     ]
+
+
+from typing import Literal
+from pydantic import BaseModel, ConfigDict
+
+
+class PlanDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["APPROVE", "REJECT"]
+
+
+@app.get("/v1/incidents/{incident_id}/plans")
+async def incident_plans(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    from sqlalchemy import select
+    from backend.models import IncidentPlan
+
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    plans = (await session.scalars(
+        select(IncidentPlan)
+        .where(IncidentPlan.incident_id == incident_id, IncidentPlan.tenant_id == tenant_id)
+        .limit(10)
+    )).all()
+    return [
+        {"id": str(plan.id), "action_id": plan.action_id,
+         "target_id": plan.target_id, "status": plan.status,
+         "version": plan.version, "plan_digest": plan.plan_digest,
+         "expected_version": plan.expected_version,
+         "evidence_ids": plan.evidence_ids}
+        for plan in plans
+    ]
+
+
+@app.post("/v1/plans/{plan_id}/decisions", status_code=201)
+async def decide_incident_plan(
+    plan_id: UUID,
+    payload: PlanDecisionRequest,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.plans import PlanConflict, decide_plan
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be the plan version")
+    try:
+        plan = await decide_plan(
+            session, tenant_id, plan_id, int(version), payload.decision
+        )
+    except PlanConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if plan is None:
+        raise HTTPException(404, "plan not found")
+    return {"id": str(plan.id), "status": plan.status, "version": plan.version}
+
+
+@app.get("/v1/targets/{target_id}/simulator")
+async def simulator_target_view(
+    target_id: str,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.models import SimulatorTarget
+
+    target = await session.get(SimulatorTarget, (tenant_id, target_id))
+    if target is None:
+        raise HTTPException(404, "simulator target not found")
+    return {"target_id": target.target_id, "version": target.version,
+            "healthy": target.healthy, "adapter": "simulator"}
