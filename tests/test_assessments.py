@@ -134,3 +134,48 @@ async def test_assessment_cannot_be_reused_for_another_evidence_snapshot(assessm
         )
         assert saved.id == accepted.id
         assert saved.evidence_digest == accepted.evidence_digest
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "damage", ["late_denied_probe", "target_version", "evidence_hash", "source", "future_time"],
+)
+async def test_redteam_positive_assessment_replay_rechecks_current_safety(
+    assessment_lab, damage,
+):
+    sessions, incident_id, evidence_ids = assessment_lab
+    accepted = await assess_decision(sessions, "t", incident_id, 2, evidence_ids)
+    assert accepted.outcome == "PROPOSED"
+
+    if damage == "late_denied_probe":
+        denied = await invoke_probe(
+            sessions, "t", incident_id, 3, "shell.exec",
+        )
+        assert denied.outcome == "DENIED"
+    else:
+        async with sessions() as session:
+            async with session.begin():
+                if damage == "target_version":
+                    target = await session.get(SimulatorTarget, ("t", "checkout"))
+                    target.version += 1
+                else:
+                    evidence = await session.get(Evidence, UUID(evidence_ids[0]))
+                    if damage == "evidence_hash":
+                        evidence.redacted_excerpt = '{"healthy":true}'
+                    elif damage == "source":
+                        evidence.source = "unknown.telemetry"
+                    else:
+                        evidence.observed_at = datetime.now(timezone.utc) + timedelta(days=1)
+
+    assert await assess_decision(
+        sessions, "t", incident_id, 2, evidence_ids,
+    ) is None
+    async with sessions() as session:
+        persisted = await session.scalar(
+            select(DecisionAssessment).where(
+                DecisionAssessment.incident_id == incident_id,
+                DecisionAssessment.step_no == 2,
+            )
+        )
+        assert persisted.id == accepted.id
+        assert persisted.outcome == "PROPOSED"  # immutable forensic history
