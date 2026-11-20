@@ -191,3 +191,11 @@ pause/rollback. These checks prevent an operator-only token from
 changing review decisions. As before, this is a developer-mode
 capability boundary, not independent production identity or release
 authorization.
+
+A local plan approval also pins `OPSBLAZE_REVIEW_EPOCH` (default 1).
+Increment this integer when revoking the entire local reviewer
+credential set. The simulator gateway rechecks it before a new effect;
+older approved plans fail closed to NEEDS_REVIEW. Existing effect
+receipts remain reconcilable to avoid inventing outcomes. This is a
+coarse developer-mode revocation checkpoint, **not** real per-user
+revocation or an atomic distributed cancellation protocol.

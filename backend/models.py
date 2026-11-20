@@ -238,6 +238,7 @@ class IncidentPlan(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     decided_by: Mapped[str | None] = mapped_column(String(48))
+    review_epoch: Mapped[int | None] = mapped_column(Integer)
 
 
 class OutcomeRevision(Base):

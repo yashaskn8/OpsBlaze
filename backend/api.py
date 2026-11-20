@@ -305,6 +305,7 @@ async def decide_incident_plan(
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
     reviewer_identity: str = Depends(local_reviewer),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     from backend.plans import PlanConflict, decide_plan
 
@@ -315,6 +316,7 @@ async def decide_incident_plan(
         plan = await decide_plan(
             session, tenant_id, plan_id, int(version), payload.decision,
             decided_by=reviewer_identity,
+            review_epoch=settings.review_epoch,
         )
     except PlanConflict as exc:
         raise HTTPException(409, str(exc)) from exc

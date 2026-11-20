@@ -142,3 +142,26 @@ async def test_rehashed_but_semantically_false_evidence_cannot_trigger_effect(pr
         assert (await session.scalars(select(EffectReceipt))).all() == []
         target = await session.get(SimulatorTarget, ("a", "checkout"))
         assert target.healthy is False and target.version == 3
+
+
+@pytest.mark.asyncio
+async def test_reviewer_policy_epoch_revocation_blocks_new_effect(proposed_lab, monkeypatch):
+    from backend.settings import Settings
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        approved = await decide_plan(session, "a", plan_id, 1, "APPROVE")
+        assert approved.review_epoch == 1
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+    monkeypatch.setattr(
+        "backend.plans.get_settings",
+        lambda: Settings(review_epoch=2),
+    )
+    assert (
+        await execute_approved_simulator_plan(sessions, "a", incident_id, plan_id)
+        == "NEEDS_REVIEW"
+    )
+    async with sessions() as session:
+        assert (await session.scalars(select(EffectReceipt))).all() == []
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert target.healthy is False

@@ -15,6 +15,7 @@ from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
 from backend.models import DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, SimulatorTarget, UIEvent
 from backend.outcomes import adjudicate_simulator
+from backend.settings import get_settings
 
 
 class PlanConflict(Exception):
@@ -147,9 +148,13 @@ async def decide_plan(
     session: AsyncSession, tenant_id: str, plan_id: UUID,
     expected_version: int, decision: str,
     decided_by: str = "LOCAL_SERVICE_CALL",
+    review_epoch: int | None = None,
 ) -> IncidentPlan | None:
     if decision not in {"APPROVE", "REJECT"}:
         raise PlanConflict("unsupported decision")
+    epoch = get_settings().review_epoch if review_epoch is None else review_epoch
+    if epoch < 1:
+        raise PlanConflict("review policy epoch must be positive")
     async with session.begin():
         plan = await session.scalar(
             select(IncidentPlan)
@@ -176,6 +181,7 @@ async def decide_plan(
         plan.version += 1
         plan.decided_at = datetime.now(timezone.utc)
         plan.decided_by = decided_by
+        plan.review_epoch = epoch
         incident.status_projection = "PLAN_DECIDED"
         incident.status_version += 1
         incident.phase_entered_at = datetime.now(timezone.utc)
@@ -222,8 +228,9 @@ async def execute_approved_simulator_plan(
                 EffectReceipt.plan_digest == digest,
             )
         )
-        if existing is None and not await current_plan_evidence_is_intact(
-            session, plan
+        if existing is None and (
+            plan.review_epoch != get_settings().review_epoch
+            or not await current_plan_evidence_is_intact(session, plan)
         ):
             return "NEEDS_REVIEW"
     adapter = SimulatorAdapter(sessions)
