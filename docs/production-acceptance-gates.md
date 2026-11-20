@@ -38,7 +38,7 @@ pending-grant invalidation. Real-provider delivery remains untested.
 - Require separate security and release owners before enabling a digest.
   No model, fixture PASS or local operator may grant an external capability.
 
-Implemented lab evidence: sixteen disposable simulator scenarios. No real
+Implemented lab evidence: seventeen disposable simulator scenarios. No real
 adapter has been enabled; a green `LAB_PASS` is not provider certification.
 
 ## G3 — Multi-host recovery, restore and operational reliability: BLOCKED
