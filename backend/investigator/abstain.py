@@ -20,6 +20,68 @@ FEATURE_VERSION = "simulator-evidence-v1"
 THRESHOLD_VERSION = "UNCALIBRATED-hard-gates-v1"
 
 
+async def accepted_snapshot_is_still_safe(
+    session: AsyncSession, incident: Incident, tenant_id: str,
+    evidence_ids: list[str],
+) -> bool:
+    """Never replay a stale A4 positive after later probes or source edits."""
+    if (
+        len(evidence_ids) != 2
+        or len(set(evidence_ids)) != 2
+        or incident.probe_used > get_settings().max_probe_calls_per_incident
+    ):
+        return False
+    try:
+        refs = [UUID(item) for item in evidence_ids]
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if not await evidence_links_intact(session, incident.id, refs):
+        return False
+    denied = await session.scalar(
+        select(ProbeCall.id).where(
+            ProbeCall.incident_id == incident.id,
+            ProbeCall.outcome == "DENIED",
+        ).limit(1)
+    )
+    if denied is not None:
+        return False
+    target = await session.get(
+        SimulatorTarget, (tenant_id, incident.target_id)
+    )
+    if target is None or target.healthy:
+        return False
+    rows = (await session.scalars(
+        select(Evidence).where(
+            Evidence.tenant_id == tenant_id,
+            Evidence.incident_id == incident.id,
+            Evidence.id.in_(refs),
+        )
+    )).all()
+    if len(rows) != 2 or {row.source for row in rows} != {
+        "simulator.health", "simulator.version",
+    }:
+        return False
+    now = datetime.now(timezone.utc)
+    if any(
+        row.validity != "VALID"
+        or row.target_id != incident.target_id
+        or row.target_version != target.version
+        or row.source_version != "simulator-v1"
+        or row.classification != "INTERNAL"
+        or not timedelta(0) <= now - utc(row.observed_at) <= timedelta(minutes=5)
+        or hashlib.sha256(row.redacted_excerpt.encode()).hexdigest() != row.sha256
+        for row in rows
+    ):
+        return False
+    observed = {row.source: row.redacted_excerpt for row in rows}
+    return (
+        observed["simulator.health"] == '{"healthy":false}'
+        and observed["simulator.version"] == json.dumps(
+            {"version": target.version}, sort_keys=True, separators=(",", ":"),
+        )
+    )
+
+
 async def assess_decision(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: str, incident_id: UUID,
@@ -50,6 +112,10 @@ async def assess_decision(
                 # An old positive decision is never reusable for a new snapshot.
                 # Keep the durable assessment immutable; the caller must abstain.
                 if existing.evidence_digest != digest:
+                    return None
+                if existing.outcome == "PROPOSED" and not await accepted_snapshot_is_still_safe(
+                    session, incident, tenant_id, evidence_ids,
+                ):
                     return None
                 return existing
 
