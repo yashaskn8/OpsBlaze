@@ -310,3 +310,22 @@ acknowledged as delivered. This prevents concurrent dispatchers from
 signaling a workflow that another dispatcher has not finished starting.
 Lost acknowledgments remain recoverable through a stable Temporal
 workflow ID and replay of the pending start intent.
+
+## Optional A1 structured read-only AI advisory
+
+The default investigator remains deterministic. For an experimental
+development-only model suggestion, install the optional SDK extra with
+`pip install -e ".[dev,ai]"`, set `OPSBLAZE_AI_ADVISORY_ENABLED=true`
+and provide `OPENAI_API_KEY` in your local untracked environment.
+The only allowed model output is a typed suggestion to read
+`simulator.version` or abstain after an unhealthy simulator observation.
+No target IDs, raw logs, credentials, tool definitions or mutation
+capabilities are sent to the provider. The API request sets
+`store=False` and caps generated output.
+
+An incident reserves at most one model call in PostgreSQL before network I/O;
+a crash, invalid result, refusal or outage falls back to deterministic
+investigation and never retries the ambiguous request blindly. The
+model cannot select a real adapter or authorize an effect. This optional
+path is not a calibrated production agent, and CI tests use fake clients
+rather than paid model calls.

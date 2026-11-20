@@ -978,3 +978,26 @@ async def replay_experiment_results(
     if result is None:
         raise HTTPException(404, "experiment not found")
     return result
+
+
+@app.get("/v1/incidents/{incident_id}/advisory")
+async def incident_model_advisory(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.models import ModelAdvisory
+
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    row = await session.get(ModelAdvisory, incident_id)
+    if row is None or row.tenant_id != tenant_id:
+        return {"state": "DISABLED_OR_NOT_USED"}
+    return {
+        "state": row.state,
+        "model_id": row.model_id,
+        "next_probe": row.next_probe,
+        "reason_code": row.reason_code,
+        "tokens_reserved": row.tokens_reserved,
+        "tokens_used": row.tokens_used,
+    }

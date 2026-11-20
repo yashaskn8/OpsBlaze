@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.models import HypothesisStep
 from backend.probes.gateway import ProbeDenied, invoke_probe
 from backend.plans import PlanConflict, propose_simulator_plan
+from backend.investigator.advisory import advise_after_unhealthy
 
 
 async def write_step(
@@ -19,6 +20,8 @@ async def write_step(
     decision: str,
     scores: dict[str, int],
     probe_id: str,
+    model_id: str = "deterministic-baseline-v1",
+    token_used: int = 0,
 ) -> None:
     async with sessions() as session:
         async with session.begin():
@@ -33,11 +36,12 @@ async def write_step(
             session.add(
                 HypothesisStep(
                     id=uuid4(), incident_id=incident_id, step_no=step_no,
-                    model_id="deterministic-baseline-v1",
+                    model_id=model_id,
                     prompt_version="none",
                     evidence_ids=evidence_ids, cause_scores=scores,
                     probe_id=probe_id, decision=decision,
-                    token_reserved=0, token_used=0,
+                    token_reserved=128 if token_used else 0,
+                    token_used=token_used,
                 )
             )
 
@@ -67,8 +71,22 @@ async def inspect(
                          {"no_simulated_fault": 1}, "simulator.health")
         return "ABSTAINED"
 
-    await write_step(sessions, incident_id, 1, ids, "NEEDS_SECOND_PROBE",
-                     {"simulated_target_unhealthy": 1}, "simulator.health")
+    advice = await advise_after_unhealthy(sessions, tenant_id, incident_id)
+    model_id = advice.model_id if advice else "deterministic-baseline-v1"
+    token_used = advice.tokens_used if advice else 0
+    if advice is not None and advice.next_probe == "ABSTAIN":
+        await write_step(
+            sessions, incident_id, 1, ids, "MODEL_ADVISORY_ABSTAINED",
+            {"simulated_target_unhealthy": 1}, "simulator.health",
+            model_id=model_id, token_used=token_used,
+        )
+        return "ABSTAINED"
+
+    await write_step(
+        sessions, incident_id, 1, ids, "NEEDS_SECOND_PROBE",
+        {"simulated_target_unhealthy": 1}, "simulator.health",
+        model_id=model_id, token_used=token_used,
+    )
     try:
         version = await invoke_probe(
             sessions, tenant_id, incident_id, 2, "simulator.version"

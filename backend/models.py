@@ -564,3 +564,21 @@ class ReplayArm(Base):
     probe_cost: Mapped[int] = mapped_column(Integer, nullable=False)
     oracle_passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     trace: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+
+
+class ModelAdvisory(Base):
+    __tablename__ = "model_advisory"
+
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id"), primary_key=True
+    )
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    next_probe: Mapped[str | None] = mapped_column(String(32))
+    reason_code: Mapped[str | None] = mapped_column(String(32))
+    tokens_reserved: Mapped[int] = mapped_column(Integer, nullable=False)
+    tokens_used: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
