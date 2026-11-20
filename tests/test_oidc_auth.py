@@ -402,7 +402,7 @@ async def test_redteam_dual_operator_reviewer_role_cannot_approve(
     {"crit": ["unknown-extension"], "unknown-extension": "required"},
     {"kid": "k" * 129},
     {"kid": ""},
-    {"kid": "invalid\\nkey"},
+    {"kid": "invalid\nkey"},
 ])
 async def test_redteam_signed_access_token_rejects_unsupported_header(
     signer, production_client, jwt_headers,
