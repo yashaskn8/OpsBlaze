@@ -53,3 +53,13 @@ footer { margin-top: 28px; font-size: 13px; }
 .recent-item strong, .recent-item span { display: block; margin-bottom: 8px; }
 .recent-item span { color: #9ac7e5; font-size: 12px; }
 .recent-item code { font-size: 10px; color: #a9b7c8; }
+
+.replay-lab h2 { margin-bottom: 10px; }
+.replay-form { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin: 20px 0; }
+.replay-form label { flex: 1; min-width: 160px; }
+.replay-form button { min-height: 44px; }
+select { background: #0b1524; border: 1px solid #425371; border-radius: 8px; padding: 12px; color: white; font: inherit; }
+.replay-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.replay-arm { border: 1px solid #324660; border-radius: 8px; background: #0e1c30; padding: 14px; }
+.replay-arm strong { display: block; font-size: 13px; }
+.replay-arm span { display: inline-block; padding: 6px 0; color: #a2e5cc; font-size: 12px; }

@@ -52,6 +52,22 @@ type UIEvent = {
 
 type UIEventPage = { events: UIEvent[]; last_id: number };
 
+type ReplayFixture = "recoverable-v1" | "false-ack-v1" | "already-healthy-v1";
+type ReplayReport = {
+  id: string;
+  fixture_id: ReplayFixture;
+  status: string;
+  seed: number;
+  measured_ai_comparison: boolean;
+  arms: {
+    kind: string;
+    outcome: string;
+    probe_cost: number;
+    oracle_passed: boolean;
+    virtual_time: number;
+  }[];
+};
+
 function detail(value: unknown): string {
   if (value && typeof value === "object" && "detail" in value) {
     const message = (value as { detail: unknown }).detail;
@@ -73,6 +89,11 @@ function App() {
   const [recent, setRecent] = useState<Incident[]>([]);
   const [events, setEvents] = useState<UIEvent[]>([]);
   const [connection, setConnection] = useState<"SYNCING" | "LIVE" | "STALE">("SYNCING");
+  const [replayFixture, setReplayFixture] = useState<ReplayFixture>("recoverable-v1");
+  const [replaySeed, setReplaySeed] = useState("42");
+  const [replay, setReplay] = useState<ReplayReport | null>(null);
+  const [replayError, setReplayError] = useState("");
+  const [replayBusy, setReplayBusy] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -262,6 +283,39 @@ function App() {
     }
   }
 
+
+  async function runReplay(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const seed = Number(replaySeed);
+    if (!Number.isInteger(seed) || seed < 0 || seed > 1000000) {
+      setReplayError("Seed must be an integer from 0 to 1,000,000.");
+      return;
+    }
+    setReplayBusy(true);
+    setReplayError("");
+    setReplay(null);
+    try {
+      const created = await fetch("/v1/experiments", {
+        method: "POST",
+        headers: { ...headers(), "Content-Type": "application/json" },
+        body: JSON.stringify({ fixture_id: replayFixture, seed })
+      });
+      const started: unknown = await created.json();
+      if (!created.ok) throw new Error(detail(started));
+      const id = (started as { id: string }).id;
+      const response = await fetch("/v1/experiments/" + id + "/results", {
+        headers: headers()
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(result));
+      setReplay(result as ReplayReport);
+    } catch (cause) {
+      setReplayError(cause instanceof Error ? cause.message : "Replay failed");
+    } finally {
+      setReplayBusy(false);
+    }
+  }
+
   return (
     <main>
       <header><span className="mark">OB</span><div><strong>OpsBlaze</strong><small>Controlled incident recovery lab</small></div></header>
@@ -378,7 +432,47 @@ function App() {
           }
         </div>}
       </section>
-      <footer>Simulator-only recovery. Real targets, production identities, AI model integration and independently calibrated evaluation are not enabled.</footer>
+      <section className="incident-history replay-lab">
+        <h2>Isolated replay laboratory</h2>
+        <p className="muted">
+          Run two deterministic simulator arms with the same initial fixture,
+          virtual-time evidence release, and independent postcondition.
+          This is not a measured AI-versus-human experiment.
+        </p>
+        <form className="replay-form" onSubmit={runReplay}>
+          <label>Fixture
+            <select value={replayFixture} onChange={event => setReplayFixture(event.target.value as ReplayFixture)}>
+              <option value="recoverable-v1">Recoverable fault</option>
+              <option value="false-ack-v1">False success acknowledgment</option>
+              <option value="already-healthy-v1">Healthy target</option>
+            </select>
+          </label>
+          <label>Seed
+            <input type="number" min="0" max="1000000" step="1"
+              value={replaySeed} onChange={event => setReplaySeed(event.target.value)} />
+          </label>
+          <button type="submit" disabled={!token || replayBusy}>
+            {replayBusy ? "Running..." : "Run paired replay"}
+          </button>
+        </form>
+        {replayError && <p role="alert" className="error">{replayError}</p>}
+        {replay && <>
+          <p className="muted">Experiment {replay.id} · {replay.status} · Seed {replay.seed}</p>
+          <div className="replay-results">
+            {replay.arms.map(arm => (
+              <div className="replay-arm" key={arm.kind}>
+                <strong>{arm.kind.replaceAll("_", " ")}</strong>
+                <span>{arm.outcome}</span>
+                <p className="muted">Oracle passed: {arm.oracle_passed ? "Yes" : "No"} · Read probes: {arm.probe_cost} · Virtual time: {arm.virtual_time}</p>
+              </div>
+            ))}
+          </div>
+          {!replay.measured_ai_comparison &&
+            <p className="muted">Deterministic baseline only; no production or model performance claim.</p>
+          }
+        </>}
+      </section>
+      <footer>Simulator-only recovery. Real targets, production identities, calibrated model evaluation and policy rollout are not enabled.</footer>
     </main>
   );
 }

@@ -49,7 +49,7 @@ Open `http://127.0.0.1:5173` and supply the **local** API token from your `.env`
 2. The database commits an incident and a workflow-start outbox event together. A separate dispatcher starts the stable Temporal workflow. The worker probes simulator health/version and records evidence and a bounded decision assessment.
 3. Refresh the UI. At `AWAITING_APPROVAL`, examine the proposed exact simulator plan. Approval/rejection uses the plan's current numeric `If-Match` version. Acknowledgment and cancellation are separate flows.
 4. If approved and all fences, evidence checks, and current adapter conformance pass, the worker applies **only** `SIMULATOR_MARK_HEALTHY`. It reconciles its effect receipt and requires an independent simulator postcondition observation before setting `VERIFIED`.
-5. The UI can show evidence, effect receipts, trace lineage, recent incidents, and sequenced event notifications. These notifications never authorize actions; decisions rely on authoritative snapshots and server-side version checks.
+5. The UI can show evidence, effect receipts, trace lineage, recent incidents, sequenced event notifications, and isolated paired-replay results. These notifications never authorize actions; decisions rely on authoritative snapshots and server-side version checks.
 
 The local token is **not** reviewer authentication or a real multi-tenant security system. The API deliberately rejects tenant requests when `OPSBLAZE_ENVIRONMENT=production`. **Do not expose this application publicly or connect it to real infrastructure.**
 
