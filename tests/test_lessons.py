@@ -169,6 +169,13 @@ async def test_redteam_capsule_target_and_lesson_digest_rewrite_never_crosses_ta
             row.status = "ACTIVE"
     async with sessions() as session:
         assert await retrieve_active_lessons(session, "t", "payments") == []
+    # Return the deliberately active fixture to a draft so validation
+    # reaches the source-lineage guard rather than rejecting its state.
+    async with sessions() as session:
+        async with session.begin():
+            row = await session.get(OperationalLesson, lesson.id)
+            row.status = "DRAFT"
+    async with sessions() as session:
         with pytest.raises(LessonConflict, match="source"):
             await validate_draft(session, "t", lesson.id, 1)
 
