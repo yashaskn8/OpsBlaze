@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models import (
     EffectReceipt, EvaluationManifest, FailureCase, FailureCluster,
     FailureReview, ImprovementCandidate, Incident, OutcomeRevision, ProbeCall,
+    PolicyBundle, PolicyRollout,
 )
 
 
@@ -287,11 +288,48 @@ async def review_classification(
                 )
             ).all()
             if candidates:
+                evaluation_ids = list((await session.scalars(
+                    select(EvaluationManifest.id).where(
+                        EvaluationManifest.tenant_id == tenant_id,
+                        EvaluationManifest.candidate_id.in_(candidates),
+                    )
+                )).all())
                 await session.execute(
                     update(EvaluationManifest)
-                    .where(EvaluationManifest.candidate_id.in_(candidates))
+                    .where(
+                        EvaluationManifest.tenant_id == tenant_id,
+                        EvaluationManifest.candidate_id.in_(candidates),
+                    )
                     .values(state="INVALID")
                 )
+                if evaluation_ids:
+                    bundle_ids = list((await session.scalars(
+                        select(PolicyBundle.id).where(
+                            PolicyBundle.tenant_id == tenant_id,
+                            PolicyBundle.evaluation_manifest_id.in_(evaluation_ids),
+                        )
+                    )).all())
+                    if bundle_ids:
+                        await session.execute(
+                            update(PolicyBundle)
+                            .where(
+                                PolicyBundle.tenant_id == tenant_id,
+                                PolicyBundle.id.in_(bundle_ids),
+                            )
+                            .values(state="REVOKED")
+                        )
+                        await session.execute(
+                            update(PolicyRollout)
+                            .where(
+                                PolicyRollout.tenant_id == tenant_id,
+                                PolicyRollout.bundle_id.in_(bundle_ids),
+                                PolicyRollout.state != "ROLLED_BACK",
+                            )
+                            .values(
+                                state="ROLLED_BACK",
+                                version=PolicyRollout.version + 1,
+                            )
+                        )
         case.origin_code = corrected_code
         case.first_bad_step = first_bad_step
         case.review_status = "CLASSIFIED"

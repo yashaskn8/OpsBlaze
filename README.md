@@ -143,3 +143,8 @@ reported usage; a failed or exhausted reservation falls back to the
 deterministic investigator. This bounds the number of optional calls,
 but a provider's actual prompt accounting may differ from the local
 reservation, so it is not a billing guarantee.
+
+E3 reviewer corrections now invalidate downstream E5 evaluations and E6
+policy/rollout drafts in the same transaction as the fact-backed taxonomy
+revision. Stale classification evidence can no longer leave a policy draft
+presented as valid.
