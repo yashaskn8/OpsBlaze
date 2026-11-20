@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     temporal_address: str = "127.0.0.1:7233"
     temporal_namespace: str = "default"
     temporal_task_queue: str = "opsblaze-incidents-v1"
+    temporal_tls_enabled: bool = False
+    temporal_api_key: str | None = None
     admission_limit_per_minute: int = 30
     max_active_incidents_per_tenant: int = 20
     max_active_incidents_global: int = 100

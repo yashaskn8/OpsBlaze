@@ -118,6 +118,7 @@ async def readiness(
     from backend.workers.heartbeat import REQUIRED_ROLES, present_workers
 
     from backend.workers.temporal_health import check_temporal_health
+    from backend.temporal_connection import validate_temporal_transport
 
     try:
         await session.execute(text("SELECT 1"))
@@ -137,6 +138,7 @@ async def readiness(
 
     if settings.environment == "production":
         try:
+            validate_temporal_transport(settings)
             if not await check_temporal_health(settings):
                 raise HTTPException(503, "Temporal health check failed")
         except HTTPException:

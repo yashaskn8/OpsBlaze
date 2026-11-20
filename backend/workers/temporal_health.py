@@ -7,17 +7,14 @@ Neither network connect nor health RPC occurs inside a DB transaction.
 import asyncio
 from datetime import timedelta
 
-from temporalio.client import Client
-
 from backend.settings import Settings
+from backend.temporal_connection import connect_temporal
 
 
 async def check_temporal_health(settings: Settings) -> bool:
     client = await asyncio.wait_for(
-        Client.connect(
-            settings.temporal_address,
-            namespace=settings.temporal_namespace,
-            connect_timeout=timedelta(seconds=2),
+        connect_temporal(
+            settings, connect_timeout=timedelta(seconds=2),
         ),
         timeout=3,
     )

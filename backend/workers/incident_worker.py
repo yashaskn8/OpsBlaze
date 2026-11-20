@@ -8,6 +8,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from backend.settings import get_settings
+from backend.temporal_connection import connect_temporal
 from backend.workflows.activities import (
     inspect_incident_read_only,
     apply_approved_simulator_plan,
@@ -20,9 +21,7 @@ from backend.workers.heartbeat import heartbeat_loop
 
 async def main() -> None:
     settings = get_settings()
-    client = await Client.connect(
-        settings.temporal_address, namespace=settings.temporal_namespace
-    )
+    client = await connect_temporal(settings)
     worker = Worker(
         client,
         task_queue=settings.temporal_task_queue,

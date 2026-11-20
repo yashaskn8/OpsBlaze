@@ -50,6 +50,7 @@ async def test_production_readiness_checks_both_worker_roles(sessions_fixture, m
     app.dependency_overrides[get_session] = session_override
     app.dependency_overrides[get_settings] = lambda: Settings(
         environment="production", worker_stale_seconds=30,
+        temporal_tls_enabled=True,
     )
     try:
         async with AsyncClient(

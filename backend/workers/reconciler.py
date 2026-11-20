@@ -17,6 +17,7 @@ from temporalio.client import Client
 from backend.database import get_session_maker
 from backend.models import Incident, OutboxEntry
 from backend.settings import get_settings
+from backend.temporal_connection import connect_temporal
 from backend.workers.dispatcher import workflow_id
 
 log = logging.getLogger(__name__)
@@ -89,9 +90,7 @@ async def main() -> None:
     parser.add_argument("--limit", type=int, default=20)
     args = parser.parse_args()
     settings = get_settings()
-    client = await Client.connect(
-        settings.temporal_address, namespace=settings.temporal_namespace,
-    )
+    client = await connect_temporal(settings)
     issues = await compare_temporal_projection(
         get_session_maker(), client,
         stale_seconds=args.stale_seconds, limit=args.limit,

@@ -229,3 +229,14 @@ transaction. An unreachable workflow server returns 503 even if
 stale workers still have recent heartbeat records. Temporal liveness
 does not prove that individual workflows are executing correctly;
 use the read-only anti-entropy scan and end-to-end recovery tests.
+
+
+## Temporal transport security
+
+All Temporal API, worker and diagnostic processes use a common connection
+helper. `OPSBLAZE_TEMPORAL_TLS_ENABLED=true` is mandatory for production;
+otherwise startup and readiness fail closed. Optional
+`OPSBLAZE_TEMPORAL_API_KEY` must come from an untracked secret manager.
+Development's native local Temporal server remains compatible with
+plaintext. Cloud and private-CA/mTLS configurations still require actual
+external integration testing.

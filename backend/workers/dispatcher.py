@@ -16,6 +16,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from backend.database import get_session_maker
 from backend.models import Incident, OutboxEntry
 from backend.settings import get_settings
+from backend.temporal_connection import connect_temporal
 from backend.workflows.incident import IncidentWorkflow
 from backend.workers.heartbeat import heartbeat_loop
 
@@ -126,9 +127,7 @@ async def dispatch_once(
 
 async def main() -> None:
     settings = get_settings()
-    client = await Client.connect(
-        settings.temporal_address, namespace=settings.temporal_namespace
-    )
+    client = await connect_temporal(settings)
     sessions = get_session_maker()
     heartbeat = asyncio.create_task(heartbeat_loop("dispatcher"))
     log.info("Outbox dispatcher started")
