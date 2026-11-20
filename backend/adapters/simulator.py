@@ -92,8 +92,11 @@ class SimulatorAdapter:
                     or datetime.now(timezone.utc) >= utc(permit.expires_at)
                 ):
                     raise StaleFence("permit is stale or expired")
-                if target.version != permit.expected_version:
-                    raise TargetVersionConflict("target version changed")
+                if (
+                    reservation.expected_version != permit.expected_version
+                    or target.version != reservation.expected_version
+                ):
+                    raise TargetVersionConflict("reserved target version changed")
                 target.healthy = True
                 target.version += 1
                 target.last_fence = permit.fence
