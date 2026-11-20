@@ -107,3 +107,47 @@ async def test_postgres_temporal_simulator_recovery() -> None:
                 assert target.status_code == 200
                 assert target.json()["healthy"] is True
                 assert target.json()["version"] == 2
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_parallel_postgres_admission_is_one_logical_incident() -> None:
+    """The real PostgreSQL unique constraint arbitrates concurrent retries."""
+    from sqlalchemy import func, select
+
+    from backend.models import AdmissionUsage, Incident, OutboxEntry, UIEvent
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    settings = get_settings()
+    assert settings.database_url.startswith("postgresql+asyncpg:")
+    tenant = "concurrent-" + uuid4().hex[:12]
+    sessions = get_session_maker()
+    payload = IncidentCreate(target_id="checkout")
+
+    async def admit():
+        async with sessions() as session:
+            return await admit_incident(session, tenant, "stable-key", payload)
+
+    admitted = await asyncio.gather(*(admit() for _ in range(8)))
+    ids = {item.id for item in admitted}
+    assert len(ids) == 1
+    incident_id = next(iter(ids))
+
+    async with sessions() as session:
+        count = lambda model: select(func.count()).select_from(model)
+        assert await session.scalar(
+            count(Incident).where(Incident.tenant_id == tenant)
+        ) == 1
+        assert await session.scalar(
+            count(OutboxEntry).where(OutboxEntry.incident_id == incident_id)
+        ) == 1
+        assert await session.scalar(
+            count(UIEvent).where(UIEvent.incident_id == incident_id)
+        ) == 1
+        assert await session.scalar(
+            select(func.sum(AdmissionUsage.accepted)).where(
+                AdmissionUsage.tenant_id == tenant
+            )
+        ) == 1
