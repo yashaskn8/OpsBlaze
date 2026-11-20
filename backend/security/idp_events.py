@@ -38,8 +38,8 @@ def verify_identity_event(token: str, settings: Settings) -> VerifiedIdentityEve
     if len(token) > 8192 or token.count(".") != 2:
         raise ValueError("invalid security event token shape")
     header = jwt.get_unverified_header(token)
-    if header.get("alg") != "RS256" or not isinstance(header.get("kid"), str):
-        raise ValueError("unsupported event signature")
+    if not auth.supported_jws_header(header):
+        raise ValueError("unsupported event signature header")
     claims = jwt.decode(
         token, auth.signing_key(token, settings),
         algorithms=["RS256"],
