@@ -7,7 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import (
-    Permit, SimulatorAdapter, StaleFence, TargetVersionConflict, utc
+    Permit, SimulatorAdapter, StaleFence, TargetVersionConflict,
+    observed_healthy_at_version, utc,
 )
 from backend.models import ApprovalGrant, EffectReceipt, IncidentPlan, RevokedIdentity
 
@@ -261,7 +262,7 @@ async def reconcile_effect(
         # Retain CONFIRMED while the independent oracle is unreachable:
         # no success claim and no replay of an already-applied effect.
         return "UNKNOWN"
-    verified = witness is not None and witness == (expected_observed, True)
+    verified = observed_healthy_at_version(witness, expected_observed)
     terminal = "VERIFIED" if verified else "NEEDS_REVIEW"
     try:
         await set_state(sessions, effect_id, terminal)
