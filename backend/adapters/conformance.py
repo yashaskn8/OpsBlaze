@@ -32,13 +32,14 @@ from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 from backend.settings import get_settings
 
-SUITE_VERSION = "simulator-conformance-v3"
+SUITE_VERSION = "simulator-conformance-v4"
 RETENTION_SECONDS = 3600
 REQUIRED_SCENARIOS = frozenset({
     "first-apply", "duplicate-apply", "effect-status", "stale-fence",
     "version-cas", "lost-ack-lookup", "expired-lease", "missing-effect",
     "effect-identity-binding", "status-store-outage", "status-store-recovered",
-    "oracle-outage", "oracle-recovered",
+    "oracle-outage", "oracle-recovered", "retention-gap",
+    "retention-recovered", "external-version-edit",
 })
 
 
@@ -247,6 +248,70 @@ async def execute_suite(
             recovered_oracle == "VERIFIED",
             "original committed effect verified after read-only oracle recovery",
         )
+
+        # Simulate a provider which commits but has forgotten the effect ID
+        # before the client gets an acknowledgement. Repeated reconciliation
+        # may inspect state, but MUST NOT blindly call apply again.
+        permit_six = await reserve_simulator_target(
+            sessions, tenant, target_id, incident_id, "f" * 64,
+        )
+
+        class ForgottenStatusAfterCommit(SimulatorAdapter):
+            async def apply(self, effect_id, permit):
+                await super().apply(effect_id, permit)
+                raise TimeoutError("effect committed, acknowledgement lost")
+
+            async def query_effect(self, effect_id):
+                return None
+
+        missing_status = ForgottenStatusAfterCommit(sessions)
+        effect_six = await prepare_receipt(sessions, permit_six)
+        first_unknown = await execute_simulator_effect(
+            sessions, missing_status, permit_six,
+        )
+        second_unknown = await reconcile_effect(
+            sessions, missing_status, effect_six,
+        )
+        async with sessions() as session:
+            receipt_six = await session.get(EffectReceipt, effect_six)
+            single_send = receipt_six.attempt_count == 1
+        outcome(
+            "retention-gap",
+            first_unknown == second_unknown == "UNKNOWN"
+            and single_send
+            and await adapter.observe(tenant, target_id) == (6, True),
+            "missing remote idempotency retention is visible as UNKNOWN",
+        )
+        recovered_six = await reconcile_effect(sessions, adapter, effect_six)
+        outcome(
+            "retention-recovered",
+            recovered_six == "VERIFIED"
+            and await adapter.query_effect(effect_six) == 6,
+            "original effect ID resolves when status storage returns",
+        )
+
+        # A target edit outside the worker's action path must invalidate the
+        # previously minted target-version permit even with a fresh fence.
+        permit_seven = await reserve_simulator_target(
+            sessions, tenant, target_id, incident_id, "7" * 64,
+        )
+        async with sessions() as session:
+            async with session.begin():
+                external_edit = await session.get(
+                    SimulatorTarget, (tenant, target_id), with_for_update=True,
+                )
+                external_edit.version += 1
+        try:
+            await adapter.apply(uuid4(), permit_seven)
+            outcome(
+                "external-version-edit", False,
+                "an external target-version edit was incorrectly accepted",
+            )
+        except TargetVersionConflict:
+            outcome(
+                "external-version-edit", True,
+                "adapter CAS rejects a target modified outside the workflow",
+            )
     finally:
         # Remove disposable fixture rows. Keep only the digest + scenario report.
         async with sessions() as session:
