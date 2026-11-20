@@ -324,3 +324,58 @@ The native Temporal tests also verify that an approval signal received while
 workers are stopped is immutable: a later contradictory signal cannot replace
 its plan ID or convert a reviewer rejection into an approval. The API and
 gateway still enforce independent plan versions and receipt permissions.
+
+
+## Signed identity-provider revocation events (integration contract)
+
+For production, configure an **independent** `OPSBLAZE_IDP_EVENT_AUDIENCE`
+in addition to the existing pinned issuer/audience/JWKS settings.
+`POST /v1/security/idp-events` accepts a short-lived, RS256-signed
+IdP JWT through `Authorization: Bearer`. Its `aud` must be that
+dedicated event audience (never the API audience); required claims are
+`iss`, `sub`, `tenant_id`, `iat`, `exp`, `jti`, and
+`event_type="IDENTITY_ACCESS_REVOKED"`. The issuer and signing key
+are verified against the pinned production JWKS, and the validity
+window is capped at five minutes. JSON bodies and browser/local tokens
+cannot authenticate this endpoint.
+
+One event atomically records a hashed replay ID, revokes the tenant's
+pseudonymous identity and invalidates pending approval grants. Duplicate
+deliveries are idempotent; conflicting reuses fail closed. No raw subject,
+email, JWT or signing key is retained. This is intentionally a **full
+access revocation**, not role-granular removal; unrevocation is not
+available from the API. The IdP must be configured to emit this exact
+event profile, and a real event delivery/key rotation/role-removal
+campaign is required before calling the integration production-tested.
+The endpoint is disabled without separate audience configuration.
+
+## Protected offline evaluation (E5)
+
+`python -m backend.evaluation.heldout --manifest manifest.json
+--oracle protected-oracle.json --trials paired-trials.json` runs an
+offline report on independently supplied label data. The manifest must
+commit to the full canonical JSON SHA-256 of the oracle, a minimum of
+32 complete pairs and the disjoint training-family list. The trials
+file contains one candidate and one incumbent decision/cost/latency
+observation for every case. The runner rejects duplicate/missing pairs,
+training-family overlap, oracle changes, unbounded costs and invalid
+negative controls. It returns aggregate safety, p95 latency, cost and
+conservative paired-correctness intervals without echoing hidden
+labels. The `blinded_cases` helper exposes only case IDs and family
+names to a separately sandboxed candidate runner.
+
+An `OFFLINE_PASS` is **not** a certified recovery benefit, a real
+held-out experiment or release approval. Independent oracle custody,
+actual incident outcomes, preregistration/signing, evaluator authority
+and model-vs-runbook trials are still missing. The tool always reports
+`promotion_eligible=false`; E6 exposure remains disabled.
+
+## Worker failover rehearsal
+
+The native PostgreSQL/Temporal integration suite tests concurrent
+outbox dispatch against a single tenant, stops the first worker at the
+human approval boundary, delivers an approval while no worker is
+running, then starts a replacement worker. It checks one effect
+receipt, one simulator application and the final target version.
+This is an **independent-worker handoff on one CI host**, not a
+multi-host/region failure campaign or measured availability result.
