@@ -288,7 +288,16 @@ async def test_redteam_wrong_confirmed_version_cannot_be_verified(lab):
     )
     effect_id = await prepare_receipt(sessions, permit)
     await set_state(sessions, effect_id, "SENT")
-    await set_state(sessions, effect_id, "CONFIRMED", permit.expected_version + 7)
+    with pytest.raises(EffectConflict, match="confirmed effect version"):
+        await set_state(
+            sessions, effect_id, "CONFIRMED", permit.expected_version + 7,
+        )
+    await set_state(sessions, effect_id, "CONFIRMED", permit.expected_version + 1)
+    # A direct stored-receipt edit must still be detected on reconciliation.
+    async with sessions() as session:
+        async with session.begin():
+            forged_receipt = await session.get(EffectReceipt, effect_id)
+            forged_receipt.observed_version = permit.expected_version + 7
 
     class FalseWitness(SimulatorAdapter):
         async def observe(self, tenant_id, target_id):
@@ -326,3 +335,27 @@ async def test_redteam_modified_permit_cannot_bypass_reserved_target_version(lab
         target = await session.get(SimulatorTarget, ("a", "checkout"))
         assert target.version == 2 and not target.healthy
         assert (await session.scalars(select(SimulatorAppliedEffect))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_redteam_verified_receipt_requires_matching_confirmed_version(lab):
+    from backend.effects.gateway import set_state
+
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "8" * 64,
+    )
+    effect_id = await prepare_receipt(sessions, permit)
+    await set_state(sessions, effect_id, "SENT")
+    with pytest.raises(EffectConflict, match="confirmed effect version"):
+        await set_state(sessions, effect_id, "CONFIRMED", True)
+    await set_state(sessions, effect_id, "CONFIRMED", permit.expected_version + 1)
+    async with sessions() as session:
+        async with session.begin():
+            receipt = await session.get(EffectReceipt, effect_id)
+            receipt.observed_version = permit.expected_version + 99
+    with pytest.raises(EffectConflict, match="cannot verify"):
+        await set_state(sessions, effect_id, "VERIFIED")
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        assert receipt.state == "CONFIRMED"
