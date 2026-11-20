@@ -53,13 +53,57 @@ async def invoke_probe(
             if recorded is not None:
                 if recorded.catalog_id != catalog_id:
                     raise ProbeDenied("probe identity changed for recorded step")
-                evidence = (
-                    await session.get(Evidence, recorded.evidence_id)
-                    if recorded.evidence_id else None
-                )
-                return ProbeResult(recorded.outcome, recorded.evidence_id,
-                                   evidence.redacted_excerpt if evidence else "")
+                if recorded.outcome == "DENIED" and recorded.evidence_id is None:
+                    return ProbeResult("DENIED", None, "")
+                if (
+                    catalog_id not in ALLOWED_PROBES
+                    or recorded.outcome not in {"OK", "UNAVAILABLE"}
+                    or recorded.evidence_id is None
+                ):
+                    raise ProbeDenied("recorded probe result is inconsistent")
+                evidence = await session.get(Evidence, recorded.evidence_id)
+                if (
+                    evidence is None
+                    or evidence.tenant_id != tenant_id
+                    or evidence.incident_id != incident_id
+                    or evidence.target_id != incident.target_id
+                    or evidence.source != catalog_id
+                    or evidence.source_version != "simulator-v1"
+                    or evidence.classification != "INTERNAL"
+                    or hashlib.sha256(evidence.redacted_excerpt.encode()).hexdigest()
+                        != evidence.sha256
+                ):
+                    raise ProbeDenied("recorded probe evidence failed integrity checks")
+                try:
+                    observation = json.loads(evidence.redacted_excerpt)
+                except (TypeError, ValueError) as exc:
+                    raise ProbeDenied("recorded probe observation is malformed") from exc
+                if recorded.outcome == "OK":
+                    if evidence.validity != "VALID" or type(evidence.target_version) is not int:
+                        raise ProbeDenied("recorded valid probe has inconsistent metadata")
+                    expected = (
+                        {"healthy": observation.get("healthy")}
+                        if catalog_id == "simulator.health" and isinstance(observation, dict)
+                        else {"version": evidence.target_version}
+                    )
+                    if (
+                        observation != expected
+                        or (
+                            catalog_id == "simulator.health"
+                            and type(observation.get("healthy")) is not bool
+                        )
+                    ):
+                        raise ProbeDenied("recorded probe observation failed schema checks")
+                elif (
+                    evidence.validity != "INVALID"
+                    or evidence.target_version is not None
+                    or observation != {"status": "UNAVAILABLE"}
+                ):
+                    raise ProbeDenied("recorded unavailable probe is inconsistent")
+                return ProbeResult(recorded.outcome, evidence.id, evidence.redacted_excerpt)
 
+            if step_no != incident.probe_used + 1:
+                raise ProbeDenied("new probes must use the next sequential step")
             if incident.probe_used >= get_settings().max_probe_calls_per_incident:
                 raise ProbeDenied("durable probe budget exhausted")
 
