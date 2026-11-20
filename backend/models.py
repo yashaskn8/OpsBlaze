@@ -369,3 +369,56 @@ class OperationalLesson(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class EvaluationManifest(Base):
+    __tablename__ = "evaluation_manifest"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "candidate_id", "candidate_version", "fixture_digest", name="uq_eval_frozen"),
+        Index("ix_evaluation_candidate", "tenant_id", "candidate_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    candidate_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("improvement_candidate.id"), nullable=False
+    )
+    candidate_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    incumbent_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    fixture_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    oracle_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    trial_budget: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EvaluationTrial(Base):
+    __tablename__ = "evaluation_trial"
+    __table_args__ = (
+        UniqueConstraint("manifest_id", "pair_id", "arm", name="uq_evaluation_pair_arm"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    manifest_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("evaluation_manifest.id"), nullable=False)
+    pair_id: Mapped[str] = mapped_column(String(48), nullable=False)
+    arm: Mapped[str] = mapped_column(String(16), nullable=False)
+    decision: Mapped[str] = mapped_column(String(24), nullable=False)
+    oracle_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    unsafe: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    probe_cost_units: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class EvaluationGate(Base):
+    __tablename__ = "evaluation_gate"
+    __table_args__ = (
+        UniqueConstraint("manifest_id", "rule_id", name="uq_evaluation_gate"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    manifest_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("evaluation_manifest.id"), nullable=False)
+    rule_id: Mapped[str] = mapped_column(String(48), nullable=False)
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    evidence: Mapped[str] = mapped_column(String(256), nullable=False)

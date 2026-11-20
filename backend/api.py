@@ -661,3 +661,57 @@ async def visible_lessons(
          "version": row.version}
         for row in rows
     ]
+
+
+class EvaluationRegistration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    candidate_id: UUID
+
+
+@app.post("/v1/evaluations", status_code=201)
+async def register_evaluation(
+    payload: EvaluationRegistration,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.evaluation.smoke import EvaluationConflict, freeze
+    from backend.learning.failures import FailureConflict
+
+    try:
+        manifest = await freeze(session, tenant_id, payload.candidate_id)
+    except (EvaluationConflict, FailureConflict) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"id": str(manifest.id), "state": manifest.state,
+            "fixture_digest": manifest.fixture_digest}
+
+
+@app.post("/v1/evaluations/{manifest_id}/run", status_code=202)
+async def run_evaluation(
+    manifest_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.evaluation.smoke import EvaluationConflict, run_smoke
+
+    try:
+        manifest = await run_smoke(session, tenant_id, manifest_id)
+    except EvaluationConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if manifest is None:
+        raise HTTPException(404, "manifest not found")
+    return {"id": str(manifest.id), "state": manifest.state,
+            "promotion_eligible": False}
+
+
+@app.get("/v1/evaluations/{manifest_id}")
+async def get_evaluation(
+    manifest_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.evaluation.smoke import report
+
+    result = await report(session, tenant_id, manifest_id)
+    if result is None:
+        raise HTTPException(404, "manifest not found")
+    return result

@@ -202,3 +202,20 @@ source constraints again. The activation gate is deliberately **closed**:
 validated lessons are not served as ACTIVE until E5 paired evaluation and
 release review are implemented. Stored lessons do not grant tools or
 permissions.
+
+## E5 fixed-fixture paired smoke evaluation
+
+An EVALUATION_READY constrained E3 candidate can freeze an immutable
+candidate/incumbent/fixture digest with POST /v1/evaluations. POST
+/v1/evaluations/{id}/run executes paired deterministic simulator decision
+fixtures, including disputed outcomes, stale target versions and poisoned
+lesson negative controls. GET /v1/evaluations/{id} returns both arms,
+oracle-correctness, probe-count cost units and three hard non-regression
+gates. The run is reproducible and idempotent.
+
+**This is a smoke gate, not the blueprint's full independent held-out
+experimental evaluation.** Results are SMOKE_PASS/SMOKE_FAIL and explicitly
+promotion_eligible=false. It cannot authorize deployment, lesson activation,
+or real-target effects. Full E5 needs an independently managed hidden-label
+fixture store, measured paired-effect outcomes, uncertainty intervals, and
+separate approval authority.
