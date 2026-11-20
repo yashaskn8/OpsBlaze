@@ -203,3 +203,24 @@ async def test_postcondition_timeout_keeps_receipt_unverified(lab):
 async def find_receipt(sessions):
     async with sessions() as session:
         return await session.scalar(select(EffectReceipt))
+
+
+@pytest.mark.asyncio
+async def test_parallel_sqlite_prepare_reuses_exact_immutable_effect_id(lab):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    sessions, incident_id, adapter = lab
+    permit = Permit(
+        tenant_id="a", incident_id=incident_id,
+        target_id="checkout", action_digest="f" * 64,
+        fence=1, expected_version=1,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+    ids = await asyncio.gather(*(
+        prepare_receipt(sessions, permit) for _ in range(5)
+    ))
+    assert len(set(ids)) == 1
+    async with sessions() as session:
+        receipts = (await session.scalars(select(EffectReceipt))).all()
+        assert len(receipts) == 1 and receipts[0].attempt_count == 0

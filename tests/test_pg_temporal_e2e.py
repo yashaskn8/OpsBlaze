@@ -871,3 +871,61 @@ async def test_parallel_dispatchers_do_not_reorder_same_incident_signals():
         assert new_claim is not None and new_claim[0] == second_id
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_parallel_effect_preparation_creates_one_immutable_receipt():
+    """Two workers can race the absent-row boundary without duplicate effect IDs."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.adapters.simulator import Permit
+    from backend.effects.gateway import EffectConflict, prepare_receipt
+    from backend.models import EffectReceipt
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "receipt-race-" + uuid4().hex[:12]
+    try:
+        async with sessions() as session:
+            incident = await admit_incident(
+                session, tenant, "prepare", IncidentCreate(target_id="checkout"),
+            )
+        permit = Permit(
+            tenant_id=tenant, incident_id=incident.id,
+            target_id="checkout", action_digest="b" * 64,
+            fence=1, expected_version=1,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        )
+        ids = await asyncio.gather(*(
+            prepare_receipt(sessions, permit) for _ in range(10)
+        ))
+        assert len(set(ids)) == 1
+        async with sessions() as session:
+            receipts = (await session.scalars(
+                select(EffectReceipt).where(
+                    EffectReceipt.incident_id == incident.id
+                )
+            )).all()
+            assert len(receipts) == 1
+            assert receipts[0].attempt_count == 0
+            assert receipts[0].state == "PREPARED"
+
+        altered = Permit(
+            **{**permit.__dict__, "expected_version": 2},
+        )
+        try:
+            await prepare_receipt(sessions, altered)
+            raise AssertionError("same logical effect accepted different permit")
+        except EffectConflict:
+            pass
+        async with sessions() as session:
+            remaining = await session.get(EffectReceipt, ids[0])
+            assert remaining.expected_version == 1
+            assert remaining.state == "PREPARED"
+    finally:
+        await engine.dispose()

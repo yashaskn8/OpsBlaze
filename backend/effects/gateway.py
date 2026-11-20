@@ -20,7 +20,7 @@ async def prepare_receipt(
     sessions: async_sessionmaker[AsyncSession],
     permit: Permit,
 ) -> UUID:
-    # The effect identity survives retry and process loss.
+    # A deterministic effect identity survives Temporal retries and crashes.
     effect_id = uuid5(
         NAMESPACE_URL,
         f"opsblaze/{permit.tenant_id}/{permit.incident_id}/{permit.action_digest}",
@@ -28,25 +28,19 @@ async def prepare_receipt(
     key = str(effect_id)
     async with sessions() as session:
         async with session.begin():
-            receipt = await session.scalar(
-                select(EffectReceipt)
-                .where(
-                    EffectReceipt.tenant_id == permit.tenant_id,
-                    EffectReceipt.idempotency_key == key,
-                ).with_for_update()
-            )
-            if receipt:
-                if (
-                    receipt.incident_id != permit.incident_id
-                    or receipt.target_id != permit.target_id
-                    or receipt.plan_digest != permit.action_digest
-                    or receipt.fence != permit.fence
-                    or receipt.expected_version != permit.expected_version
-                ):
-                    raise EffectConflict("effect identity reused for another plan or permit")
-                return receipt.id
-            session.add(
-                EffectReceipt(
+            dialect = session.bind.dialect.name
+            if dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert
+            elif dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert
+            else:
+                raise RuntimeError("unsupported effect receipt database")
+
+            # SELECT FOR UPDATE cannot lock a row that does not exist.
+            # Insert once and compare the original immutable intent under
+            # the unique primary key; retries never create another receipt.
+            await session.execute(
+                insert(EffectReceipt).values(
                     id=effect_id,
                     tenant_id=permit.tenant_id,
                     incident_id=permit.incident_id,
@@ -58,10 +52,25 @@ async def prepare_receipt(
                     expected_version=permit.expected_version,
                     state="PREPARED",
                     attempt_count=0,
-                )
+                ).on_conflict_do_nothing(index_elements=["id"])
             )
-    return effect_id
-
+            receipt = await session.scalar(
+                select(EffectReceipt)
+                .where(
+                    EffectReceipt.tenant_id == permit.tenant_id,
+                    EffectReceipt.idempotency_key == key,
+                )
+                .with_for_update()
+            )
+            if receipt is None or (
+                receipt.incident_id != permit.incident_id
+                or receipt.target_id != permit.target_id
+                or receipt.plan_digest != permit.action_digest
+                or receipt.fence != permit.fence
+                or receipt.expected_version != permit.expected_version
+            ):
+                raise EffectConflict("effect identity reused for another plan or permit")
+            return receipt.id
 
 async def set_state(
     sessions: async_sessionmaker[AsyncSession],
