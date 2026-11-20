@@ -70,10 +70,31 @@ async def cancel_incident(
 ) -> IncidentView:
     from backend.services import VersionConflict, request_cancellation
 
-    if not if_match.isdecimal():
+    version = if_match.strip('"')
+    if not version.isdecimal():
         raise HTTPException(400, "If-Match must be the status version")
     try:
-        incident = await request_cancellation(session, tenant_id, incident_id, int(if_match))
+        incident = await request_cancellation(session, tenant_id, incident_id, int(version))
+    except VersionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if incident is None:
+        raise HTTPException(404, "incident not found")
+    return IncidentView.model_validate(incident)
+
+@app.post("/v1/incidents/{incident_id}/acknowledge", response_model=IncidentView, status_code=202)
+async def acknowledge_incident_review(
+    incident_id: UUID,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> IncidentView:
+    from backend.services import VersionConflict, acknowledge_review
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be the status version")
+    try:
+        incident = await acknowledge_review(session, tenant_id, incident_id, int(version))
     except VersionConflict as exc:
         raise HTTPException(409, str(exc)) from exc
     if incident is None:

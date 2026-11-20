@@ -76,3 +76,8 @@ version returned by GET. The durable dispatcher delivers this request to
 Temporal. A status response is a lagging projection; Temporal history is
 authoritative. Real approval, the guarded action gateway and evidence
 collection are not yet implemented.
+
+Review acknowledgment is available at POST /v1/incidents/{id}/acknowledge
+with If-Match set to the latest status version while the state is
+AWAITING_APPROVAL. This closes the workflow as NEEDS_REVIEW and is NOT
+approval for a real mutation. The operator UI exposes this action and cancellation.

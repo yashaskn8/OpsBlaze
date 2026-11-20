@@ -65,6 +65,26 @@ function App() {
     }
   }
 
+
+  async function decide(action: "cancel" | "acknowledge") {
+    if (!incident) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/v1/incidents/" + incident.id + "/" + action, {
+        method: "POST",
+        headers: { ...headers(), "If-Match": String(incident.status_version) }
+      });
+      const data: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(data));
+      setIncident(data as Incident);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Request failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <main>
       <header><span className="mark">OB</span><div><strong>OpsBlaze</strong><small>Controlled incident recovery lab</small></div></header>
@@ -94,7 +114,15 @@ function App() {
               <dt>Version</dt><dd>{incident.status_version}</dd>
               <dt>Created</dt><dd>{new Date(incident.created_at).toLocaleString()}</dd>
             </dl>
-            <button type="button" className="secondary" disabled={busy} onClick={refresh}>Refresh status</button>
+            <div className="actions">
+              <button type="button" className="secondary" disabled={busy} onClick={refresh}>Refresh status</button>
+              {incident.status_projection === "AWAITING_APPROVAL" && (
+                <button type="button" disabled={busy} onClick={() => decide("acknowledge")}>Acknowledge review</button>
+              )}
+              {["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL"].includes(incident.status_projection) && (
+                <button type="button" className="secondary" disabled={busy} onClick={() => decide("cancel")}>Request cancellation</button>
+              )}
+            </div>
           </> : <p className="muted empty">No incident selected yet.</p>}
         </section>
       </div>

@@ -24,6 +24,8 @@ async def project_incident_status(
                 valid_states = ["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL", "CANCEL_REQUESTED"]
             else:
                 valid_states = ["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL"]
+                if state == "NEEDS_REVIEW":
+                    valid_states.append("REVIEW_ACKNOWLEDGED")
             await session.execute(
                 update(Incident)
                 .where(

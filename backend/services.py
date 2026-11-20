@@ -82,9 +82,30 @@ async def request_cancellation(
             return None
         if incident.status_version != expected_version:
             raise VersionConflict("incident version changed; refetch before retrying")
-        if incident.status_projection in {"CANCELLED", "VERIFIED", "FAILED", "NEEDS_REVIEW", "CANCEL_REQUESTED"}:
+        if incident.status_projection in {"CANCELLED", "VERIFIED", "FAILED", "NEEDS_REVIEW", "CANCEL_REQUESTED", "REVIEW_ACKNOWLEDGED"}:
             raise VersionConflict("incident is terminal or cancellation is pending")
         incident.status_projection = "CANCEL_REQUESTED"
         incident.status_version += 1
         session.add(OutboxEntry(incident_id=incident.id, kind="CANCEL_WORKFLOW"))
+    return incident
+
+async def acknowledge_review(
+    session: AsyncSession, tenant_id: str, incident_id: UUID, expected_version: int
+) -> Incident | None:
+    """Durably record an operator acknowledgement before signaling Temporal."""
+    async with session.begin():
+        incident = await session.scalar(
+            select(Incident)
+            .where(Incident.id == incident_id, Incident.tenant_id == tenant_id)
+            .with_for_update()
+        )
+        if incident is None:
+            return None
+        if incident.status_version != expected_version:
+            raise VersionConflict("incident version changed; refetch before retrying")
+        if incident.status_projection != "AWAITING_APPROVAL":
+            raise VersionConflict("incident is not awaiting review")
+        incident.status_projection = "REVIEW_ACKNOWLEDGED"
+        incident.status_version += 1
+        session.add(OutboxEntry(incident_id=incident.id, kind="ACKNOWLEDGE_REVIEW"))
     return incident
