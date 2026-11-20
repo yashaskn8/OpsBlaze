@@ -187,6 +187,8 @@ async def decide_plan(
             or incident is None or incident.status_projection != "AWAITING_APPROVAL"
         ):
             raise PlanConflict("plan or incident version/state changed")
+        if decided_by.startswith("oidc:") and incident.created_by is None:
+            raise PlanConflict("legacy incident has no authenticated creator")
         if (
             incident.created_by is not None
             and decided_by == incident.created_by

@@ -281,3 +281,20 @@ async def test_expired_grant_never_starts_a_new_effect(proposed_lab):
     ) == "NEEDS_REVIEW"
     async with sessions() as session:
         assert (await session.scalars(select(EffectReceipt))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_oidc_reviewer_rejects_legacy_incident_without_creator(proposed_lab):
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        incident = await session.get(Incident, incident_id)
+        assert incident.created_by is None
+    async with sessions() as session:
+        with pytest.raises(PlanConflict, match="authenticated creator"):
+            await decide_plan(
+                session, "a", plan_id, 1, "APPROVE",
+                decided_by="oidc:" + "e" * 32,
+            )
+    async with sessions() as session:
+        plan = await session.get(IncidentPlan, plan_id)
+        assert plan.status == "PROPOSED"
