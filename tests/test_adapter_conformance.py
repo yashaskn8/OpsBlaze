@@ -20,6 +20,7 @@ async def test_adapter_conformance_is_isolated_and_persisted(sessions_fixture):
         "effect-identity-binding", "status-store-outage",
         "status-store-recovered", "oracle-outage", "oracle-recovered",
         "retention-gap", "retention-recovered", "external-version-edit",
+        "permit-version-binding",
     }
     assert all(scenario["passed"] for scenario in run.results)
     async with sessions_fixture() as session:
