@@ -10,6 +10,31 @@ type Incident = {
   created_at: string;
 };
 
+type Plan = {
+  id: string;
+  action_id: string;
+  target_id: string;
+  status: string;
+  version: number;
+  plan_digest: string;
+  expected_version: number;
+  evidence_ids: string[];
+};
+
+type Evidence = {
+  id: string;
+  source: string;
+  validity: string;
+  redacted_excerpt: string;
+};
+
+type Effect = {
+  id: string;
+  state: string;
+  adapter_id: string;
+  observed_version: number | null;
+};
+
 function detail(value: unknown): string {
   if (value && typeof value === "object" && "detail" in value) {
     const message = (value as { detail: unknown }).detail;
@@ -24,6 +49,9 @@ function App() {
   const [target, setTarget] = useState("checkout");
   const [key, setKey] = useState(() => crypto.randomUUID());
   const [incident, setIncident] = useState<Incident | null>(null);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [evidence, setEvidence] = useState<Evidence[]>([]);
+  const [effects, setEffects] = useState<Effect[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -42,6 +70,9 @@ function App() {
       const data: unknown = await response.json();
       if (!response.ok) throw new Error(detail(data));
       setIncident(data as Incident);
+      setPlan(null);
+      setEvidence([]);
+      setEffects([]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
@@ -58,6 +89,22 @@ function App() {
       const data: unknown = await response.json();
       if (!response.ok) throw new Error(detail(data));
       setIncident(data as Incident);
+      const getList = async <T,>(kind: string): Promise<T[]> => {
+        const res = await fetch("/v1/incidents/" + incident.id + "/" + kind, {
+          headers: headers()
+        });
+        const body: unknown = await res.json();
+        if (!res.ok) throw new Error(detail(body));
+        return body as T[];
+      };
+      const [plans, proof, receipts] = await Promise.all([
+        getList<Plan>("plans"),
+        getList<Evidence>("evidence"),
+        getList<Effect>("effects")
+      ]);
+      setPlan(plans[0] ?? null);
+      setEvidence(proof);
+      setEffects(receipts);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
@@ -85,6 +132,34 @@ function App() {
     }
   }
 
+
+  async function decidePlan(choice: "APPROVE" | "REJECT") {
+    if (!plan || !incident) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/v1/plans/" + plan.id + "/decisions", {
+        method: "POST",
+        headers: {
+          ...headers(),
+          "Content-Type": "application/json",
+          "If-Match": String(plan.version)
+        },
+        body: JSON.stringify({ decision: choice })
+      });
+      const data: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(data));
+      setPlan({ ...plan, status: choice === "APPROVE" ? "APPROVED" : "REJECTED",
+                version: plan.version + 1 });
+      // A refreshed snapshot is required before any other decision.
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Request failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <main>
       <header><span className="mark">OB</span><div><strong>OpsBlaze</strong><small>Controlled incident recovery lab</small></div></header>
@@ -99,7 +174,7 @@ function App() {
             <p className="key">Idempotency key <code>{key}</code></p>
             <div className="actions">
               <button type="submit" disabled={busy}>{busy ? "Working..." : "Admit incident"}</button>
-              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setError(""); }}>New request key</button>
+              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setPlan(null); setEvidence([]); setEffects([]); setError(""); }}>New request key</button>
             </div>
           </form>
         </section>
@@ -117,16 +192,44 @@ function App() {
             <div className="actions">
               <button type="button" className="secondary" disabled={busy} onClick={refresh}>Refresh status</button>
               {incident.status_projection === "AWAITING_APPROVAL" && (
-                <button type="button" disabled={busy} onClick={() => decide("acknowledge")}>Acknowledge review</button>
+                <>
+                  {!plan && <button type="button" disabled={busy} onClick={() => decide("acknowledge")}>Acknowledge review</button>}
+                </>
               )}
               {["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL"].includes(incident.status_projection) && (
                 <button type="button" className="secondary" disabled={busy} onClick={() => decide("cancel")}>Request cancellation</button>
               )}
             </div>
+            {plan && <div className="plan">
+              <h3>Proposed simulator plan</h3>
+              <p><strong>{plan.action_id}</strong> for {plan.target_id}</p>
+              <p className="muted">Plan state: {plan.status} · Expected target version: {plan.expected_version}</p>
+              <p className="muted">Digest</p><code>{plan.plan_digest}</code>
+              {plan.status === "PROPOSED" && incident.status_projection === "AWAITING_APPROVAL" &&
+                <div className="actions">
+                  <button type="button" disabled={busy} onClick={() => decidePlan("APPROVE")}>Approve simulator plan</button>
+                  <button type="button" className="secondary" disabled={busy} onClick={() => decidePlan("REJECT")}>Reject</button>
+                </div>
+              }
+            </div>}
+            {evidence.length > 0 && <div className="audit">
+              <h3>Evidence ({evidence.length})</h3>
+              {evidence.map(item => <div className="audit-item" key={item.id}>
+                <strong>{item.source}</strong><span>{item.validity}</span>
+                <code>{item.redacted_excerpt}</code>
+              </div>)}
+            </div>}
+            {effects.length > 0 && <div className="audit">
+              <h3>Effect receipts</h3>
+              {effects.map(effect => <div className="audit-item" key={effect.id}>
+                <strong>{effect.adapter_id}</strong><span>{effect.state}</span>
+                <code>Observed version: {effect.observed_version ?? "unknown"}</code>
+              </div>)}
+            </div>}
           </> : <p className="muted empty">No incident selected yet.</p>}
         </section>
       </div>
-      <footer>Admission only. Temporal dispatch, approval and recovery are not yet enabled.</footer>
+      <footer>Simulator-only recovery. Real targets, production identities, AI model integration and independently calibrated evaluation are not enabled.</footer>
     </main>
   );
 }

@@ -26,3 +26,12 @@ dt { color: #9eacc3; } dd { margin: 0; overflow-wrap: anywhere; }
 .error { background: #542536; color: #ffd4de; padding: 12px; border-radius: 8px; }
 footer { margin-top: 28px; font-size: 13px; }
 @media (max-width: 740px) { .layout { grid-template-columns: 1fr; } .intro { margin-top: 45px; } }
+
+.plan, .audit { border-top: 1px solid #34415b; margin-top: 26px; padding-top: 18px; }
+.plan h3, .audit h3 { font-size: 15px; margin: 0 0 14px; }
+.plan p { font-size: 13px; overflow-wrap: anywhere; }
+.plan .actions { margin-top: 16px; }
+.audit-item { background: #0f1b2c; padding: 12px; border: 1px solid #2d415b; border-radius: 8px; margin-bottom: 8px; font-size: 12px; }
+.audit-item strong { display: inline-block; margin-right: 12px; }
+.audit-item span { color: #9bdad5; }
+.audit-item code { white-space: pre-wrap; }
