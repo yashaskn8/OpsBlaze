@@ -171,3 +171,12 @@ workflow while no worker is connected, then resumes with a new worker.
 It asserts that previously completed probes do not repeat and the
 simulator execution activity runs exactly once in this scenario.
 It does not replace multi-host, load, corruption or disaster-recovery tests.
+
+For B1 anti-entropy diagnosis, run
+`python -m backend.workers.reconciler --stale-seconds 300` with the
+native Temporal service and PostgreSQL available. It checks a bounded
+set of aged active projections whose workflow-start intent was
+acknowledged, then reports the actual Temporal status or
+`UNKNOWN` without changing incident state. A human approval wait
+is excluded from the stuck-worker classification. This is a
+read-only diagnostic, not automatic recovery or failover.
