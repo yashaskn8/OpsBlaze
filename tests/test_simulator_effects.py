@@ -118,3 +118,30 @@ async def test_applied_effect_identity_rejects_different_permit(lab):
         await adapter.apply(effect_id, changed)
     assert await adapter.apply(effect_id, permit) == 2
     assert await adapter.observe("a", "checkout") == (2, True)
+
+
+@pytest.mark.asyncio
+async def test_production_gateway_rejects_missing_approval_plan(lab, monkeypatch):
+    from backend.effects.gateway import set_state
+    from backend.settings import Settings
+
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "a" * 64
+    )
+    effect_id = await prepare_receipt(sessions, permit)
+    monkeypatch.setattr(
+        "backend.settings.get_settings",
+        lambda: Settings(environment="production"),
+    )
+    with pytest.raises(EffectConflict, match="approved plan ID"):
+        await execute_simulator_effect(sessions, adapter, permit)
+    with pytest.raises(EffectConflict, match="approved plan ID"):
+        await set_state(sessions, effect_id, "SENT")
+
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert receipt.state == "PREPARED"
+        assert receipt.attempt_count == 0
+        assert target.healthy is False

@@ -85,6 +85,13 @@ async def set_state(
                 return
             if state not in allowed.get(receipt.state, set()):
                 raise EffectConflict(f"invalid receipt transition {receipt.state} -> {state}")
+            if state == "SENT" and plan_id is None:
+                from backend.settings import get_settings
+
+                if get_settings().environment == "production":
+                    raise EffectConflict(
+                        "production receipt dispatch requires an approved plan ID"
+                    )
             if state == "SENT" and plan_id is not None:
                 from datetime import datetime, timezone
                 from backend.plans import current_plan_evidence_is_intact
@@ -163,7 +170,12 @@ async def execute_simulator_effect(
     permit: Permit,
     plan_id: UUID | None = None,
 ) -> str:
-    """The API path passes plan_id; direct use is reserved for simulator tests."""
+    """Only explicitly reviewed plans can dispatch outside development."""
+    if plan_id is None:
+        from backend.settings import get_settings
+
+        if get_settings().environment == "production":
+            raise EffectConflict("production execution requires an approved plan ID")
     effect_id = await prepare_receipt(sessions, permit)
     async with sessions() as session:
         receipt = await session.get(EffectReceipt, effect_id)

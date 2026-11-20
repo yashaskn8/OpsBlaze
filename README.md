@@ -271,3 +271,9 @@ against the `PREPARED → SENT` effect checkpoint. Exactly one operation
 may win: either the grant is consumed with the receipt in `SENT`,
 or revocation persists and the receipt stays `PREPARED`. The test
 isolates approval locking; separate tests check evidence validity.
+
+Production-mode simulator gateway calls now fail closed if they attempt
+to enter the `SENT` checkpoint without an explicitly identified approved
+plan. This protects both the high-level execute helper and the lower-level
+receipt state transition; the direct permit-only path remains available
+solely in the isolated development simulator test harness.
