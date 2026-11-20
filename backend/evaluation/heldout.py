@@ -18,7 +18,9 @@ MAX_BYTES = 2_000_000
 
 def canonical_digest(value: object) -> str:
     return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode()
     ).hexdigest()
 
 
@@ -185,11 +187,19 @@ def _unique_pairs(items):
     return obj
 
 
+def _reject_nonstandard_number(value: str):
+    raise ValueError("non-standard numeric literal in evaluation input")
+
+
 def read_json(path: str) -> dict:
     file = Path(path)
     if file.stat().st_size > MAX_BYTES:
         raise ValueError("evaluation file exceeds fixed size bound")
-    value = json.loads(file.read_text(encoding="utf-8"), object_pairs_hook=_unique_pairs)
+    value = json.loads(
+        file.read_text(encoding="utf-8"),
+        object_pairs_hook=_unique_pairs,
+        parse_constant=_reject_nonstandard_number,
+    )
     if not isinstance(value, dict):
         raise ValueError("evaluation document must be an object")
     return value
