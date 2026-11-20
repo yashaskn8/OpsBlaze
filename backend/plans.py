@@ -15,6 +15,7 @@ from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
 from backend.models import ApprovalGrant, ApprovalRevocation, RevokedIdentity, DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, SimulatorTarget, UIEvent
 from backend.outcomes import adjudicate_simulator
+from backend.probes.gateway import evidence_links_intact
 from backend.settings import get_settings
 
 
@@ -45,6 +46,8 @@ async def current_plan_evidence_is_intact(
     try:
         refs = [UUID(value) for value in ids]
     except (ValueError, TypeError, AttributeError):
+        return False
+    if not await evidence_links_intact(session, plan.incident_id, refs):
         return False
 
     expected_digest = digest_plan(
