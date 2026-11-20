@@ -365,3 +365,12 @@ GET /v1/incidents/{id}/assessments returns the decision lineage.
 The lab risk_score is a deterministic 0/100 guardrail indicator,
 **not an empirically calibrated probability**. A4 calibration
 requires independent development and held-out data before production use.
+
+## HTTP boundary checks
+
+The test suite also exercises FastAPI through real HTTPX ASGI requests
+across incident snapshots, tenant lists, evidence, event replay,
+idempotency conflicts, version-bound cancellation, and the production
+and release fail-closed paths. A shared development token is **not**
+production authentication; production mode deliberately rejects all
+tenant API access until a distinct authorization system is implemented.

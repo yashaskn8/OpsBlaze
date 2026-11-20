@@ -1,0 +1,143 @@
+"""HTTP-level contract checks for tenant isolation and fail-closed controls."""
+
+from collections.abc import AsyncIterator
+from uuid import uuid4
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from backend.api import app
+from backend.database import get_session
+from backend.settings import Settings, get_settings
+
+TOKEN = "test-local-token"
+
+
+@pytest.fixture
+async def api_client(
+    sessions_fixture: async_sessionmaker,
+) -> AsyncIterator[AsyncClient]:
+    async def session_override():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = session_override
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        database_url="sqlite+aiosqlite:///:memory:",
+        local_token=TOKEN,
+        environment="development",
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            yield client
+    finally:
+        app.dependency_overrides.clear()
+
+
+def headers(tenant: str, **extra: str) -> dict[str, str]:
+    return {"X-Tenant-Id": tenant, "X-OpsBlaze-Token": TOKEN, **extra}
+
+
+@pytest.mark.asyncio
+async def test_isolation_across_snapshot_lists_events_and_lineage(api_client):
+    response = await api_client.post(
+        "/v1/incidents",
+        json={"target_id": "checkout"},
+        headers=headers("alpha", **{"Idempotency-Key": "key-1"}),
+    )
+    assert response.status_code == 202, response.text
+    incident_id = response.json()["id"]
+    path = f"/v1/incidents/{incident_id}"
+
+    own = await api_client.get(path, headers=headers("alpha"))
+    assert own.status_code == 200 and own.headers["etag"] == '"1"'
+    listing = await api_client.get("/v1/incidents", headers=headers("alpha"))
+    assert [row["id"] for row in listing.json()] == [incident_id]
+
+    other_listing = await api_client.get("/v1/incidents", headers=headers("beta"))
+    assert other_listing.status_code == 200 and other_listing.json() == []
+
+    for suffix in ("", "/evidence", "/hypotheses", "/effects", "/outcomes",
+                   "/plans", "/assessments", "/events", "/lineage", "/route"):
+        hidden = await api_client.get(path + suffix, headers=headers("beta"))
+        assert hidden.status_code == 404, (suffix, hidden.text)
+
+    own_events = await api_client.get(path + "/events", headers=headers("alpha"))
+    assert own_events.status_code == 200
+    events = own_events.json()
+    assert len(events["events"]) == 1
+    assert events["events"][0]["kind"] == "ADMITTED"
+    later = await api_client.get(
+        path + "/events",
+        params={"after_id": events["last_id"]},
+        headers=headers("alpha"),
+    )
+    assert later.status_code == 200 and later.json()["events"] == []
+
+
+@pytest.mark.asyncio
+async def test_version_bound_cancel_and_changed_idempotency_payload(api_client):
+    request_headers = headers("alpha", **{"Idempotency-Key": "stable"})
+    created = await api_client.post(
+        "/v1/incidents", json={"target_id": "checkout"},
+        headers=request_headers,
+    )
+    assert created.status_code == 202
+    incident_id = created.json()["id"]
+    replay = await api_client.post(
+        "/v1/incidents", json={"target_id": "checkout"},
+        headers=request_headers,
+    )
+    assert replay.status_code == 202
+    assert replay.json()["id"] == incident_id
+    conflict = await api_client.post(
+        "/v1/incidents", json={"target_id": "payments"},
+        headers=request_headers,
+    )
+    assert conflict.status_code == 409
+
+    path = f"/v1/incidents/{incident_id}"
+    stale = await api_client.post(path + "/cancel", headers=headers("alpha", **{"If-Match": "0"}))
+    assert stale.status_code == 409
+    wrong_tenant = await api_client.post(path + "/cancel", headers=headers("beta", **{"If-Match": "1"}))
+    assert wrong_tenant.status_code == 404
+    cancelled = await api_client.post(path + "/cancel", headers=headers("alpha", **{"If-Match": '"1"'}))
+    assert cancelled.status_code == 202 and cancelled.json()["status_version"] == 2
+    repeated = await api_client.post(path + "/cancel", headers=headers("alpha", **{"If-Match": "2"}))
+    assert repeated.status_code == 409
+    events = await api_client.get(path + "/events", headers=headers("alpha"))
+    assert [event["kind"] for event in events.json()["events"]] == [
+        "ADMITTED", "CANCEL_REQUESTED",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_production_mode_and_unvalidated_release_fail_closed(api_client):
+    denied = await api_client.get(
+        "/v1/incidents", headers=headers("alpha", **{"X-OpsBlaze-Token": "wrong"})
+    )
+    assert denied.status_code == 401
+    missing = await api_client.get("/v1/incidents", headers={"X-Tenant-Id": "alpha"})
+    assert missing.status_code == 422
+    bad_tenant = await api_client.get("/v1/incidents", headers=headers("bad/tenant"))
+    assert bad_tenant.status_code == 422
+
+    # No environment or developer header can approve a live policy rollout.
+    release = await api_client.post(
+        f"/v1/rollouts/{uuid4()}/approve",
+        headers=headers("alpha"),
+    )
+    assert release.status_code == 409
+    assert "release gate closed" in release.json()["detail"]
+
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        database_url="sqlite+aiosqlite:///:memory:",
+        local_token=TOKEN,
+        environment="production",
+    )
+    production = await api_client.get("/v1/incidents", headers=headers("alpha"))
+    assert production.status_code == 503
