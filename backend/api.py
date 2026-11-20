@@ -1082,8 +1082,8 @@ async def incident_ui_events(
     from sqlalchemy import select
     from backend.models import UIEvent
 
-    if after_id < 0:
-        raise HTTPException(422, "after_id cannot be negative")
+    if not 0 <= after_id <= (1 << 63) - 1:
+        raise HTTPException(422, "after_id is outside supported cursor range")
     if await find_incident(session, tenant_id, incident_id) is None:
         raise HTTPException(404, "incident not found")
     from backend.events import ExpiredCursor, validate_event_cursor
@@ -1258,12 +1258,19 @@ async def stream_incident_updates(
         validate_event_cursor,
     )
 
-    if after_id < 0:
-        raise HTTPException(400, "after_id cannot be negative")
+    if not 0 <= after_id <= (1 << 63) - 1:
+        raise HTTPException(400, "after_id is outside supported cursor range")
     if last_event_id is not None:
-        if not last_event_id.isdecimal():
-            raise HTTPException(400, "Last-Event-ID must be a nonnegative integer")
-        after_id = max(after_id, int(last_event_id))
+        if (
+            len(last_event_id) > 19
+            or not last_event_id.isascii()
+            or not last_event_id.isdecimal()
+        ):
+            raise HTTPException(400, "Last-Event-ID must be a bounded ASCII integer")
+        parsed = int(last_event_id)
+        if parsed > (1 << 63) - 1:
+            raise HTTPException(400, "Last-Event-ID is outside supported cursor range")
+        after_id = max(after_id, parsed)
     if await find_incident(session, tenant_id, incident_id) is None:
         raise HTTPException(404, "incident not found")
     try:
