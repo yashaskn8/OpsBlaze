@@ -99,6 +99,16 @@ async def set_state(
                 return
             if state not in allowed.get(receipt.state, set()):
                 raise EffectConflict(f"invalid receipt transition {receipt.state} -> {state}")
+            if state == "CONFIRMED" and (
+                type(observed_version) is not int
+                or observed_version != receipt.expected_version + 1
+            ):
+                raise EffectConflict("confirmed effect version is inconsistent")
+            if state == "VERIFIED" and (
+                type(receipt.observed_version) is not int
+                or receipt.observed_version != receipt.expected_version + 1
+            ):
+                raise EffectConflict("cannot verify an inconsistent effect version")
             if state == "SENT" and receipt.adapter_id != "simulator":
                 raise EffectConflict("non-simulator effect adapter is disabled")
             if state == "SENT" and plan_id is None:
