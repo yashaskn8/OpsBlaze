@@ -145,3 +145,61 @@ async def test_production_gateway_rejects_missing_approval_plan(lab, monkeypatch
         assert receipt.state == "PREPARED"
         assert receipt.attempt_count == 0
         assert target.healthy is False
+
+
+@pytest.mark.asyncio
+async def test_lost_ack_with_unavailable_status_store_never_reapplies(lab):
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "7" * 64,
+    )
+
+    class BrokenLookupAfterCommit(SimulatorAdapter):
+        async def apply(self, effect_id, permit):
+            await super().apply(effect_id, permit)
+            raise TimeoutError("reply lost")
+
+        async def query_effect(self, effect_id):
+            raise ConnectionError("status service offline")
+
+    from backend.effects.gateway import reconcile_effect
+
+    broken = BrokenLookupAfterCommit(sessions)
+    assert await execute_simulator_effect(sessions, broken, permit) == "UNKNOWN"
+    effect_id = (await find_receipt(sessions)).id
+    assert await reconcile_effect(sessions, broken, effect_id) == "UNKNOWN"
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        assert receipt.state == "UNKNOWN" and receipt.attempt_count == 1
+        applied = (await session.scalars(select(SimulatorAppliedEffect))).all()
+        assert len(applied) == 1
+    assert await adapter.observe("a", "checkout") == (2, True)
+    assert await reconcile_effect(sessions, adapter, effect_id) == "VERIFIED"
+
+
+@pytest.mark.asyncio
+async def test_postcondition_timeout_keeps_receipt_unverified(lab):
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "8" * 64,
+    )
+
+    class LostOracle(SimulatorAdapter):
+        async def observe(self, tenant_id, target_id):
+            raise ConnectionError("oracle offline")
+
+    from backend.effects.gateway import reconcile_effect
+
+    assert await execute_simulator_effect(
+        sessions, LostOracle(sessions), permit,
+    ) == "UNKNOWN"
+    effect_id = (await find_receipt(sessions)).id
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        assert receipt.state == "CONFIRMED"
+    assert await reconcile_effect(sessions, adapter, effect_id) == "VERIFIED"
+
+
+async def find_receipt(sessions):
+    async with sessions() as session:
+        return await session.scalar(select(EffectReceipt))

@@ -148,7 +148,13 @@ async def reconcile_effect(
     if state in {"VERIFIED", "FAILED", "NEEDS_REVIEW"}:
         return state
     if state in {"SENT", "UNKNOWN", "PREPARED"}:
-        observed_version = await adapter.query_effect(effect_id)
+        try:
+            observed_version = await adapter.query_effect(effect_id)
+        except (TimeoutError, ConnectionError):
+            # Lookup failure is not proof of non-application. No blind retry.
+            if state != "UNKNOWN":
+                await set_state(sessions, effect_id, "UNKNOWN")
+            return "UNKNOWN"
         if observed_version is None:
             if state != "UNKNOWN":
                 await set_state(sessions, effect_id, "UNKNOWN")
@@ -157,7 +163,12 @@ async def reconcile_effect(
             await set_state(sessions, effect_id, "CONFIRMED", observed_version)
         expected_observed = observed_version
 
-    witness = await adapter.observe(tenant_id, target_id)
+    try:
+        witness = await adapter.observe(tenant_id, target_id)
+    except (TimeoutError, ConnectionError):
+        # Retain CONFIRMED while the independent oracle is unreachable:
+        # no success claim and no replay of an already-applied effect.
+        return "UNKNOWN"
     verified = witness is not None and witness == (expected_observed, True)
     terminal = "VERIFIED" if verified else "NEEDS_REVIEW"
     await set_state(sessions, effect_id, terminal)

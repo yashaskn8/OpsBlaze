@@ -19,9 +19,12 @@ from backend.adapters.simulator import (
     EffectIdentityConflict, Permit, SimulatorAdapter, StaleFence,
     TargetVersionConflict,
 )
+from backend.effects.gateway import (
+    execute_simulator_effect, reconcile_effect, prepare_receipt,
+)
 from backend.effects.reservations import reserve_simulator_target
 from backend.models import (
-    AdapterConformanceRun, AdmissionUsage, Incident, OutboxEntry,
+    AdapterConformanceRun, AdmissionUsage, EffectReceipt, Incident, OutboxEntry,
     ResourceEpoch, ResourceReservation, SimulatorAppliedEffect, SimulatorTarget,
     UIEvent, PolicyAssignment,
 )
@@ -29,8 +32,23 @@ from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 from backend.settings import get_settings
 
-SUITE_VERSION = "simulator-conformance-v2"
+SUITE_VERSION = "simulator-conformance-v3"
 RETENTION_SECONDS = 3600
+REQUIRED_SCENARIOS = frozenset({
+    "first-apply", "duplicate-apply", "effect-status", "stale-fence",
+    "version-cas", "lost-ack-lookup", "expired-lease", "missing-effect",
+    "effect-identity-binding", "status-store-outage", "status-store-recovered",
+    "oracle-outage", "oracle-recovered",
+})
+
+
+def complete_report(results: list[dict]) -> bool:
+    names = [row.get("scenario") for row in results]
+    return (
+        len(names) == len(REQUIRED_SCENARIOS)
+        and set(names) == REQUIRED_SCENARIOS
+        and all(row.get("passed") is True for row in results)
+    )
 
 
 def simulator_digest() -> str:
@@ -169,6 +187,66 @@ async def execute_suite(
             await adapter.query_effect(uuid4()) is None,
             "unknown effect lookup returns no fabricated success",
         )
+
+        # A lost reply after commit followed by a status-store outage must
+        # remain unresolved. The original effect identity is never reapplied.
+        permit_four = await reserve_simulator_target(
+            sessions, tenant, target_id, incident_id, "d" * 64,
+        )
+
+        class LostAckAndStatusOutage(SimulatorAdapter):
+            async def apply(self, effect_id, permit):
+                await super().apply(effect_id, permit)
+                raise TimeoutError("acknowledgment lost after commit")
+
+            async def query_effect(self, effect_id):
+                raise ConnectionError("status store is unavailable")
+
+        outage = LostAckAndStatusOutage(sessions)
+        effect_four = await prepare_receipt(sessions, permit_four)
+        pending = await execute_simulator_effect(sessions, outage, permit_four)
+        still_pending = await reconcile_effect(sessions, outage, effect_four)
+        outcome(
+            "status-store-outage",
+            pending == still_pending == "UNKNOWN"
+            and await adapter.observe(tenant, target_id) == (4, True),
+            "unknown receipt never triggers a second apply after lookup failure",
+        )
+        recovered = await reconcile_effect(sessions, adapter, effect_four)
+        outcome(
+            "status-store-recovered",
+            recovered == "VERIFIED"
+            and await adapter.query_effect(effect_four) == 4,
+            "same receipt resolves from original effect identity",
+        )
+
+        # An unavailable postcondition oracle cannot upgrade CONFIRMED to
+        # VERIFIED until it independently observes the target again.
+        permit_five = await reserve_simulator_target(
+            sessions, tenant, target_id, incident_id, "e" * 64,
+        )
+
+        class PostconditionOutage(SimulatorAdapter):
+            async def observe(self, tenant_id, target_id):
+                raise TimeoutError("independent postcondition unavailable")
+
+        oracle_outage = PostconditionOutage(sessions)
+        effect_five = await prepare_receipt(sessions, permit_five)
+        unresolved = await execute_simulator_effect(
+            sessions, oracle_outage, permit_five,
+        )
+        outcome(
+            "oracle-outage",
+            unresolved == "UNKNOWN"
+            and await adapter.query_effect(effect_five) == 5,
+            "no success claim while the independent oracle is unreachable",
+        )
+        recovered_oracle = await reconcile_effect(sessions, adapter, effect_five)
+        outcome(
+            "oracle-recovered",
+            recovered_oracle == "VERIFIED",
+            "original committed effect verified after read-only oracle recovery",
+        )
     finally:
         # Remove disposable fixture rows. Keep only the digest + scenario report.
         async with sessions() as session:
@@ -177,6 +255,9 @@ async def execute_suite(
                     delete(SimulatorAppliedEffect).where(
                         SimulatorAppliedEffect.tenant_id == tenant
                     )
+                )
+                await session.execute(
+                    delete(EffectReceipt).where(EffectReceipt.tenant_id == tenant)
                 )
                 await session.execute(
                     delete(ResourceReservation).where(
@@ -221,7 +302,7 @@ async def execute_suite(
         id=uuid4(), adapter_id="simulator-v1",
         code_digest=simulator_digest(), suite_version=SUITE_VERSION,
         retention_seconds=RETENTION_SECONDS, results=results,
-        state="LAB_PASS" if results and all(r["passed"] for r in results) else "LAB_FAIL",
+        state="LAB_PASS" if complete_report(results) else "LAB_FAIL",
     )
     async with sessions() as session:
         async with session.begin():
@@ -267,6 +348,5 @@ async def current_simulator_is_conformant(
         and run.suite_version == SUITE_VERSION
         and run.retention_seconds >= RETENTION_SECONDS
         and timedelta(0) <= age <= timedelta(days=7)
-        and all(item.get("passed") is True for item in run.results)
-        and len(run.results) >= 9
+        and complete_report(run.results)
     )
