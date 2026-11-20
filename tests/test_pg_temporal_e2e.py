@@ -574,3 +574,85 @@ async def test_capture_cannot_remain_eligible_when_outcome_disputed_concurrently
                 assert rows[0].status == "QUARANTINED"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_security_revocation_serializes_with_new_reviewer_grant(monkeypatch):
+    """A grant cannot survive a completed concurrent reviewer revocation."""
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from backend.models import (
+        ApprovalGrant, Incident, IncidentPlan, RevokedIdentity,
+    )
+    from backend.plans import PlanConflict, decide_plan
+    from backend.schemas import IncidentCreate
+    from backend.security.revocation import revoke_identity
+    from backend.services import admit_incident
+
+    async def intact(*_args):
+        return True
+
+    monkeypatch.setattr("backend.plans.current_plan_evidence_is_intact", intact)
+    engine = create_async_engine(get_settings().database_url, pool_pre_ping=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = "revocation-race-" + uuid4().hex[:10]
+    reviewer = "oidc:" + "a" * 32
+    security = "oidc:" + "b" * 32
+    plan_id = uuid4()
+    try:
+        async with sessions() as session:
+            incident = await admit_incident(
+                session, tenant, "revoke",
+                IncidentCreate(target_id="isolated-simulator"),
+            )
+        async with sessions() as session:
+            async with session.begin():
+                original = await session.get(Incident, incident.id)
+                original.status_projection = "AWAITING_APPROVAL"
+                session.add(IncidentPlan(
+                    id=plan_id, tenant_id=tenant, incident_id=incident.id,
+                    target_id="isolated-simulator",
+                    action_id="SIMULATOR_MARK_HEALTHY",
+                    plan_digest="d" * 64, expected_version=1, evidence_ids=[],
+                    status="PROPOSED", version=1,
+                ))
+
+        async def grant():
+            async with sessions() as session:
+                try:
+                    await decide_plan(
+                        session, tenant, plan_id, 1, "APPROVE",
+                        decided_by=reviewer,
+                    )
+                    return "APPROVED"
+                except PlanConflict:
+                    return "DENIED"
+
+        async def security_revoke():
+            async with sessions() as session:
+                _identity, count = await revoke_identity(
+                    session, tenant, reviewer, security,
+                    "security owner revoked reviewer before effect dispatch",
+                )
+                return count
+
+        grant_outcome, affected = await asyncio.gather(
+            grant(), security_revoke(),
+        )
+        assert grant_outcome in {"APPROVED", "DENIED"}
+        assert affected in {0, 1}
+        async with sessions() as session:
+            revoked = await session.get(RevokedIdentity, (tenant, reviewer))
+            assert revoked is not None and revoked.revoked_by == security
+            grant_row = await session.scalar(
+                select(ApprovalGrant).where(ApprovalGrant.plan_id == plan_id)
+            )
+            assert grant_row is None or grant_row.state == "REVOKED"
+            state = await session.get(IncidentPlan, plan_id)
+            assert state.status in {"PROPOSED", "REVOKED"}
+            assert state.status != "APPROVED"
+    finally:
+        await engine.dispose()
