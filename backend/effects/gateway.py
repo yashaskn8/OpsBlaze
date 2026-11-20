@@ -161,6 +161,7 @@ async def reconcile_effect(
         state = receipt.state
         tenant_id, target_id = receipt.tenant_id, receipt.target_id
         expected_observed = receipt.observed_version
+        original_version = receipt.expected_version
 
     if state in {"VERIFIED", "FAILED", "NEEDS_REVIEW"}:
         return state
@@ -184,12 +185,41 @@ async def reconcile_effect(
                     # Never replace CONFIRMED/VERIFIED with UNKNOWN.
                     return await reconcile_effect(sessions, adapter, effect_id)
             return "UNKNOWN"
+        if state == "PREPARED":
+            # No send was authorized. A reported remote effect is contradictory,
+            # not permission to promote PREPARED -> CONFIRMED or recurse forever.
+            try:
+                await set_state(sessions, effect_id, "NEEDS_REVIEW")
+            except EffectConflict:
+                # Another worker won the dispatch race. Read its new state.
+                return await reconcile_effect(sessions, adapter, effect_id)
+            return "NEEDS_REVIEW"
+        if (
+            type(observed_version) is not int
+            or observed_version != original_version + 1
+        ):
+            try:
+                await set_state(sessions, effect_id, "NEEDS_REVIEW")
+            except EffectConflict:
+                return await reconcile_effect(sessions, adapter, effect_id)
+            return "NEEDS_REVIEW"
         if state != "CONFIRMED":
             try:
                 await set_state(sessions, effect_id, "CONFIRMED", observed_version)
             except EffectConflict:
                 return await reconcile_effect(sessions, adapter, effect_id)
         expected_observed = observed_version
+
+    if (
+        expected_observed is None
+        or type(expected_observed) is not int
+        or expected_observed != original_version + 1
+    ):
+        try:
+            await set_state(sessions, effect_id, "NEEDS_REVIEW")
+        except EffectConflict:
+            return await reconcile_effect(sessions, adapter, effect_id)
+        return "NEEDS_REVIEW"
 
     try:
         witness = await adapter.observe(tenant_id, target_id)
