@@ -122,9 +122,10 @@ async def deliver_intent(client: Client, intent: tuple[int, str, str, str, dict 
 
 
 async def dispatch_once(
-    client: Client, sessions: async_sessionmaker[AsyncSession]
+    client: Client, sessions: async_sessionmaker[AsyncSession],
+    *, tenant_filter: str | None = None,
 ) -> bool:
-    intent = await claim_intent(sessions)
+    intent = await claim_intent(sessions, tenant_filter=tenant_filter)
     if intent is None:
         return False
     entry_id = intent[0]
