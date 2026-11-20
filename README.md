@@ -164,3 +164,16 @@ reconciliation never silently overwrites that human dispute. GET
 
 This witness is independent of the investigator's decision but still relies on
 the local simulator, not an external production-grade oracle.
+
+## E1 opt-in experience capture
+
+Experience capture is disabled by default. POST
+/v1/incidents/{id}/consent with an If-Match consent epoch (initially 0)
+and {"allow":true} opts in; {"allow":false} revokes with a new epoch
+and tombstones earlier capsules. Capture requires the latest recorded outcome
+to be independently VERIFIED and undisputed. It stores only IDs, a salted-by-
+tenant target digest, lineage and a bounded expiry, never raw logs/prompts.
+GET /v1/experiences checks current consent and expiry at read time.
+
+This is a laboratory privacy baseline; a production system needs reviewed
+classification, retention, cross-store revocation propagation and a consent UI.

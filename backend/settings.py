@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     admission_limit_per_minute: int = 30
     stuck_after_seconds: int = 300
     max_probe_calls_per_incident: int = 3
+    experience_retention_days: int = 7
 
 
 @lru_cache

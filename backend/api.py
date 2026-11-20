@@ -355,3 +355,70 @@ async def report_outcome_dispute(
     if row is None:
         raise HTTPException(404, "outcome not found")
     return {"id": str(row.id), "revision": row.revision, "label": row.label}
+
+
+class ConsentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    allow: bool
+
+
+@app.post("/v1/incidents/{incident_id}/consent", status_code=202)
+async def update_experience_consent(
+    incident_id: UUID,
+    payload: ConsentRequest,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.experiences import ConsentConflict, set_consent
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be the consent epoch")
+    try:
+        consent = await set_consent(
+            session, tenant_id, incident_id, int(version), payload.allow
+        )
+    except ConsentConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if consent is None:
+        raise HTTPException(404, "incident not found")
+    return {"incident_id": str(incident_id), "epoch": consent.epoch,
+            "allowed": consent.allowed}
+
+
+@app.post("/v1/incidents/{incident_id}/experiences/capture", status_code=201)
+async def capture_incident_experience(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.experiences import ConsentConflict, capture_capsule
+
+    try:
+        capsule = await capture_capsule(session, tenant_id, incident_id)
+    except ConsentConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if capsule is None:
+        raise HTTPException(404, "incident not found")
+    return {"id": str(capsule.id), "status": capsule.status,
+            "consent_epoch": capsule.consent_epoch}
+
+
+@app.get("/v1/experiences")
+async def tenant_experiences(
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    from backend.experiences import list_capsules
+
+    rows = await list_capsules(session, tenant_id)
+    return [
+        {"id": str(row.id), "incident_id": str(row.incident_id),
+         "outcome_revision_id": str(row.outcome_revision_id),
+         "consent_epoch": row.consent_epoch,
+         "target_digest": row.target_digest,
+         "evidence_ids": row.evidence_ids,
+         "expires_at": row.expires_at.isoformat()}
+        for row in rows
+    ]

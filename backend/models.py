@@ -248,3 +248,34 @@ class OutcomeRevision(Base):
     observed_version: Mapped[int | None] = mapped_column(BigInteger)
     reason: Mapped[str] = mapped_column(String(256), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ExperienceConsent(Base):
+    __tablename__ = "experience_consent"
+
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id"), primary_key=True
+    )
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+    allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExperienceCapsule(Base):
+    __tablename__ = "experience_capsule"
+    __table_args__ = (
+        UniqueConstraint("incident_id", "outcome_revision_id", name="uq_capsule_outcome"),
+        Index("ix_experience_scoped", "tenant_id", "incident_id", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False)
+    outcome_revision_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("outcome_revision.id"), nullable=False)
+    consent_epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
