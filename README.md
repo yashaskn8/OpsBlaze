@@ -95,3 +95,14 @@ These components are internal and are not connected to a public mutation API
 or to the incident workflow until exact-plan human approval (P2) is implemented.
 A simulator effect is **not** a real recovery. No infrastructure mutation
 connector is enabled or claimed conformant.
+
+## B4 admission and queue health
+
+Admission now increments a durable, tenant-scoped fixed-minute counter in the
+same transaction as incident + outbox. Excess requests return HTTP 429 and
+Retry-After. Duplicate idempotency replays do not consume additional capacity.
+The `GET /v1/operations/queues` endpoint shows tenant-scoped pending outbox
+and active-incident counts. `GET /v1/health/ready` checks database readiness.
+Run `python -m backend.workers.state_age` separately to log phase-age alerts.
+This is a baseline quota; worker-concurrency and model token budgets are not yet
+implemented and require measured tuning.

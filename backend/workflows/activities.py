@@ -1,4 +1,5 @@
 from uuid import UUID
+from datetime import datetime, timezone
 
 from sqlalchemy import update
 from temporalio import activity
@@ -36,6 +37,7 @@ async def project_incident_status(
                 .values(
                     status_projection=state,
                     status_version=Incident.status_version + 1,
+                    phase_entered_at=datetime.now(timezone.utc),
                 )
             )
 

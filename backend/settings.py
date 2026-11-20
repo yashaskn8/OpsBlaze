@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     temporal_address: str = "127.0.0.1:7233"
     temporal_namespace: str = "default"
     temporal_task_queue: str = "opsblaze-incidents-v1"
+    admission_limit_per_minute: int = 30
+    stuck_after_seconds: int = 300
 
 
 @lru_cache

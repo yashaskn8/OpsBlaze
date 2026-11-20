@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_session
 from backend.schemas import IncidentCreate, IncidentView
-from backend.services import IdempotencyConflict, admit_incident, find_incident
+from backend.services import IdempotencyConflict, RateLimited, admit_incident, find_incident
 from backend.settings import Settings, get_settings
 
 app = FastAPI(title="OpsBlaze", version="0.1.0")
@@ -47,6 +47,8 @@ async def create_incident(
         incident = await admit_incident(session, tenant_id, idempotency_key, payload)
     except IdempotencyConflict as exc:
         raise HTTPException(409, str(exc)) from exc
+    except RateLimited as exc:
+        raise HTTPException(429, str(exc), headers={"Retry-After": "60"}) from exc
     return IncidentView.model_validate(incident)
 
 
@@ -100,3 +102,41 @@ async def acknowledge_incident_review(
     if incident is None:
         raise HTTPException(404, "incident not found")
     return IncidentView.model_validate(incident)
+
+
+@app.get("/v1/health/ready")
+async def readiness(session: AsyncSession = Depends(get_session)) -> dict[str, str]:
+    from sqlalchemy import text
+    try:
+        await session.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(503, "database unavailable") from exc
+    return {"status": "ready"}
+
+
+@app.get("/v1/operations/queues")
+async def tenant_queues(
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, int]:
+    from sqlalchemy import func, select
+    from backend.models import Incident, OutboxEntry
+
+    pending = await session.scalar(
+        select(func.count())
+        .select_from(OutboxEntry)
+        .join(Incident, Incident.id == OutboxEntry.incident_id)
+        .where(Incident.tenant_id == tenant_id, OutboxEntry.delivered_at.is_(None))
+    )
+    active = await session.scalar(
+        select(func.count())
+        .select_from(Incident)
+        .where(
+            Incident.tenant_id == tenant_id,
+            Incident.status_projection.in_(
+                ["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL",
+                 "CANCEL_REQUESTED", "REVIEW_ACKNOWLEDGED"]
+            ),
+        )
+    )
+    return {"pending_outbox": pending or 0, "active_incidents": active or 0}
