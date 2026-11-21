@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import SimulatorAdapter, observed_healthy_at_version
-from backend.models import EffectReceipt, Incident, OutcomeRevision
+from backend.models import EffectReceipt, Incident, OutboxEntry, OutcomeRevision
 from backend.learning.invalidation import invalidate_outcome_dependents
 
 
@@ -99,7 +99,14 @@ async def adjudicate_simulator(
                 reason="simulator postcondition observed" if verified else "simulator postcondition mismatch",
             )
             session.add(row)
-            if label != "VERIFIED":
+            if label == "VERIFIED":
+                # The verified source revision and its projection intent commit
+                # together. A crash before the projector is replay-safe.
+                session.add(OutboxEntry(
+                    incident_id=incident_id, kind="PROJECT_EXPERIENCE",
+                    payload={"outcome_id": str(row.id)},
+                ))
+            else:
                 await invalidate_outcome_dependents(session, tenant_id, incident_id)
     return label
 
