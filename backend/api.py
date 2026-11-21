@@ -185,8 +185,17 @@ async def readiness(
     from backend.temporal_connection import validate_temporal_transport
     from backend.auth import configured_identity
 
-    if settings.environment == "production" and not configured_identity(settings):
-        raise HTTPException(503, "production identity provider is not configured")
+    if settings.environment == "production":
+        if not configured_identity(settings):
+            raise HTTPException(503, "production identity provider is not configured")
+        from backend.workers.experience_projector import projector_database_url
+
+        try:
+            projector_database_url(settings)
+        except ValueError as exc:
+            raise HTTPException(
+                503, "dedicated experience projector credentials not configured",
+            ) from exc
 
     try:
         await session.execute(text("SELECT 1"))
