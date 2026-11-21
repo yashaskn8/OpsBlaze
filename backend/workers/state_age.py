@@ -10,6 +10,7 @@ from backend.database import get_session_maker
 from backend.models import EffectReceipt, Incident, OutboxEntry
 from backend.services import ACTIVE_STATES
 from backend.settings import get_settings
+from backend.telemetry import initialize_tracing
 
 log = logging.getLogger(__name__)
 UNRESOLVED_EFFECT_STATES = ("SENT", "UNKNOWN", "CONFIRMED")
@@ -85,6 +86,7 @@ async def scan_stuck() -> int:
 
 
 async def main() -> None:
+    initialize_tracing(get_settings())
     while True:
         try:
             await scan_stuck()
