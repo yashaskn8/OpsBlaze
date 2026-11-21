@@ -54,6 +54,9 @@ async def test_production_readiness_checks_both_worker_roles(sessions_fixture, m
         oidc_issuer="https://idp.example.test/",
         oidc_audience="opsblaze-api",
         oidc_jwks_url="https://idp.example.test/jwks",
+        projector_database_url=(
+            "postgresql+asyncpg://projector:restricted@localhost:5432/opsblaze"
+        ),
     )
     try:
         async with AsyncClient(
@@ -66,7 +69,11 @@ async def test_production_readiness_checks_both_worker_roles(sessions_fixture, m
             assert one.status_code == 503
             await record_heartbeat(sessions_fixture, "incident_worker")
             both = await client.get("/v1/health/ready")
-            assert both.status_code == 200 and both.json() == {"status": "ready"}
+            assert both.status_code == 503  # Dedicated projector not present.
+            await record_heartbeat(sessions_fixture, "experience_projector")
+            all_workers = await client.get("/v1/health/ready")
+            assert all_workers.status_code == 200
+            assert all_workers.json() == {"status": "ready"}
     finally:
         app.dependency_overrides.clear()
 
@@ -91,10 +98,14 @@ async def test_readiness_fails_closed_if_temporal_unreachable(sessions_fixture, 
         oidc_issuer="https://idp.example.test/",
         oidc_audience="opsblaze-api",
         oidc_jwks_url="https://idp.example.test/jwks",
+        projector_database_url=(
+            "postgresql+asyncpg://projector:restricted@localhost:5432/opsblaze"
+        ),
     )
     try:
         await record_heartbeat(sessions_fixture, "dispatcher")
         await record_heartbeat(sessions_fixture, "incident_worker")
+        await record_heartbeat(sessions_fixture, "experience_projector")
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://api.test"
         ) as client:
@@ -123,6 +134,37 @@ async def test_production_readiness_rejects_unconfigured_identity(sessions_fixtu
             assert response.status_code == 503
             assert response.json()["detail"] == (
                 "production identity provider is not configured"
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_redteam_readiness_rejects_general_app_database_for_projector(
+    sessions_fixture, monkeypatch,
+):
+    async def session_override():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = session_override
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        environment="production", temporal_tls_enabled=True,
+        oidc_issuer="https://idp.example.test/",
+        oidc_audience="opsblaze-api",
+        oidc_jwks_url="https://idp.example.test/jwks",
+        projector_database_url=(
+            "postgresql+asyncpg://opsblaze:opsblaze@localhost:5432/opsblaze"
+        ),
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://api.test",
+        ) as client:
+            response = await client.get("/v1/health/ready")
+            assert response.status_code == 503
+            assert response.json()["detail"] == (
+                "dedicated experience projector credentials not configured"
             )
     finally:
         app.dependency_overrides.clear()
