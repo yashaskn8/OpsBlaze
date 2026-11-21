@@ -30,6 +30,17 @@ lessons. This is **not** a full personal-data access/export or cross-store/
 backup erasure certification.
 
 
+### Consented experience pages (E1)
+
+`GET /v1/experiences?limit=50&cursor=<uuid>` returns a bounded
+`{records, next_cursor, redacted}` response for current tenant-owned
+capsules only when consent remains allowed, the epoch matches, the source
+outcome remains verified, the capsule has not expired and its target digest
+still matches the originating incident. Use `next_cursor` until it becomes
+`null`; an empty page can still have a next cursor if invalid stored rows
+were rejected. This is a redacted source-reference view, not a raw transcript.
+Previous unpaged array clients must switch to `records`.
+
 ### Durable queue health (B4)
 
 The workbench's **Queue health** panel calls `GET /v1/operations/queues`
