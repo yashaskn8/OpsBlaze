@@ -39,6 +39,8 @@ async def test_one_shot_maintenance_keeps_durable_incident_records(sessions_fixt
     assert result == {
         "capsules_scrubbed": 0,
         "lessons_revoked": 0,
+        "tenant_capsules_scrubbed": 0,
+        "tenant_lessons_revoked": 0,
         "ui_events_deleted": 1,
         "admission_windows_deleted": 1,
         "ai_windows_deleted": 1,
