@@ -533,6 +533,31 @@ async def tenant_experiences(
     ]
 
 
+@app.post("/v1/experiences/{capsule_id}/quarantine", status_code=202)
+async def quarantine_experience(
+    capsule_id: UUID,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
+) -> dict:
+    from backend.experiences import ConsentConflict, quarantine_capsule
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be the source consent epoch")
+    try:
+        row = await quarantine_capsule(session, tenant_id, capsule_id, int(version))
+    except ConsentConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if row is None:
+        raise HTTPException(404, "experience capsule not found")
+    return {
+        "id": str(row.id), "status": row.status,
+        "consent_epoch": row.consent_epoch,
+    }
+
+
 @app.get("/v1/privacy/export")
 async def tenant_privacy_export(
     kind: Literal["consents", "capsules"] = "consents",
