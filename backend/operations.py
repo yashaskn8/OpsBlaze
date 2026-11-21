@@ -12,8 +12,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.adapters.simulator import utc
-from backend.models import Incident, OutboxEntry
+from backend.models import EffectReceipt, Incident, OutboxEntry
 from backend.services import ACTIVE_STATES
+from backend.workers.state_age import UNRESOLVED_EFFECT_STATES
 
 
 def elapsed_seconds(now: datetime, then: datetime | None) -> int:
@@ -47,12 +48,19 @@ async def queue_health(
         Incident.tenant_id == tenant_id,
         Incident.status_projection.in_(ACTIVE_STATES),
     )
+    unresolved = select(EffectReceipt.updated_at).where(
+        EffectReceipt.tenant_id == tenant_id,
+        EffectReceipt.state.in_(UNRESOLVED_EFFECT_STATES),
+    )
 
     pending_count = int((await session.scalar(
         select(func.count()).select_from(pending.subquery())
     )) or 0)
     active_count = int((await session.scalar(
         select(func.count()).select_from(active.subquery())
+    )) or 0)
+    unresolved_count = int((await session.scalar(
+        select(func.count()).select_from(unresolved.subquery())
     )) or 0)
 
     oldest_pending = await session.scalar(
@@ -69,6 +77,11 @@ async def queue_health(
     aged_active = int((await session.scalar(
         select(func.count()).select_from(
             active.where(Incident.phase_entered_at < cutoff).subquery()
+        )
+    )) or 0)
+    aged_unresolved = int((await session.scalar(
+        select(func.count()).select_from(
+            unresolved.where(EffectReceipt.updated_at < cutoff).subquery()
         )
     )) or 0)
     max_attempt = await session.scalar(
@@ -89,6 +102,8 @@ async def queue_health(
     return {
         "pending_outbox": pending_count,
         "active_incidents": active_count,
+        "unresolved_effects": unresolved_count,
+        "aged_unresolved_effects": aged_unresolved,
         "oldest_pending_seconds": elapsed_seconds(observed, oldest_pending),
         "oldest_active_phase_seconds": elapsed_seconds(observed, oldest_active),
         "pending_age_p95_seconds": elapsed_seconds(observed, p95_created),
