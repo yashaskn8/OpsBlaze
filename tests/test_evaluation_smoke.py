@@ -2,7 +2,7 @@
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 
 from backend.evaluation.fixtures import (
     FIXTURES, candidate_config, evaluate_strategy, oracle_expected,
@@ -10,7 +10,7 @@ from backend.evaluation.fixtures import (
 from backend.evaluation.smoke import freeze, report, run_smoke
 from backend.evaluation.stats import paired_smoke_statistics
 from backend.models import (
-    EvaluationManifest, EvaluationTrial, FailureCluster, ImprovementCandidate,
+    EvaluationTrial, FailureCluster, ImprovementCandidate,
 )
 
 
