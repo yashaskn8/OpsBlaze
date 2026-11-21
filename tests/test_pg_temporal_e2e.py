@@ -728,7 +728,6 @@ async def test_failure_case_not_trusted_after_concurrent_outcome_dispute():
 @pytest.mark.asyncio
 async def test_failure_review_serializes_with_outcome_dispute():
     """E3 reviewer cannot leave a corrected case trusted after an E2 reversal."""
-    from sqlalchemy import select
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from backend.learning.failures import (
