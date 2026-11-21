@@ -7,11 +7,12 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 
 from backend.database import get_session_maker
-from backend.models import Incident, OutboxEntry
+from backend.models import EffectReceipt, Incident, OutboxEntry
 from backend.services import ACTIVE_STATES
 from backend.settings import get_settings
 
 log = logging.getLogger(__name__)
+UNRESOLVED_EFFECT_STATES = ("SENT", "UNKNOWN", "CONFIRMED")
 
 
 async def scan_stuck() -> int:
@@ -26,12 +27,19 @@ async def scan_stuck() -> int:
         OutboxEntry.created_at < threshold,
         OutboxEntry.delivered_at.is_(None),
     )
+    effect_filter = (
+        EffectReceipt.updated_at < threshold,
+        EffectReceipt.state.in_(UNRESOLVED_EFFECT_STATES),
+    )
     async with get_session_maker()() as session:
         incident_count = int((await session.scalar(
             select(func.count()).select_from(Incident).where(*incident_filter)
         )) or 0)
         intent_count = int((await session.scalar(
             select(func.count()).select_from(OutboxEntry).where(*intent_filter)
+        )) or 0)
+        effect_count = int((await session.scalar(
+            select(func.count()).select_from(EffectReceipt).where(*effect_filter)
         )) or 0)
         incidents = (await session.scalars(
             select(Incident).where(*incident_filter)
@@ -41,6 +49,11 @@ async def scan_stuck() -> int:
         intents = (await session.scalars(
             select(OutboxEntry).where(*intent_filter)
             .order_by(OutboxEntry.created_at, OutboxEntry.id)
+            .limit(100)
+        )).all()
+        effects = (await session.scalars(
+            select(EffectReceipt).where(*effect_filter)
+            .order_by(EffectReceipt.updated_at, EffectReceipt.id)
             .limit(100)
         )).all()
     for incident in incidents:
@@ -53,13 +66,22 @@ async def scan_stuck() -> int:
             "Outbox delivery exceeded age threshold: intent_id=%s kind=%s attempt=%s",
             intent.id, intent.kind, intent.attempt,
         )
-    if incident_count > len(incidents) or intent_count > len(intents):
+    for effect in effects:
+        log.warning(
+            "Unresolved effect exceeded age threshold: effect_id=%s state=%s attempt=%s",
+            effect.id, effect.state, effect.attempt_count,
+        )
+    if (
+        incident_count > len(incidents) or intent_count > len(intents)
+        or effect_count > len(effects)
+    ):
         log.warning(
             "Additional aged items omitted from detailed logs: "
-            "incidents=%s outbox=%s",
-            incident_count - len(incidents), intent_count - len(intents),
+            "incidents=%s outbox=%s effects=%s",
+            incident_count - len(incidents),
+            intent_count - len(intents), effect_count - len(effects),
         )
-    return incident_count + intent_count
+    return incident_count + intent_count + effect_count
 
 
 async def main() -> None:
