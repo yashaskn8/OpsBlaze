@@ -48,9 +48,14 @@ async def queue_health(
         Incident.tenant_id == tenant_id,
         Incident.status_projection.in_(ACTIVE_STATES),
     )
-    unresolved = select(EffectReceipt.updated_at).where(
-        EffectReceipt.tenant_id == tenant_id,
-        EffectReceipt.state.in_(UNRESOLVED_EFFECT_STATES),
+    unresolved = (
+        select(EffectReceipt.updated_at)
+        .join(Incident, Incident.id == EffectReceipt.incident_id)
+        .where(
+            EffectReceipt.tenant_id == tenant_id,
+            Incident.tenant_id == tenant_id,
+            EffectReceipt.state.in_(UNRESOLVED_EFFECT_STATES),
+        )
     )
 
     pending_count = int((await session.scalar(
