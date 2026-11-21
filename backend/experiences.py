@@ -152,8 +152,13 @@ async def capture_capsule(
     return capsule
 
 
-async def list_capsules(session: AsyncSession, tenant_id: str) -> list[ExperienceCapsule]:
+async def read_capsules_page(
+    session: AsyncSession, tenant_id: str,
+    cursor: UUID | None = None, limit: int = 50,
+) -> tuple[list[ExperienceCapsule], str | None]:
     # Consent and expiry checks happen at read-time as well as capture-time.
+    if not 1 <= limit <= 50:
+        raise ValueError("experience page size must be 1–50")
     latest_outcome_id = (
         select(OutcomeRevision.id)
         .where(
@@ -165,7 +170,7 @@ async def list_capsules(session: AsyncSession, tenant_id: str) -> list[Experienc
         .correlate(ExperienceCapsule)
         .scalar_subquery()
     )
-    rows = (await session.execute(
+    query = (
         select(ExperienceCapsule, Incident.target_id)
         .join(
             ExperienceConsent,
@@ -191,14 +196,31 @@ async def list_capsules(session: AsyncSession, tenant_id: str) -> list[Experienc
             OutcomeRevision.label == "VERIFIED",
             ExperienceCapsule.expires_at > datetime.now(timezone.utc),
         )
-        .limit(50)
+    )
+    if cursor is not None:
+        query = query.where(ExperienceCapsule.id > cursor)
+    rows = (await session.execute(
+        query.order_by(ExperienceCapsule.id).limit(limit + 1)
     )).all()
-    return [
-        capsule for capsule, target_id in rows
+    scanned = rows[:limit]
+    visible = [
+        capsule for capsule, target_id in scanned
         if capsule.target_digest == hashlib.sha256(
             f"{tenant_id}:{target_id}".encode("utf-8")
         ).hexdigest()
     ]
+    # Advance past scanned (possibly invalid) rows, not only returned rows.
+    # Otherwise a forged digest could produce an infinite cursor replay.
+    next_cursor = str(scanned[-1][0].id) if len(rows) > limit else None
+    return visible, next_cursor
+
+
+async def list_capsules(
+    session: AsyncSession, tenant_id: str,
+) -> list[ExperienceCapsule]:
+    # Internal callers retain the bounded, first-page compatibility API.
+    capsules, _ = await read_capsules_page(session, tenant_id)
+    return capsules
 
 
 async def quarantine_capsule(
