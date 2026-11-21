@@ -199,3 +199,62 @@ async def list_capsules(session: AsyncSession, tenant_id: str) -> list[Experienc
             f"{tenant_id}:{target_id}".encode("utf-8")
         ).hexdigest()
     ]
+
+
+async def export_privacy_page(
+    session: AsyncSession, tenant_id: str, kind: str,
+    cursor: UUID | None = None, limit: int = 50,
+) -> dict:
+    """Bounded redacted consent/capsule audit, including revoked source rows.
+
+    This is a metadata export, not a raw evidence or backup erasure API.
+    No target digest, probe excerpt, token, or unredacted prompt leaves it.
+    """
+    if kind not in {"consents", "capsules"} or not 1 <= limit <= 50:
+        raise ValueError("unsupported privacy export page")
+    if kind == "consents":
+        model = ExperienceConsent
+        key = ExperienceConsent.incident_id
+    else:
+        model = ExperienceCapsule
+        key = ExperienceCapsule.id
+    stmt = (
+        select(model).join(Incident, Incident.id == model.incident_id)
+        .where(model.tenant_id == tenant_id, Incident.tenant_id == tenant_id)
+    )
+    if cursor is not None:
+        stmt = stmt.where(key > cursor)
+    rows = list((await session.scalars(
+        stmt.order_by(key).limit(limit + 1)
+    )).all())
+    visible = rows[:limit]
+    if kind == "consents":
+        records = [
+            {
+                "incident_id": str(row.incident_id),
+                "epoch": row.epoch,
+                "reuse_allowed": row.allowed,
+                "decided_at": row.decided_at.isoformat(),
+            }
+            for row in visible
+        ]
+    else:
+        records = [
+            {
+                "id": str(row.id),
+                "incident_id": str(row.incident_id),
+                "outcome_revision_id": str(row.outcome_revision_id),
+                "consent_epoch": row.consent_epoch,
+                "status": row.status,
+                "created_at": row.created_at.isoformat(),
+                "expires_at": row.expires_at.isoformat(),
+            }
+            for row in visible
+        ]
+    return {
+        "kind": kind,
+        "records": records,
+        "next_cursor": str(getattr(visible[-1], key.key))
+        if len(rows) > limit else None,
+        "metadata_only": True,
+    }
