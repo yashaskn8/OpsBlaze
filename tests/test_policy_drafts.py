@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from backend.models import (
     EvaluationManifest, FailureCluster, ImprovementCandidate, PolicyBundle,
-    PolicyRollout, PolicyAssignment, PolicyShadowObservation,
+    PolicyAssignment, PolicyShadowObservation,
 )
 from backend.policy.registry import (
     PolicyConflict, create_rollout, dry_run_assignment, register_bundle,
