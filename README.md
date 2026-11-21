@@ -79,6 +79,29 @@ Admission returns `429` for capacity or rate limits and `503` with a
 reports a phantom `202` acceptance on that path. This lab does not
 establish throughput, multi-host scheduling latency, or production SLOs.
 
+### E1 projection dead-letter review
+
+Only local `PROJECT_EXPERIENCE` intents have a bounded failure policy.
+A malformed immutable payload is immediately marked `INVALID_PAYLOAD`;
+other projector failures retry with the existing durable backoff and become
+`RETRY_EXHAUSTED` after five failed claims. The terminal record is **not**
+marked delivered, is no longer claimable and cannot block later incident
+signals. Temporal start/plan/cancel signals retain their existing retries.
+
+`GET /v1/operations/dead-letters?cursor=0&limit=50` lists only this
+tenant's redacted entry ID, source incident ID, attempts, fixed code and
+review status. Operators can send
+`POST /v1/operations/dead-letters/{id}/acknowledge` with `If-Match`
+set to the attempts count. The operation is one-winner, recorded with an
+actor pseudonym, and never redrives the entry or changes live effects.
+The React workbench shows the review list and an unresolved count on the
+Queue health panel. Dead-lettered items are excluded from pending queue age.
+
+**An acknowledged failure remains terminal.** Fixing and replaying a
+dead-lettered projection is not yet an authorized capability; do not
+manually edit outbox rows to bypass review. Dead-letter diagnostics never
+persist raw exceptions, target IDs, payloads or secrets.
+
 ### Redacted diagnostic traces and synthetic capacity evidence
 
 OpsBlaze emits allowlisted OpenTelemetry spans from durable admission,
