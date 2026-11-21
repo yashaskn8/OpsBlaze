@@ -2,7 +2,6 @@
 """E6 immutable policy draft registry; all rollout exposure remains disabled."""
 
 import hashlib
-import json
 import secrets
 from uuid import UUID, NAMESPACE_URL, uuid4, uuid5
 
