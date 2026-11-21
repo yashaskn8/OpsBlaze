@@ -51,6 +51,9 @@ class Incident(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     probe_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    projector_lock_marker: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0",
+    )
     phase_entered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -312,6 +315,9 @@ class TenantExperienceConsent(Base):
     epoch: Mapped[int] = mapped_column(Integer, nullable=False)
     allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    projector_lock_marker: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0",
+    )
 
 
 class ExperienceConsent(Base):
@@ -324,6 +330,9 @@ class ExperienceConsent(Base):
     epoch: Mapped[int] = mapped_column(Integer, nullable=False)
     allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    projector_lock_marker: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0",
+    )
 
 
 class ExperienceCapsule(Base):
