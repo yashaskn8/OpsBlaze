@@ -4,7 +4,6 @@ import asyncio
 import logging
 from contextlib import suppress
 
-from temporalio.client import Client
 from temporalio.worker import Worker
 
 from backend.settings import get_settings
