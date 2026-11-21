@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -14,8 +15,15 @@ from backend.database import get_session
 from backend.schemas import IncidentCreate, IncidentView
 from backend.services import IdempotencyConflict, RateLimited, admit_incident, find_incident
 from backend.settings import Settings, get_settings
+from backend.telemetry import initialize_tracing
 
-app = FastAPI(title="OpsBlaze", version="0.1.0")
+@asynccontextmanager
+async def app_lifespan(_app: FastAPI):
+    initialize_tracing(get_settings())
+    yield
+
+
+app = FastAPI(title="OpsBlaze", version="0.1.0", lifespan=app_lifespan)
 
 
 @app.get("/v1/auth/me")
