@@ -7,6 +7,7 @@ from contextlib import suppress
 from temporalio.worker import Worker
 
 from backend.settings import get_settings
+from backend.telemetry import initialize_tracing
 from backend.temporal_connection import connect_temporal
 from backend.workflows.activities import (
     inspect_incident_read_only,
@@ -20,6 +21,7 @@ from backend.workers.heartbeat import heartbeat_loop
 
 async def main() -> None:
     settings = get_settings()
+    initialize_tracing(settings)
     client = await connect_temporal(settings)
     worker = Worker(
         client,
