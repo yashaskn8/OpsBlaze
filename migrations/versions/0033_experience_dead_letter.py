@@ -26,9 +26,21 @@ def upgrade() -> None:
         "ix_outbox_dead_letter", "outbox", ["dead_lettered_at", "id"],
         postgresql_where=sa.text("dead_lettered_at IS NOT NULL"),
     )
+    op.drop_index("ix_outbox_pending", table_name="outbox")
+    op.create_index(
+        "ix_outbox_pending", "outbox", ["available_at", "id"],
+        postgresql_where=sa.text(
+            "delivered_at IS NULL AND dead_lettered_at IS NULL"
+        ),
+    )
 
 
 def downgrade() -> None:
+    op.drop_index("ix_outbox_pending", table_name="outbox")
+    op.create_index(
+        "ix_outbox_pending", "outbox", ["available_at", "id"],
+        postgresql_where=sa.text("delivered_at IS NULL"),
+    )
     op.drop_index("ix_outbox_dead_letter", table_name="outbox")
     op.drop_column("outbox", "dead_letter_reviewed_by")
     op.drop_column("outbox", "dead_letter_reviewed_at")
