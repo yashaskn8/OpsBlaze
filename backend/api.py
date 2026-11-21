@@ -267,6 +267,48 @@ async def acknowledge_experience_dead_letter(
     return {"id": row.id, "reviewed": True, "attempts": row.attempt}
 
 
+class ProjectionRedriveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: Literal["STORE_RESTORED", "TRANSIENT_FIX_VERIFIED"]
+
+
+@app.post("/v1/operations/dead-letters/{entry_id}/redrive", status_code=202)
+async def redrive_experience_dead_letter(
+    entry_id: int,
+    request: ProjectionRedriveRequest,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+    security_admin: str = Depends(local_security_admin),
+) -> dict:
+    from sqlalchemy.exc import IntegrityError
+    from backend.workers.dead_letters import (
+        DeadLetterConflict, redrive_projection_dead_letter,
+    )
+
+    if not 1 <= entry_id <= (1 << 63) - 1:
+        raise HTTPException(422, "invalid dead-letter identifier")
+    version = if_match.strip('"')
+    if not version.isdecimal() or not 0 < len(version) <= 10:
+        raise HTTPException(400, "If-Match must be the delivery attempt count")
+    try:
+        row = await redrive_projection_dead_letter(
+            session, tenant_id, entry_id, int(version),
+            security_admin, request.reason,
+        )
+    except DeadLetterConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except IntegrityError as exc:
+        # Concurrent first-writer claim resolves via a unique source index.
+        raise HTTPException(409, "projection already redriven") from exc
+    if row is None:
+        raise HTTPException(404, "experience dead letter not found")
+    return {
+        "id": row.id, "source_id": entry_id,
+        "state": "PENDING_PROJECTION",
+    }
+
+
 @app.get("/v1/incidents/{incident_id}/evidence")
 async def incident_evidence(
     incident_id: UUID,
