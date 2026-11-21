@@ -230,7 +230,7 @@ async def test_redteam_terminal_ledger_outage_preserves_unacknowledged_work(
     sessions = sessions_fixture
     _, poison_id = await make_lab(sessions)
     with patch(
-        "backend.workers.dispatcher.mark_projection_dead_letter",
+        "backend.workers.experience_projector.mark_projection_dead_letter",
         side_effect=ConnectionError("private database DSN in exception"),
     ):
         assert await run_projector_once(sessions)
