@@ -3,100 +3,26 @@
 import asyncio
 import logging
 from contextlib import suppress
-from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import or_, select
-from sqlalchemy.orm import aliased
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+  from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from backend.database import get_session_maker
-from backend.models import Incident, OutboxEntry
-from backend.settings import get_settings
+ from backend.settings import get_settings
 from backend.telemetry import initialize_tracing, trace_operation
 from backend.temporal_connection import connect_temporal
 from backend.workflows.incident import IncidentWorkflow
 from backend.workers.heartbeat import heartbeat_loop
-from backend.workers.dead_letters import (
-    MAX_PROJECTOR_ATTEMPTS, mark_projection_dead_letter,
-)
-from backend.workers.experience_projector import (
-    InvalidProjectionIntent, project_experience_outbox,
-)
+from backend.workers.outbox import acknowledge_claim, claim_intent
 
 log = logging.getLogger(__name__)
 
 
 def workflow_id(tenant_id: str, incident_id: UUID) -> str:
     return f"opsblaze/{tenant_id}/{incident_id}"
-
-
-async def claim_intent(
-    sessions: async_sessionmaker[AsyncSession],
-    tenant_filter: str | None = None,
-) -> tuple[int, str, str, str, dict | None, int] | None:
-    now = datetime.now(timezone.utc)
-    start = aliased(OutboxEntry)
-    older = aliased(OutboxEntry)
-    earlier_pending = (
-        select(older.id)
-        .where(
-            older.incident_id == OutboxEntry.incident_id,
-            older.id < OutboxEntry.id,
-            older.delivered_at.is_(None),
-            older.dead_lettered_at.is_(None),
-        )
-        .correlate(OutboxEntry)
-        .exists()
-    )
-    start_delivered = (
-        select(start.id)
-        .where(
-            start.incident_id == OutboxEntry.incident_id,
-            start.kind == "START_WORKFLOW",
-            start.delivered_at.is_not(None),
-        )
-        .correlate(OutboxEntry)
-        .exists()
-    )
-    async with sessions() as session:
-        async with session.begin():
-            stmt = (
-                select(OutboxEntry, Incident.tenant_id)
-                .join(Incident, Incident.id == OutboxEntry.incident_id)
-                .where(
-                    OutboxEntry.delivered_at.is_(None),
-                    OutboxEntry.dead_lettered_at.is_(None),
-                    OutboxEntry.available_at <= now,
-                    # Preserve per-incident signal ordering across parallel
-                    # dispatchers, including lost-ack leases and retries.
-                    ~earlier_pending,
-                    # A signal may not overtake the stable workflow start,
-                    # even when another dispatcher leases the older row.
-                    or_(OutboxEntry.kind == "START_WORKFLOW", start_delivered),
-                )
-                .order_by(OutboxEntry.id)
-                .limit(1)
-                .with_for_update(of=OutboxEntry, skip_locked=True)
-            )
-            if tenant_filter is not None:
-                stmt = stmt.where(Incident.tenant_id == tenant_filter)
-            result = (await session.execute(stmt)).first()
-            if result is None:
-                return None
-            entry, tenant_id = result
-            entry.attempt += 1
-            # Lease the claim before making a network call, avoiding a long
-            # transaction. After a crash the intent becomes eligible again.
-            retry_seconds = min(300, 2 ** min(entry.attempt, 8))
-            entry.available_at = now + timedelta(seconds=retry_seconds)
-            return (
-                entry.id, tenant_id, str(entry.incident_id),
-                entry.kind, entry.payload, entry.attempt,
-            )
 
 
 async def deliver_intent(client: Client, intent: tuple[int, str, str, str, dict | None]) -> None:
@@ -157,46 +83,13 @@ async def dispatch_once(
             "opsblaze.outbox.deliver", incident_id=UUID(intent[2]),
             event_id=entry_id,
         ):
-            if intent[3] == "PROJECT_EXPERIENCE":
-                result = await project_experience_outbox(
-                    sessions, intent[1], intent[2], intent[4],
-                )
-                if result != "CAPTURED":
-                    log.info(
-                        "E1 projection intentionally skipped: intent_id=%s state=%s",
-                        entry_id, result,
-                    )
-            else:
-                await deliver_intent(client, intent)
-    except Exception as exc:
-        if intent[3] == "PROJECT_EXPERIENCE":
-            # Stored events and operator diagnostics use fixed codes only.
-            # Never log arbitrary exception strings from a private source.
-            code = (
-                "INVALID_PAYLOAD" if isinstance(exc, InvalidProjectionIntent)
-                else "RETRY_EXHAUSTED"
-                if intent[5] >= MAX_PROJECTOR_ATTEMPTS else None
-            )
-            log.warning(
-                "E1 projector failed: intent_id=%s attempt=%s code=%s",
-                entry_id, intent[5], code or "RETRYABLE",
-            )
-            if code is not None:
-                try:
-                    await mark_projection_dead_letter(
-                        sessions, entry_id, intent[1], intent[5], code,
-                    )
-                except Exception:
-                    # A store outage must not terminate the dispatcher. The
-                    # still-pending leased intent can retry on DB recovery.
-                    log.error(
-                        "E1 dead-letter ledger unavailable: intent_id=%s",
-                        entry_id,
-                    )
-        else:
-            log.exception("Outbox dispatch failed: intent_id=%s", entry_id)
-        # Only local projection is dead-lettered; recovery signals retain retry.
+            await deliver_intent(client, intent)
+    except Exception:
+        log.exception("Temporal outbox dispatch failed: intent_id=%s", entry_id)
+        # Preserve the leased intent for durable retry; no false ACK.
         return True
+    await acknowledge_claim(sessions, intent)
+
     async with sessions() as session:
         async with session.begin():
             entry = await session.get(OutboxEntry, entry_id)
