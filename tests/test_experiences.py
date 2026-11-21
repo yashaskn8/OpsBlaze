@@ -3,7 +3,6 @@ import hashlib
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
 
 from backend.experiences import (
     ConsentConflict, capture_capsule, export_privacy_page, list_capsules,
