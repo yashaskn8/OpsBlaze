@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     oidc_jwks_url: str = ""
     idp_event_audience: str = ""  # Dedicated signed revocation event audience
     environment: Literal["development", "production"] = "development"
+    otel_traces_endpoint: str = ""  # Off by default; explicit collector only.
+    otel_sample_ratio: float = Field(default=0.1, ge=0, le=1)
     temporal_address: str = "127.0.0.1:7233"
     temporal_namespace: str = "default"
     temporal_task_queue: str = "opsblaze-incidents-v1"
