@@ -517,3 +517,83 @@ async def test_redteam_tenant_consent_requires_independent_security_admin(
         route, json={"allow": True}, headers={**admin, "If-Match": "bad"},
     )
     assert invalid.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_redteam_projection_dead_letters_require_tenant_and_operator_for_review(
+    signer, production_client, sessions_fixture,
+):
+    from uuid import UUID
+
+    from backend.models import OutboxEntry
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "deadletter-oidc",
+            IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        async with session.begin():
+            item = OutboxEntry(
+                incident_id=incident.id, kind="PROJECT_EXPERIENCE",
+                payload={"outcome_id": "private malformed source"},
+                attempt=5, dead_letter_code="RETRY_EXHAUSTED",
+                dead_lettered_at=datetime.now(timezone.utc),
+            )
+            session.add(item)
+            await session.flush()
+            dead_id = item.id
+
+    viewer = bearer(signer(roles=("viewer",)))
+    operator = bearer(signer(roles=("operator",)))
+    reviewer = bearer(signer(roles=("reviewer",)))
+    wrong_tenant = bearer(
+        signer(tenant="beta", roles=("operator",)), tenant="beta",
+    )
+    list_url = "/v1/operations/dead-letters"
+    own = await production_client.get(list_url, headers=viewer)
+    assert own.status_code == 200
+    assert [x["id"] for x in own.json()["records"]] == [dead_id]
+    assert "private malformed source" not in own.text
+    assert (await production_client.get(
+        list_url, headers=wrong_tenant,
+    )).json()["records"] == []
+
+    review_url = f"{list_url}/{dead_id}/acknowledge"
+    for role_header in (viewer, reviewer):
+        assert (await production_client.post(
+            review_url, headers={**role_header, "If-Match": "5"},
+        )).status_code == 403
+    assert (await production_client.post(
+        review_url, headers={**wrong_tenant, "If-Match": "5"},
+    )).status_code == 404
+    assert (await production_client.post(
+        review_url, headers={**operator, "If-Match": "4"},
+    )).status_code == 409
+    for invalid in ("broken", "0", "12345678901"):
+        expected = 400 if invalid != "0" else 409
+        assert (await production_client.post(
+            review_url, headers={**operator, "If-Match": invalid},
+        )).status_code == expected
+    acknowledge = await production_client.post(
+        review_url, headers={**operator, "If-Match": "5"},
+    )
+    assert acknowledge.status_code == 202
+    assert acknowledge.json() == {
+        "id": dead_id, "attempts": 5, "reviewed": True,
+    }
+    assert (await production_client.post(
+        review_url, headers={**operator, "If-Match": "5"},
+    )).status_code == 409
+    refreshed = await production_client.get(list_url, headers=operator)
+    assert refreshed.json()["records"][0]["reviewed"] is True
+
+    async with sessions_fixture() as session:
+        stored = await session.get(OutboxEntry, dead_id)
+        assert stored.delivered_at is None
+        assert stored.dead_lettered_at is not None
+        assert stored.dead_letter_reviewed_by is not None
+        assert stored.dead_letter_reviewed_by.startswith("oidc:")
+        assert stored.incident_id == UUID(str(incident.id))
