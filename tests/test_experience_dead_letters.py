@@ -223,3 +223,31 @@ async def test_redteam_dead_letter_page_keyset_and_validation(sessions_fixture):
                     session, "alpha", cursor, limit,
                 )
     assert DEAD_LETTER_CODES == {"INVALID_PAYLOAD", "RETRY_EXHAUSTED"}
+
+
+@pytest.mark.asyncio
+async def test_redteam_terminal_ledger_outage_preserves_unacknowledged_work(
+    sessions_fixture, caplog,
+):
+    sessions = sessions_fixture
+    _, poison_id = await make_lab(sessions)
+    with patch(
+        "backend.workers.dispatcher.mark_projection_dead_letter",
+        side_effect=ConnectionError("private database DSN in exception"),
+    ):
+        assert await dispatch_once(AsyncMock(), sessions)
+
+    async with sessions() as session:
+        async with session.begin():
+            row = await session.get(OutboxEntry, poison_id)
+            assert row.delivered_at is None and row.dead_lettered_at is None
+            row.available_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    assert "private database DSN" not in caplog.text
+    assert "dead-letter ledger unavailable" in caplog.text
+
+    # When the store is healthy again, the very same poison is terminalized.
+    assert await dispatch_once(AsyncMock(), sessions)
+    async with sessions() as session:
+        row = await session.get(OutboxEntry, poison_id)
+        assert row.dead_letter_code == "INVALID_PAYLOAD"
+        assert row.attempt == 2
