@@ -1,9 +1,6 @@
 """P1 bounded SSE parser and tenant-isolated replay."""
 
-from uuid import UUID
-
 import pytest
-from sqlalchemy import select
 
 from backend.events import encode_sse, read_event_batch, stream_incident_events
 from backend.models import UIEvent
