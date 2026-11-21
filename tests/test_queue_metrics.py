@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from backend.api import app
 from backend.database import get_session
@@ -38,7 +39,7 @@ async def test_redteam_queue_health_exact_p95_and_tenant_scope(sessions_fixture)
                 stored = await session.get(Incident, incident_id)
                 stored.phase_entered_at = age
                 intent = await session.scalar(
-                    __import__("sqlalchemy").select(OutboxEntry)
+                    select(OutboxEntry)
                     .where(OutboxEntry.incident_id == incident_id)
                 )
                 intent.created_at = age
@@ -46,7 +47,7 @@ async def test_redteam_queue_health_exact_p95_and_tenant_scope(sessions_fixture)
             another = await session.get(Incident, foreign.id)
             another.phase_entered_at = now - timedelta(days=2)
             beta_intent = await session.scalar(
-                __import__("sqlalchemy").select(OutboxEntry)
+                select(OutboxEntry)
                 .where(OutboxEntry.incident_id == foreign.id)
             )
             beta_intent.created_at = now - timedelta(days=2)
@@ -71,12 +72,12 @@ async def test_redteam_queue_health_exact_p95_and_tenant_scope(sessions_fixture)
         assert health["max_pending_attempts"] == 99
 
     async with sessions_fixture() as session:
-        for incident_id in own_ids:
-            intent = await session.scalar(
-                __import__("sqlalchemy").select(OutboxEntry)
-                .where(OutboxEntry.incident_id == incident_id)
-            )
-            async with session.begin_nested():
+        async with session.begin():
+            for incident_id in own_ids:
+                intent = await session.scalar(
+                    select(OutboxEntry)
+                    .where(OutboxEntry.incident_id == incident_id)
+                )
                 intent.delivered_at = now
 
     async with sessions_fixture() as session:
@@ -91,7 +92,7 @@ async def test_redteam_queue_health_exact_p95_and_tenant_scope(sessions_fixture)
         with pytest.raises(ValueError, match="positive"):
             await queue_health(session, "alpha", 0, now)
         with pytest.raises(ValueError, match="timezone"):
-            await queue_health(session, "alpha", 900, datetime.utcnow())
+            await queue_health(session, "alpha", 900, datetime.now())
 
 
 @pytest.mark.asyncio
