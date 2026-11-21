@@ -445,6 +445,45 @@ class ConsentRequest(BaseModel):
     allow: bool
 
 
+@app.get("/v1/privacy/experience-consent")
+async def tenant_experience_consent(
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.models import TenantExperienceConsent
+
+    policy = await session.get(TenantExperienceConsent, tenant_id)
+    return {
+        "epoch": 0 if policy is None else policy.epoch,
+        "allowed": None if policy is None else policy.allowed,
+        "policy": "PER_INCIDENT_LEGACY" if policy is None else "TENANT_OVERRIDE",
+    }
+
+
+@app.post("/v1/privacy/experience-consent", status_code=204)
+async def update_tenant_experience_consent(
+    payload: ConsentRequest,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+    security_admin: str = Depends(local_security_admin),
+) -> Response:
+    from sqlalchemy.exc import IntegrityError
+    from backend.experiences import ConsentConflict, set_tenant_consent
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be the tenant consent epoch")
+    try:
+        await set_tenant_consent(session, tenant_id, int(version), payload.allow)
+    except ConsentConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except IntegrityError as exc:
+        # Concurrent first-ever policy insert must fail closed for one writer.
+        raise HTTPException(409, "tenant consent version changed") from exc
+    return Response(status_code=204)
+
+
 @app.post("/v1/incidents/{incident_id}/consent", status_code=202)
 async def update_experience_consent(
     incident_id: UUID,
@@ -507,6 +546,7 @@ async def tenant_experiences(
             {"id": str(row.id), "incident_id": str(row.incident_id),
              "outcome_revision_id": str(row.outcome_revision_id),
              "consent_epoch": row.consent_epoch,
+             "tenant_consent_epoch": row.tenant_consent_epoch,
              "target_digest": row.target_digest,
              "evidence_ids": row.evidence_ids,
              "expires_at": row.expires_at.isoformat()}
