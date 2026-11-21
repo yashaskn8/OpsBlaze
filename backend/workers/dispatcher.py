@@ -200,7 +200,13 @@ async def dispatch_once(
     async with sessions() as session:
         async with session.begin():
             entry = await session.get(OutboxEntry, entry_id)
-            if entry is not None and entry.delivered_at is None:
+            if (
+                entry is not None
+                and entry.delivered_at is None
+                and entry.dead_lettered_at is None
+                and entry.attempt == intent[5]
+            ):
+                # Older workers must not acknowledge a newer lease's attempt.
                 entry.delivered_at = datetime.now(timezone.utc)
     return True
 
