@@ -57,6 +57,7 @@ type Effect = {
 type Lineage = {
   projection: "COMPLETE" | "PARTIAL_LINKS";
   trace_spans_available: boolean;
+  truncated_sources: string[];
   nodes: { id: string; kind: string; status: string }[];
   edges: { from: string; to: string; relation: string }[];
   missing_refs: { source: string; missing_target: string; relation: string }[];
@@ -707,6 +708,8 @@ function App() {
               <h3>Evidence-to-effect trace</h3>
               <p className="muted">{lineage.projection.replaceAll("_", " ")} · {lineage.nodes.length} durable records · {lineage.edges.length} links</p>
               {!lineage.trace_spans_available && <p className="muted">Telemetry spans unavailable; durable records are shown instead.</p>}
+              {lineage.truncated_sources.length > 0 &&
+                <p className="error">Incomplete forensic graph: over 50 records in {lineage.truncated_sources.join(", ")}. Do not treat this view as complete.</p>}
               {lineage.missing_refs.length > 0 &&
                 <p className="error">{lineage.missing_refs.length} missing durable link(s). Do not infer the omitted evidence.</p>}
               <div className="trace-scroll">
