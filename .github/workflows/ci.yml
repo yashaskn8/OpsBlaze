@@ -18,6 +18,13 @@ jobs:
       # Flag unused imports and assigned-but-never-used values in shipped code.
       - run: ruff check backend tests --select F401,F841
       - run: python -m pytest -q
+      # CI-only in-process profile, not a production throughput claim.
+      - run: python -m backend.benchmarks.local_capacity --output ci-artifacts/local-capacity.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-local-capacity
+          path: ci-artifacts/local-capacity.json
+          retention-days: 7
 
   security-negative:
     runs-on: ubuntu-latest
