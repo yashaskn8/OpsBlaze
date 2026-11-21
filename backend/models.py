@@ -67,7 +67,13 @@ class OutboxEntry(Base):
             "ix_outbox_pending",
             "available_at",
             "id",
-            postgresql_where=text("delivered_at IS NULL"),
+            postgresql_where=text(
+                "delivered_at IS NULL AND dead_lettered_at IS NULL"
+            ),
+        ),
+        Index(
+            "ix_outbox_dead_letter", "dead_lettered_at", "id",
+            postgresql_where=text("dead_lettered_at IS NOT NULL"),
         ),
     )
 
@@ -85,6 +91,10 @@ class OutboxEntry(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dead_lettered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dead_letter_code: Mapped[str | None] = mapped_column(String(32))
+    dead_letter_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dead_letter_reviewed_by: Mapped[str | None] = mapped_column(String(48))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
