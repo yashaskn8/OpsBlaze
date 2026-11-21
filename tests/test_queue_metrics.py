@@ -1,6 +1,7 @@
 """B4: durable queue p95, aged work and retry pressure with tenant isolation."""
 
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -8,7 +9,7 @@ from sqlalchemy import select
 
 from backend.api import app
 from backend.database import get_session
-from backend.models import Incident, OutboxEntry
+from backend.models import EffectReceipt, Incident, OutboxEntry
 from backend.operations import queue_health
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
@@ -58,6 +59,8 @@ async def test_redteam_queue_health_exact_p95_and_tenant_scope(sessions_fixture)
         assert health == {
             "pending_outbox": 5,
             "active_incidents": 5,
+            "unresolved_effects": 0,
+            "aged_unresolved_effects": 0,
             "oldest_pending_seconds": 3000,
             "oldest_active_phase_seconds": 3000,
             "pending_age_p95_seconds": 3000,
@@ -133,3 +136,54 @@ async def test_redteam_queue_api_never_exposes_other_tenant_data(sessions_fixtur
             assert denied.status_code == 401
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_redteam_unknown_effect_is_reported_as_aged_work(sessions_fixture, monkeypatch):
+    from backend.workers.state_age import scan_stuck
+
+    old = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=2)
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "unknown-effect",
+            IncidentCreate(target_id="checkout"),
+        )
+    effect_id = uuid4()
+    async with sessions_fixture() as session:
+        async with session.begin():
+            incident_row = await session.get(Incident, incident.id)
+            incident_row.phase_entered_at = old
+            outbox = await session.scalar(
+                select(OutboxEntry).where(OutboxEntry.incident_id == incident.id)
+            )
+            outbox.created_at = old
+            session.add(EffectReceipt(
+                id=effect_id, tenant_id="alpha", incident_id=incident.id,
+                plan_digest="d" * 64, target_id="checkout",
+                adapter_id="simulator", idempotency_key=str(effect_id),
+                fence=1, expected_version=1, state="UNKNOWN",
+                attempt_count=1, updated_at=old,
+            ))
+
+    async with sessions_fixture() as session:
+        health = await queue_health(session, "alpha", 300)
+        assert health["unresolved_effects"] == 1
+        assert health["aged_unresolved_effects"] == 1
+    monkeypatch.setattr(
+        "backend.workers.state_age.get_session_maker", lambda: sessions_fixture,
+    )
+    monkeypatch.setattr(
+        "backend.workers.state_age.get_settings",
+        lambda: Settings(stuck_after_seconds=300),
+    )
+    assert await scan_stuck() == 3
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            effect = await session.get(EffectReceipt, effect_id)
+            effect.state = "NEEDS_REVIEW"
+    async with sessions_fixture() as session:
+        health = await queue_health(session, "alpha", 300)
+        assert health["unresolved_effects"] == 0
+        assert health["aged_unresolved_effects"] == 0
+    assert await scan_stuck() == 2
