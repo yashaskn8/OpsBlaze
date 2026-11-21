@@ -8,7 +8,7 @@ read policy for the separate PostgreSQL projector role.
 
 from alembic import op
 
-revision = "0036_projector_outbox_minimization"
+revision = "0036_projector_outbox_rls"
 down_revision = "0035_projector_lock_grants"
 branch_labels = None
 depends_on = None
