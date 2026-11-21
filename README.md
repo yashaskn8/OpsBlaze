@@ -26,6 +26,23 @@ lessons. This is **not** a full personal-data access/export or cross-store/
 backup erasure certification.
 
 
+### Durable queue health (B4)
+
+The workbench's **Queue health** panel calls `GET /v1/operations/queues`
+using the authenticated tenant's credentials. It reports durable pending
+outbox and active incident counts, exact nearest-rank p95 pending age,
+oldest pending/active phase ages, delivery attempt pressure, and aged
+unresolved `SENT`, `UNKNOWN`, or `CONFIRMED` receipts. Results contain
+only aggregate values, not incident targets or secrets. Aged work is an
+operator alert, **not** an automatic mutation permission.
+
+The native `backend.workers.state_age` monitor retries database faults
+and reports exact aged totals while limiting per-record log details.
+Admission returns `429` for capacity or rate limits and `503` with a
+`Retry-After` header when durable persistence is unavailable; it never
+reports a phantom `202` acceptance on that path. This lab does not
+establish throughput, multi-host scheduling latency, or production SLOs.
+
 ## Setup (no Docker)
 
 Install Python 3.11+, native PostgreSQL and a native Temporal development server. Create a PostgreSQL database and credentials, then configure them in a local untracked `.env` copied from `.env.example`.
