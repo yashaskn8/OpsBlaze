@@ -23,6 +23,7 @@ from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 from backend.settings import get_settings
 from backend.workers.dispatcher import dispatch_once
+from backend.workers.experience_projector import run_projector_once
 from backend.workflows.activities import (
     apply_approved_simulator_plan, inspect_incident_read_only,
     project_incident_status, select_incident_route,
@@ -113,7 +114,7 @@ async def test_two_dispatchers_then_worker_handoff_preserves_one_effect():
             async with Worker(**config):
                 await until_state("VERIFIED")
                 # E1 projection is a separate idempotent local outbox step.
-                assert await dispatch_once(env.client, sessions, tenant_filter=tenant)
+                assert await run_projector_once(sessions, tenant_filter=tenant)
 
         async with sessions() as session:
             target = await session.get(SimulatorTarget, (tenant, "checkout"))
