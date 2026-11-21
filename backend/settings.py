@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     )
 
     database_url: str = "postgresql+asyncpg://opsblaze:opsblaze@localhost:5432/opsblaze"
+    projector_database_url: str = ""  # Dedicated DB principal; never reuse main DSN.
     local_token: str | None = None
     review_token: str | None = None
     review_epoch: int = 1
