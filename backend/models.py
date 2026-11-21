@@ -289,6 +289,15 @@ class OutcomeRevision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class TenantExperienceConsent(Base):
+    __tablename__ = "tenant_experience_consent"
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+    allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExperienceConsent(Base):
     __tablename__ = "experience_consent"
 
@@ -306,6 +315,7 @@ class ExperienceCapsule(Base):
     __table_args__ = (
         UniqueConstraint("incident_id", "outcome_revision_id", name="uq_capsule_outcome"),
         Index("ix_experience_scoped", "tenant_id", "incident_id", "expires_at"),
+        Index("ix_capsule_tenant_epoch", "tenant_id", "tenant_consent_epoch", "status"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -313,6 +323,9 @@ class ExperienceCapsule(Base):
     incident_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False)
     outcome_revision_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("outcome_revision.id"), nullable=False)
     consent_epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+    tenant_consent_epoch: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0,
+    )
     target_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     evidence_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
