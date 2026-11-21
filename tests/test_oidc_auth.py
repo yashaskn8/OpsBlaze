@@ -452,3 +452,23 @@ async def test_redteam_privacy_export_requires_operator_and_signed_tenant(
             signer(tenant="beta", roles=("operator",)),
         ),
     )).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_redteam_quarantine_requires_operator_not_viewer_or_reviewer(
+    signer, production_client,
+):
+    route = f"/v1/experiences/{uuid4()}/quarantine"
+    for role in ("viewer", "reviewer"):
+        denied = await production_client.post(
+            route,
+            headers={**bearer(signer(roles=(role,))), "If-Match": "1"},
+        )
+        assert denied.status_code == 403
+    operator = bearer(signer(roles=("operator",)))
+    assert (await production_client.post(
+        route, headers={**operator, "If-Match": "broken"},
+    )).status_code == 400
+    assert (await production_client.post(
+        route, headers={**operator, "If-Match": "1"},
+    )).status_code == 404
