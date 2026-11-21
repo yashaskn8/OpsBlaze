@@ -141,10 +141,16 @@ async def build_lineage(
         else:
             edge(f"effect:{effect.id}", f"plan:{plan.id}", "AUTHORIZED_BY")
             grant = grants_by_plan.get(plan.id)
-            if grant is None:
+            if (
+                grant is None
+                or grant.plan_digest != plan.plan_digest
+                or grant.scope != plan.action_id
+                or grant.decision != "APPROVE"
+                or grant.state not in {"APPROVED", "CONSUMED"}
+            ):
                 missing.append({
                     "source": f"effect:{effect.id}",
-                    "missing_target": f"approval-for-plan:{plan.id}",
+                    "missing_target": f"valid-approval-for-plan:{plan.id}",
                     "relation": "AUTHORIZED_BY_GRANT",
                 })
             else:
