@@ -42,7 +42,16 @@ async def queue_health(
         .where(
             Incident.tenant_id == tenant_id,
             OutboxEntry.delivered_at.is_(None),
+            OutboxEntry.dead_lettered_at.is_(None),
         )
+    )
+    dead_lettered = select(OutboxEntry.id).join(
+        Incident, Incident.id == OutboxEntry.incident_id,
+    ).where(
+        Incident.tenant_id == tenant_id,
+        OutboxEntry.dead_lettered_at.is_not(None),
+        OutboxEntry.dead_letter_reviewed_at.is_(None),
+        OutboxEntry.kind == "PROJECT_EXPERIENCE",
     )
     active = select(Incident.phase_entered_at).where(
         Incident.tenant_id == tenant_id,
@@ -60,6 +69,9 @@ async def queue_health(
 
     pending_count = int((await session.scalar(
         select(func.count()).select_from(pending.subquery())
+    )) or 0)
+    needs_review_count = int((await session.scalar(
+        select(func.count()).select_from(dead_lettered.subquery())
     )) or 0)
     active_count = int((await session.scalar(
         select(func.count()).select_from(active.subquery())
@@ -106,6 +118,7 @@ async def queue_health(
 
     return {
         "pending_outbox": pending_count,
+        "experience_dead_letters_unreviewed": needs_review_count,
         "active_incidents": active_count,
         "unresolved_effects": unresolved_count,
         "aged_unresolved_effects": aged_unresolved,
