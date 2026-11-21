@@ -5,9 +5,10 @@
 -- For SELECT FOR UPDATE, the inert projector_lock_marker is the only
 -- writable field on incident and consent records.
 --
--- SECURITY LIMIT: this role can still READ all outbox rows to preserve
--- per-incident ordering. Full row-level secrecy requires a separate queue.
--- It can UPDATE only PROJECT_EXPERIENCE rows due to RLS below.
+-- RLS hides Temporal outbox rows (including their payloads). A migration-owned
+-- boolean probe checks earlier signal completion without exposing those rows.
+-- This protects Temporal payloads, NOT all incident/evidence source columns.
+-- The role must be non-superuser, non-owner and must not have BYPASSRLS.
 
 DO $$
 BEGIN
@@ -15,6 +16,12 @@ BEGIN
         SELECT 1 FROM pg_roles WHERE rolname = 'opsblaze_projector'
     ) THEN
         RAISE EXCEPTION 'Create a separate opsblaze_projector LOGIN role first';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'opsblaze_projector'
+        AND (rolsuper OR rolbypassrls)
+    ) THEN
+        RAISE EXCEPTION 'Projector role must not bypass row security';
     END IF;
 END $$;
 
@@ -53,7 +60,13 @@ ALTER TABLE public.outbox ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS projector_outbox_read ON public.outbox;
 CREATE POLICY projector_outbox_read ON public.outbox
-    FOR SELECT TO opsblaze_projector USING (true);
+    FOR SELECT TO opsblaze_projector
+    USING (kind = 'PROJECT_EXPERIENCE');
+
+-- Function owner sees the complete ordering ledger. The projector gets only
+-- a boolean answer, not earlier Temporal rows or signal payloads.
+GRANT EXECUTE ON FUNCTION public.projector_intent_ready(uuid, bigint)
+    TO opsblaze_projector;
 
 DROP POLICY IF EXISTS projector_outbox_update ON public.outbox;
 CREATE POLICY projector_outbox_update ON public.outbox

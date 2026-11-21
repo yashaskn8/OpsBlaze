@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
@@ -56,6 +56,18 @@ async def claim_intent(
         else OutboxEntry.kind != "PROJECT_EXPERIENCE"
     )
     async with sessions() as session:
+        # The restricted PostgreSQL projector sees only local projection
+        # rows. A SECURITY DEFINER boolean probe checks hidden earlier
+        # Temporal signals without exposing their payloads or identities.
+        if domain == "experience" and session.bind.dialect.name == "postgresql":
+            ordering_guard = func.projector_intent_ready(
+                OutboxEntry.incident_id, OutboxEntry.id,
+            )
+        else:
+            ordering_guard = and_(
+                ~earlier_pending,
+                or_(OutboxEntry.kind == "START_WORKFLOW", start_delivered),
+            )
         async with session.begin():
             stmt = (
                 select(OutboxEntry, Incident.tenant_id)
@@ -65,8 +77,7 @@ async def claim_intent(
                     OutboxEntry.delivered_at.is_(None),
                     OutboxEntry.dead_lettered_at.is_(None),
                     OutboxEntry.available_at <= now,
-                    ~earlier_pending,
-                    or_(OutboxEntry.kind == "START_WORKFLOW", start_delivered),
+                    ordering_guard,
                 )
                 .order_by(OutboxEntry.id)
                 .limit(1)

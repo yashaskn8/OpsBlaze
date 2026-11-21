@@ -64,10 +64,42 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
                     witness_source="SIMULATOR_WITNESS", observed_version=2,
                     reason="synthetic independent recovery outcome",
                 ))
+                # Pending Temporal signal must still order the later local
+                # projection, even though its row is hidden by projector RLS.
+                pending = OutboxEntry(
+                    incident_id=incident.id, kind="PLAN_DECIDED",
+                    payload={"private_signal": "never-expose-to-projector"},
+                )
+                session.add(pending)
+                await session.flush()
+                pending_id = pending.id
                 session.add(OutboxEntry(
                     incident_id=incident.id, kind="PROJECT_EXPERIENCE",
                     payload={"outcome_id": str(outcome_id)},
                 ))
+
+        async with restricted_engine.connect() as conn:
+            # The worker cannot read Temporal signal IDs or secret payloads.
+            assert (await conn.scalar(text(
+                "SELECT count(*) FROM public.outbox"
+                " WHERE id IN (:start, :pending)"
+            ), {"start": start_id, "pending": pending_id})) == 0
+            kinds = (await conn.scalars(text(
+                "SELECT kind FROM public.outbox WHERE incident_id = :incident"
+            ), {"incident": incident.id})).all()
+            assert kinds == ["PROJECT_EXPERIENCE"]
+            assert await conn.scalar(text(
+                "SELECT has_function_privilege(current_user,"
+                " 'public.projector_intent_ready(uuid,bigint)', 'EXECUTE')"
+            )) is True
+
+        # Hidden unfinished signals must nevertheless prevent early capture.
+        assert not await run_projector_once(projected, tenant_filter=tenant)
+        async with main() as session:
+            async with session.begin():
+                prior = await session.get(OutboxEntry, pending_id)
+                assert prior.delivered_at is None
+                prior.delivered_at = datetime.now(timezone.utc)
 
         # This actually uses the separately scoped PostgreSQL identity.
         assert await run_projector_once(projected, tenant_filter=tenant)
@@ -80,7 +112,7 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
             rows = (await session.scalars(select(OutboxEntry).where(
                 OutboxEntry.incident_id == incident.id,
             ))).all()
-            assert len(rows) == 2
+            assert len(rows) == 3
             assert all(row.delivered_at is not None for row in rows)
 
         # The projector cannot fake a Temporal delivery: RLS blocks it even
