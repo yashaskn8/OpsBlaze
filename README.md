@@ -41,6 +41,27 @@ still matches the originating incident. Use `next_cursor` until it becomes
 were rejected. This is a redacted source-reference view, not a raw transcript.
 Previous unpaged array clients must switch to `records`.
 
+### Tenant-wide memory consent and automatic projection (E1)
+
+Independent production `security_admin` credentials can read
+`GET /v1/privacy/experience-consent` and version-check updates through
+`POST /v1/privacy/experience-consent` (JSON `{"allow":false}`,
+`If-Match: <current epoch>`; returns `204`). A tenant with no policy
+retains the existing explicit **per-incident opt-in** behavior until its
+first override. Changing a tenant epoch permanently invalidates older
+capsules and lessons, including when consent is later re-enabled. A
+background `python -m backend.workers.maintenance` run scrubs the
+superseded capsules and lessons in up to 500-row batches. Retrieval is
+denied **before** the sweep; a backup erasure certificate is not implied.
+
+A verified E2 outcome now commits a `PROJECT_EXPERIENCE` outbox
+intent in the same database transaction. The dispatcher handles that
+local intent (never a real effect), pins it to the exact outcome revision,
+and either captures an eligible capsule idempotently, skips revoked/
+superseded sources, or retains the intent for retry after a storage
+failure. Replaying after a lost outbox ACK cannot duplicate a capsule.
+This does not yet provide a dedicated least-privilege projection process.
+
 ### Durable queue health (B4)
 
 The workbench's **Queue health** panel calls `GET /v1/operations/queues`
