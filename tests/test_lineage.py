@@ -161,3 +161,26 @@ async def test_redteam_approval_grant_is_part_of_effect_causal_chain(sessions_fi
     }
     async with sessions_fixture() as session:
         assert await build_lineage(session, "wrong-tenant", incident.id) is None
+
+    # A durable grant remains visible in historical provenance, but a
+    # rejected or digest-mismatched grant must NEVER be marked as authority.
+    for field, value in (("state", "REJECTED"), ("plan_digest", "f" * 64)):
+        async with sessions_fixture() as session:
+            async with session.begin():
+                grant = await session.get(ApprovalGrant, grant_id)
+                grant.state = "CONSUMED"
+                grant.plan_digest = digest
+                setattr(grant, field, value)
+        async with sessions_fixture() as session:
+            broken = await build_lineage(session, "t", incident.id)
+        assert broken["projection"] == "PARTIAL_LINKS"
+        assert any(
+            m["source"] == f"effect:{effect_id}"
+            and m["relation"] == "AUTHORIZED_BY_GRANT"
+            for m in broken["missing_refs"]
+        )
+        assert not any(
+            e["from"] == f"effect:{effect_id}"
+            and e["relation"] == "AUTHORIZED_BY_GRANT"
+            for e in broken["edges"]
+        )
