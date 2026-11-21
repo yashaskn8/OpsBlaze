@@ -97,6 +97,17 @@ async def create_incident(
         raise HTTPException(409, str(exc)) from exc
     except RateLimited as exc:
         raise HTTPException(429, str(exc), headers={"Retry-After": "60"}) from exc
+    except Exception as exc:
+        from sqlalchemy.exc import SQLAlchemyError
+
+        if not isinstance(exc, SQLAlchemyError):
+            raise
+        # Failure to commit admission/outbox is not a 202 acceptance.
+        # Do not echo SQL statements, credentials, or DSNs in the error body.
+        raise HTTPException(
+            503, "admission persistence temporarily unavailable",
+            headers={"Retry-After": "30"},
+        ) from exc
     return IncidentView.model_validate(incident)
 
 
@@ -202,11 +213,12 @@ async def readiness(
 async def tenant_queues(
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, int]:
     from backend.operations import queue_health
 
     return await queue_health(
-        session, tenant_id, get_settings().stuck_after_seconds,
+        session, tenant_id, settings.stuck_after_seconds,
     )
 
 
