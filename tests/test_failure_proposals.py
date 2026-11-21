@@ -5,12 +5,10 @@ import pytest
 from sqlalchemy import select
 
 from backend.learning.failures import (
-    FailureConflict, classify, draft_candidate, record_case,
-    submit_candidate, validate_change,
+    FailureConflict, draft_candidate, record_case, validate_change,
 )
 from backend.models import (
-    EffectReceipt, FailureCase, FailureCluster, ImprovementCandidate,
-    OutcomeRevision,
+    FailureCase, FailureCluster, OutcomeRevision,
 )
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
