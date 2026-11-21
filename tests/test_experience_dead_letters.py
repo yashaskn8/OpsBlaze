@@ -1,7 +1,7 @@
 """E1 terminal local projection: bounded retries, review and tenant fences."""
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -16,7 +16,8 @@ from backend.workers.dead_letters import (
     acknowledge_projection_dead_letter, list_projection_dead_letters,
     mark_projection_dead_letter,
 )
-from backend.workers.dispatcher import claim_intent, dispatch_once
+from backend.workers.outbox import claim_intent
+from backend.workers.experience_projector import run_projector_once
 
 
 async def make_lab(sessions):
@@ -51,9 +52,7 @@ async def test_redteam_malformed_projection_dead_letters_and_unblocks_later_sign
 ):
     sessions = sessions_fixture
     incident_id, poison_id = await make_lab(sessions)
-    client = AsyncMock()
-    assert await dispatch_once(client, sessions)
-    client.get_workflow_handle.assert_not_called()
+    assert await run_projector_once(sessions)
     async with sessions() as session:
         poison = await session.get(OutboxEntry, poison_id)
         assert poison.dead_letter_code == "INVALID_PAYLOAD"
@@ -88,13 +87,12 @@ async def test_redteam_projector_exhausts_retries_without_marking_delivered(
         async with session.begin():
             poison = await session.get(OutboxEntry, poison_id)
             poison.payload = {"outcome_id": str(uuid4())}
-    client = AsyncMock()
     with patch(
-        "backend.workers.dispatcher.project_experience_outbox",
+        "backend.workers.experience_projector.project_experience_outbox",
         side_effect=ConnectionError("synthetic outage with secret in text"),
     ):
         for attempt in range(1, MAX_PROJECTOR_ATTEMPTS + 1):
-            assert await dispatch_once(client, sessions)
+            assert await run_projector_once(sessions)
             async with sessions() as session:
                 async with session.begin():
                     poison = await session.get(OutboxEntry, poison_id)
@@ -126,7 +124,7 @@ async def test_redteam_dead_letter_review_is_one_winner_and_does_not_requeue(
 ):
     sessions = sessions_fixture
     incident_id, poison_id = await make_lab(sessions)
-    assert await dispatch_once(AsyncMock(), sessions)
+    assert await run_projector_once(sessions)
     async with sessions() as session:
         assert await acknowledge_projection_dead_letter(
             session, "beta", poison_id, 1, "oidc:operator",
@@ -168,13 +166,13 @@ async def test_redteam_old_worker_cannot_dead_letter_a_newer_claim(
 ):
     sessions = sessions_fixture
     _, poison_id = await make_lab(sessions)
-    first = await claim_intent(sessions)
+    first = await claim_intent(sessions, domain="experience")
     assert first is not None and first[0] == poison_id
     async with sessions() as session:
         async with session.begin():
             row = await session.get(OutboxEntry, poison_id)
             row.available_at = datetime.now(timezone.utc) - timedelta(seconds=1)
-    newer = await claim_intent(sessions)
+    newer = await claim_intent(sessions, domain="experience")
     assert newer is not None and newer[0] == poison_id
     assert newer[5] == first[5] + 1
     assert not await mark_projection_dead_letter(
@@ -196,7 +194,7 @@ async def test_redteam_dead_letter_page_keyset_and_validation(sessions_fixture):
     sessions = sessions_fixture
     _, first_id = await make_lab(sessions)
     # Isolate only the first tenant's projection, then another tenant.
-    await dispatch_once(AsyncMock(), sessions)
+    await run_projector_once(sessions)
     async with sessions() as session:
         second_incident = await admit_incident(
             session, "beta", str(uuid4()), IncidentCreate(target_id="private"),
@@ -235,7 +233,7 @@ async def test_redteam_terminal_ledger_outage_preserves_unacknowledged_work(
         "backend.workers.dispatcher.mark_projection_dead_letter",
         side_effect=ConnectionError("private database DSN in exception"),
     ):
-        assert await dispatch_once(AsyncMock(), sessions)
+        assert await run_projector_once(sessions)
 
     async with sessions() as session:
         async with session.begin():
@@ -246,7 +244,7 @@ async def test_redteam_terminal_ledger_outage_preserves_unacknowledged_work(
     assert "dead-letter ledger unavailable" in caplog.text
 
     # When the store is healthy again, the very same poison is terminalized.
-    assert await dispatch_once(AsyncMock(), sessions)
+    assert await run_projector_once(sessions)
     async with sessions() as session:
         row = await session.get(OutboxEntry, poison_id)
         assert row.dead_letter_code == "INVALID_PAYLOAD"
