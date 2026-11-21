@@ -472,3 +472,48 @@ async def test_redteam_quarantine_requires_operator_not_viewer_or_reviewer(
     assert (await production_client.post(
         route, headers={**operator, "If-Match": "1"},
     )).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_redteam_tenant_consent_requires_independent_security_admin(
+    signer, production_client,
+):
+    route = "/v1/privacy/experience-consent"
+    for roles in (
+        ("viewer",), ("operator",), ("reviewer",),
+        ("security_admin", "operator"),
+    ):
+        header = {"Authorization": "Bearer " + signer(roles=roles)}
+        response = await production_client.post(
+            route, json={"allow": False},
+            headers={**header, "If-Match": "0"},
+        )
+        assert response.status_code == 403
+    admin = {"Authorization": "Bearer " + signer(
+        subject="privacy-admin", roles=("security_admin",),
+    )}
+    first_read = await production_client.get(route, headers=admin)
+    assert first_read.status_code == 200
+    assert first_read.json() == {
+        "epoch": 0, "allowed": None, "policy": "PER_INCIDENT_LEGACY",
+    }
+    first = await production_client.post(
+        route, json={"allow": False}, headers={**admin, "If-Match": "0"},
+    )
+    assert first.status_code == 204 and first.content == b""
+    retry = await production_client.post(
+        route, json={"allow": True}, headers={**admin, "If-Match": "0"},
+    )
+    assert retry.status_code == 409
+    current = await production_client.get(route, headers=admin)
+    assert current.json() == {
+        "epoch": 1, "allowed": False, "policy": "TENANT_OVERRIDE",
+    }
+    other = {"Authorization": "Bearer " + signer(
+        subject="privacy-other", tenant="beta", roles=("security_admin",),
+    )}
+    assert (await production_client.get(route, headers=other)).json()["epoch"] == 0
+    invalid = await production_client.post(
+        route, json={"allow": True}, headers={**admin, "If-Match": "bad"},
+    )
+    assert invalid.status_code == 400
