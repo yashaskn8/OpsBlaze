@@ -57,6 +57,12 @@ async def valid_source(
         or not consent.allowed or consent.epoch != capsule.consent_epoch
     ):
         return None
+    from backend.experiences import current_tenant_consent
+
+    if not await current_tenant_consent(
+        session, tenant_id, capsule.tenant_consent_epoch,
+    ):
+        return None
     newest = await session.scalar(
         select(OutcomeRevision)
         .where(
