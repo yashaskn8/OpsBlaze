@@ -1,7 +1,6 @@
 """E1 administrative redrive is single-use, source-pinned, and local only."""
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -17,7 +16,7 @@ from backend.workers.dead_letters import (
     DeadLetterConflict, list_projection_dead_letters,
     redrive_projection_dead_letter,
 )
-from backend.workers.dispatcher import dispatch_once
+from backend.workers.experience_projector import run_projector_once
 
 
 async def redrive_lab(sessions, *, tenant="alpha", status="RETRY_EXHAUSTED"):
@@ -91,10 +90,7 @@ async def test_redteam_redrive_creates_one_linked_intent_then_captures_once(
                 "oidc:another-admin", "TRANSIENT_FIX_VERIFIED",
             )
 
-    temporal_client = AsyncMock()
-    assert await dispatch_once(temporal_client, sessions)
-    temporal_client.start_workflow.assert_not_called()
-    temporal_client.get_workflow_handle.assert_not_called()
+    assert await run_projector_once(sessions)
     async with sessions() as session:
         child = await session.get(OutboxEntry, child_id)
         assert child.delivered_at is not None
