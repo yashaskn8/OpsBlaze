@@ -6,7 +6,7 @@ import pytest
 
 from backend.experiences import (
     ConsentConflict, capture_capsule, export_privacy_page, list_capsules,
-    set_consent,
+    quarantine_capsule, set_consent,
 )
 from backend.models import ExperienceCapsule, OutcomeRevision
 from backend.schemas import IncidentCreate
@@ -239,3 +239,58 @@ async def test_redteam_privacy_export_is_bounded_redacted_and_tenant_scoped(
         for invalid in (0, 51):
             with pytest.raises(ValueError):
                 await export_privacy_page(session, "t", "consents", limit=invalid)
+
+
+@pytest.mark.asyncio
+async def test_redteam_quarantine_scrubs_capsule_and_immediately_revokes_lessons(
+    sessions_fixture,
+):
+    from backend.memory.lessons import create_draft
+    from backend.models import OperationalLesson
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "t", "manual-quarantine",
+            IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        await set_consent(session, "t", incident.id, 0, True)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutcomeRevision(
+                id=uuid4(), tenant_id="t", incident_id=incident.id,
+                revision=1, effect_id=None, label="VERIFIED",
+                witness_source="SIMULATOR_WITNESS",
+                observed_version=2, reason="test fixture",
+            ))
+    async with sessions_fixture() as session:
+        capsule = await capture_capsule(session, "t", incident.id)
+    async with sessions_fixture() as session:
+        lesson = await create_draft(session, "t", capsule.id, "CHECK_VERSION")
+
+    async with sessions_fixture() as session:
+        assert await quarantine_capsule(session, "wrong", capsule.id, 1) is None
+    async with sessions_fixture() as session:
+        with pytest.raises(ConsentConflict, match="epoch"):
+            await quarantine_capsule(session, "t", capsule.id, 2)
+    async with sessions_fixture() as session:
+        result = await quarantine_capsule(session, "t", capsule.id, 1)
+        assert result.status == "QUARANTINED"
+        assert result.target_digest == "" and result.evidence_ids == []
+
+    async with sessions_fixture() as session:
+        assert await list_capsules(session, "t") == []
+        stored = await session.get(ExperienceCapsule, capsule.id)
+        source_lesson = await session.get(OperationalLesson, lesson.id)
+        assert stored.status == "QUARANTINED"
+        assert source_lesson.status == "REVOKED"
+        assert source_lesson.target_digest == "" and source_lesson.version == 2
+        exported = await export_privacy_page(session, "t", "capsules")
+        assert exported["records"][0]["status"] == "QUARANTINED"
+
+    async with sessions_fixture() as session:
+        with pytest.raises(ConsentConflict, match="status"):
+            await quarantine_capsule(session, "t", capsule.id, 1)
+    async with sessions_fixture() as session:
+        with pytest.raises(ConsentConflict, match="stale"):
+            await capture_capsule(session, "t", incident.id)
