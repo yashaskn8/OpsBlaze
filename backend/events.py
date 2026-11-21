@@ -91,6 +91,18 @@ async def read_event_batch(
         )).all())
 
 
+async def is_stream_identity_revoked(
+    sessions: async_sessionmaker[AsyncSession],
+    tenant_id: str, actor_id: str,
+) -> bool:
+    # A batch can hold 100 prefetched events. Recheck between frames, not
+    # just before the batch, so revocations do not leak its remaining rows.
+    async with sessions() as session:
+        return await session.get(
+            RevokedIdentity, (tenant_id, actor_id),
+        ) is not None
+
+
 def encode_sse(event: UIEvent) -> str:
     body = json.dumps(
         {
@@ -139,6 +151,15 @@ async def stream_incident_events(
             for event in rows:
                 if token_expires_at is not None and time.time() >= token_expires_at:
                     return
+                if actor_id is not None:
+                    try:
+                        if await is_stream_identity_revoked(
+                            sessions, tenant_id, actor_id,
+                        ):
+                            return
+                    except Exception:
+                        # Failure of the deny-list must close, not fail open.
+                        return
                 if await disconnected():
                     return
                 after_id = event.id
