@@ -533,6 +533,22 @@ async def tenant_experiences(
     ]
 
 
+@app.get("/v1/privacy/export")
+async def tenant_privacy_export(
+    kind: Literal["consents", "capsules"] = "consents",
+    cursor: UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
+) -> dict:
+    from backend.experiences import export_privacy_page
+
+    return await export_privacy_page(
+        session, tenant_id, kind, cursor=cursor, limit=limit,
+    )
+
+
 class ImprovementDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_cluster_id: UUID
