@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -31,17 +31,26 @@ async def test_two_administrators_cannot_create_duplicate_redrive_intents():
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     tenant = "redrive-race-" + uuid4().hex[:12]
+    incident_id = None
     try:
         async with sessions() as session:
             incident = await admit_incident(
                 session, tenant, "source",
                 IncidentCreate(target_id="synthetic-only"),
             )
+        incident_id = incident.id
         async with sessions() as session:
             await set_consent(session, tenant, incident.id, 0, True)
         source_outcome = uuid4()
         async with sessions() as session:
             async with session.begin():
+                # This test does not start Temporal. Do not leave a synthetic
+                # START_WORKFLOW pending for another shared-DB integration test.
+                start = await session.scalar(select(OutboxEntry).where(
+                    OutboxEntry.incident_id == incident.id,
+                    OutboxEntry.kind == "START_WORKFLOW",
+                ))
+                start.delivered_at = datetime.now(timezone.utc)
                 session.add(OutcomeRevision(
                     id=source_outcome, tenant_id=tenant,
                     incident_id=incident.id, revision=1,
@@ -102,4 +111,17 @@ async def test_two_administrators_cannot_create_duplicate_redrive_intents():
             )
             assert count == 1
     finally:
+        if incident_id is not None:
+            # Native PG CI tests reuse a disposable database. Release every
+            # local-only outbox claim, including on assertion failure, so a
+            # later test cannot accidentally dispatch this fixture.
+            async with sessions() as cleanup:
+                async with cleanup.begin():
+                    await cleanup.execute(
+                        update(OutboxEntry).where(
+                            OutboxEntry.incident_id == incident_id,
+                            OutboxEntry.delivered_at.is_(None),
+                            OutboxEntry.dead_lettered_at.is_(None),
+                        ).values(delivered_at=datetime.now(timezone.utc))
+                    )
         await engine.dispose()
