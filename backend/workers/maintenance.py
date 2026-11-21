@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.database import get_session_maker
 from backend.settings import Settings, get_settings
+from backend.telemetry import initialize_tracing
 from backend.workers.budget_retention import prune_budget_windows
 from backend.workers.event_retention import purge_ui_events
 from backend.workers.retention import expire_capsules, scrub_revoked_tenant_capsules
@@ -74,7 +75,9 @@ async def run_maintenance(
 
 
 async def main() -> None:
-    totals = await run_maintenance(get_session_maker(), get_settings())
+    settings = get_settings()
+    initialize_tracing(settings)
+    totals = await run_maintenance(get_session_maker(), settings)
     print(json.dumps(totals, sort_keys=True))
 
 
