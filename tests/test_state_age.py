@@ -50,3 +50,30 @@ async def test_monitor_finds_executing_incident_and_old_retry(sessions_fixture, 
             )
             intent.delivered_at = datetime.now(timezone.utc)
     assert await scan_stuck() == 0
+
+
+@pytest.mark.asyncio
+async def test_redteam_age_monitor_retries_after_database_failure(monkeypatch, caplog):
+    import asyncio
+    from backend.workers import state_age
+
+    attempts = []
+
+    async def fake_scan():
+        attempts.append("scan")
+        if len(attempts) == 1:
+            raise ConnectionError("synthetic database outage")
+        return 0
+
+    async def fake_sleep(delay):
+        assert delay == 30
+        if len(attempts) > 1:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(state_age, "scan_stuck", fake_scan)
+    monkeypatch.setattr(state_age.asyncio, "sleep", fake_sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await state_age.main()
+    assert len(attempts) == 2
+    assert "B4 state-age scan failed" in caplog.text
+    assert "synthetic database outage" in caplog.text
