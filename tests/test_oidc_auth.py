@@ -424,3 +424,31 @@ def test_redteam_strict_jws_header_applies_to_both_token_types():
     assert not supported_jws_header({
         "alg": "RS256", "kid": "kid-01", "b64": False,
     })
+
+
+@pytest.mark.asyncio
+async def test_redteam_privacy_export_requires_operator_and_signed_tenant(
+    signer, production_client,
+):
+    viewer = bearer(signer(roles=("viewer",)))
+    reviewer = bearer(signer(roles=("reviewer",)))
+    operator = bearer(signer(roles=("operator",)))
+    for non_operator in (viewer, reviewer):
+        response = await production_client.get(
+            "/v1/privacy/export", headers=non_operator,
+        )
+        assert response.status_code == 403
+    allowed = await production_client.get(
+        "/v1/privacy/export", headers=operator,
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["kind"] == "consents"
+    assert allowed.json()["metadata_only"] is True
+    assert (await production_client.get(
+        "/v1/privacy/export?kind=capsules&limit=51", headers=operator,
+    )).status_code == 422
+    assert (await production_client.get(
+        "/v1/privacy/export", headers=bearer(
+            signer(tenant="beta", roles=("operator",)),
+        ),
+    )).status_code == 403
