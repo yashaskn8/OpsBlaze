@@ -227,6 +227,46 @@ async def tenant_queues(
     )
 
 
+@app.get("/v1/operations/dead-letters")
+async def experience_dead_letters(
+    cursor: int = Query(default=0, ge=0, le=(1 << 63) - 1),
+    limit: int = Query(default=50, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.workers.dead_letters import list_projection_dead_letters
+
+    return await list_projection_dead_letters(session, tenant_id, cursor, limit)
+
+
+@app.post("/v1/operations/dead-letters/{entry_id}/acknowledge", status_code=202)
+async def acknowledge_experience_dead_letter(
+    entry_id: int,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
+) -> dict:
+    from backend.workers.dead_letters import (
+        DeadLetterConflict, acknowledge_projection_dead_letter,
+    )
+
+    if entry_id < 1 or entry_id > (1 << 63) - 1:
+        raise HTTPException(422, "invalid dead-letter identifier")
+    version = if_match.strip('"')
+    if not version.isdecimal() or not 0 < len(version) <= 10:
+        raise HTTPException(400, "If-Match must be the delivery attempt count")
+    try:
+        row = await acknowledge_projection_dead_letter(
+            session, tenant_id, entry_id, int(version), operator_identity,
+        )
+    except DeadLetterConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if row is None:
+        raise HTTPException(404, "experience dead letter not found")
+    return {"id": row.id, "reviewed": True, "attempts": row.attempt}
+
+
 @app.get("/v1/incidents/{incident_id}/evidence")
 async def incident_evidence(
     incident_id: UUID,
