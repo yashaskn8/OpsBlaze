@@ -11,6 +11,7 @@ from backend.models import AdmissionUsage, Incident, OutboxEntry, PolicyAssignme
 from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.schemas import IncidentCreate
 from backend.settings import get_settings
+from backend.telemetry import trace_operation
 
 
 ACTIVE_STATES = (
@@ -51,37 +52,38 @@ async def admit_incident(
         status_version=1,
     )
     try:
-        async with session.begin():
-            # Serialize global admission-capacity reads across PostgreSQL
-            # processes. No lock is held over network or workflow calls.
-            if session.bind.dialect.name == "postgresql":
-                await session.execute(text("SELECT pg_advisory_xact_lock(817263)"))
-            existing = await session.scalar(
-                select(Incident).where(
-                    Incident.tenant_id == tenant_id,
-                    Incident.client_key == client_key,
+        with trace_operation("opsblaze.incident.admit", incident_id=incident.id):
+            async with session.begin():
+                # Serialize global admission-capacity reads across PostgreSQL
+                # processes. No lock is held over network or workflow calls.
+                if session.bind.dialect.name == "postgresql":
+                    await session.execute(text("SELECT pg_advisory_xact_lock(817263)"))
+                existing = await session.scalar(
+                    select(Incident).where(
+                        Incident.tenant_id == tenant_id,
+                        Incident.client_key == client_key,
+                    )
                 )
-            )
-            if existing is not None:
-                if existing.request_sha256 != fingerprint:
-                    raise IdempotencyConflict("idempotency key reused for different payload")
-                return existing
-            await enforce_active_capacity(session, tenant_id)
-            await reserve_admission_slot(session, tenant_id)
-            session.add(incident)
-            session.add(
-                PolicyAssignment(
-                    tenant_id=tenant_id,
-                    incident_id=incident.id,
-                    policy_id=INCUMBENT_POLICY_ID,
-                    bundle_id=None,
-                    rollout_id=None,
-                    source="PINNED_INCUMBENT",
+                if existing is not None:
+                    if existing.request_sha256 != fingerprint:
+                        raise IdempotencyConflict("idempotency key reused for different payload")
+                    return existing
+                await enforce_active_capacity(session, tenant_id)
+                await reserve_admission_slot(session, tenant_id)
+                session.add(incident)
+                session.add(
+                    PolicyAssignment(
+                        tenant_id=tenant_id,
+                        incident_id=incident.id,
+                        policy_id=INCUMBENT_POLICY_ID,
+                        bundle_id=None,
+                        rollout_id=None,
+                        source="PINNED_INCUMBENT",
+                    )
                 )
-            )
-            session.add(OutboxEntry(incident_id=incident.id, kind="START_WORKFLOW"))
-            session.add(UIEvent(tenant_id=tenant_id, incident_id=incident.id, kind="ADMITTED", projection_version=1))
-            await session.flush()
+                session.add(OutboxEntry(incident_id=incident.id, kind="START_WORKFLOW"))
+                session.add(UIEvent(tenant_id=tenant_id, incident_id=incident.id, kind="ADMITTED", projection_version=1))
+                await session.flush()
         return incident
     except IntegrityError:
         await session.rollback()
