@@ -140,7 +140,10 @@ async def test_redteam_queue_api_never_exposes_other_tenant_data(sessions_fixtur
 
 
 @pytest.mark.asyncio
-async def test_redteam_unknown_effect_is_reported_as_aged_work(sessions_fixture, monkeypatch):
+@pytest.mark.parametrize("effect_state", ["SENT", "UNKNOWN", "CONFIRMED"])
+async def test_redteam_unresolved_effect_is_reported_as_aged_work(
+    sessions_fixture, monkeypatch, effect_state,
+):
     from backend.workers.state_age import scan_stuck
 
     old = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=2)
@@ -162,7 +165,8 @@ async def test_redteam_unknown_effect_is_reported_as_aged_work(sessions_fixture,
                 id=effect_id, tenant_id="alpha", incident_id=incident.id,
                 plan_digest="d" * 64, target_id="checkout",
                 adapter_id="simulator", idempotency_key=str(effect_id),
-                fence=1, expected_version=1, state="UNKNOWN",
+                fence=1, expected_version=1, state=effect_state,
+                observed_version=2 if effect_state == "CONFIRMED" else None,
                 attempt_count=1, updated_at=old,
             ))
 
@@ -232,3 +236,33 @@ async def test_redteam_database_outage_rejects_admission_without_phantom_202(
     async with sessions_fixture() as session:
         assert (await session.scalars(select(Incident))).all() == []
         assert (await session.scalars(select(OutboxEntry))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_redteam_queue_ignores_forged_tenant_tag_on_foreign_effect(
+    sessions_fixture,
+):
+    async with sessions_fixture() as session:
+        foreign = await admit_incident(
+            session, "beta", "foreign-effect",
+            IncidentCreate(target_id="private-resource"),
+        )
+    effect_id = uuid4()
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(EffectReceipt(
+                id=effect_id, tenant_id="alpha", incident_id=foreign.id,
+                plan_digest="d" * 64, target_id="private-resource",
+                adapter_id="simulator", idempotency_key=str(effect_id),
+                fence=1, expected_version=1, state="UNKNOWN",
+                attempt_count=1, updated_at=(
+                    datetime.now(timezone.utc) - timedelta(days=1)
+                ),
+            ))
+    async with sessions_fixture() as session:
+        alpha = await queue_health(session, "alpha", 300)
+        beta = await queue_health(session, "beta", 300)
+        assert alpha["unresolved_effects"] == 0
+        assert alpha["aged_unresolved_effects"] == 0
+        assert beta["unresolved_effects"] == 0
+        assert beta["aged_unresolved_effects"] == 0
