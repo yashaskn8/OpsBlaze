@@ -58,6 +58,7 @@ async def test_redteam_queue_health_exact_p95_and_tenant_scope(sessions_fixture)
         health = await queue_health(session, "alpha", 900, now)
         assert health == {
             "pending_outbox": 5,
+            "experience_dead_letters_unreviewed": 0,
             "active_incidents": 5,
             "unresolved_effects": 0,
             "aged_unresolved_effects": 0,
