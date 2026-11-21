@@ -27,6 +27,7 @@ async def scan_stuck() -> int:
     intent_filter = (
         OutboxEntry.created_at < threshold,
         OutboxEntry.delivered_at.is_(None),
+        OutboxEntry.dead_lettered_at.is_(None),
     )
     effect_filter = (
         EffectReceipt.updated_at < threshold,
