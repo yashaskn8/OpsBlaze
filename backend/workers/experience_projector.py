@@ -9,6 +9,10 @@ from backend.experiences import ConsentConflict, capture_capsule
 from backend.models import OutcomeRevision
 
 
+class InvalidProjectionIntent(ValueError):
+    """An immutable outbox payload cannot be interpreted safely."""
+
+
 async def project_experience_outbox(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: str, incident_id: str, payload: dict | None,
@@ -19,14 +23,14 @@ async def project_experience_outbox(
         or set(payload) != {"outcome_id"}
         or not isinstance(payload["outcome_id"], str)
     ):
-        raise ValueError("experience projection intent has invalid payload")
+        raise InvalidProjectionIntent("experience projection intent has invalid payload")
     try:
         outcome_id = UUID(payload["outcome_id"])
         source_id = UUID(incident_id)
     except ValueError as exc:
-        raise ValueError("experience projection IDs must be UUIDs") from exc
+        raise InvalidProjectionIntent("experience projection IDs must be UUIDs") from exc
     if str(outcome_id) != payload["outcome_id"] or str(source_id) != incident_id:
-        raise ValueError("experience projection IDs must be canonical")
+        raise InvalidProjectionIntent("experience projection IDs must be canonical")
     async with sessions() as session:
         latest = await session.scalar(
             select(OutcomeRevision).where(
