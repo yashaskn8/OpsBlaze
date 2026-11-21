@@ -85,6 +85,7 @@ type ExperienceDeadLetter = {
   code: "INVALID_PAYLOAD" | "RETRY_EXHAUSTED";
   dead_lettered_at: string;
   reviewed: boolean;
+  redriven_to: number | null;
 };
 
 type ExperienceDeadLetterPage = {
@@ -170,6 +171,9 @@ function App() {
   const [deadLetterPage, setDeadLetterPage] = useState<ExperienceDeadLetterPage | null>(null);
   const [deadLetterBusy, setDeadLetterBusy] = useState(false);
   const [deadLetterError, setDeadLetterError] = useState("");
+  const [redriveReason, setRedriveReason] = useState<
+    "STORE_RESTORED" | "TRANSIENT_FIX_VERIFIED"
+  >("STORE_RESTORED");
   const deadLetterRequestVersion = useRef(0);
   const [events, setEvents] = useState<UIEvent[]>([]);
   const [connection, setConnection] = useState<"SYNCING" | "LIVE" | "STALE">("SYNCING");
@@ -188,6 +192,11 @@ function App() {
     ? Boolean(accessToken && identity)
     : Boolean(token && tenant);
   const canOperate = usingOidc ? Boolean(identity?.roles.includes("operator")) : authenticated;
+  const canRedrive = usingOidc && Boolean(
+    identity?.roles.includes("security_admin")
+    && !identity.roles.includes("operator")
+    && !identity.roles.includes("reviewer")
+  );
   const canReview = usingOidc
     ? Boolean(
         identity?.roles.includes("reviewer")
@@ -528,6 +537,53 @@ function App() {
       if (deadLetterRequestVersion.current === requestVersion) {
         setDeadLetterError(
           cause instanceof Error ? cause.message : "Review acknowledgment failed"
+        );
+      }
+    } finally {
+      if (deadLetterRequestVersion.current === requestVersion) {
+        setDeadLetterBusy(false);
+      }
+    }
+  }
+
+  async function redriveDeadLetter(record: ExperienceDeadLetter) {
+    if (
+      !canRedrive || deadLetterBusy || !record.reviewed
+      || record.redriven_to !== null || record.code !== "RETRY_EXHAUSTED"
+    ) return;
+    const requestVersion = ++deadLetterRequestVersion.current;
+    setDeadLetterBusy(true);
+    setDeadLetterError("");
+    try {
+      const response = await fetch(
+        "/v1/operations/dead-letters/" + record.id + "/redrive",
+        { method: "POST", headers: {
+          ...headers(), "Content-Type": "application/json",
+          "If-Match": String(record.attempts),
+        }, body: JSON.stringify({ reason: redriveReason }) },
+      );
+      const data: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(data));
+      const submitted = data as {
+        id: number; source_id: number; state: string;
+      };
+      if (submitted.source_id !== record.id || submitted.state !== "PENDING_PROJECTION") {
+        throw new Error("Unexpected projection redrive response");
+      }
+      if (deadLetterRequestVersion.current === requestVersion) {
+        setDeadLetterPage(previous => previous && ({
+          ...previous,
+          records: previous.records.map(item =>
+            item.id === record.id
+              ? { ...item, redriven_to: submitted.id }
+              : item,
+          ),
+        }));
+      }
+    } catch (cause) {
+      if (deadLetterRequestVersion.current === requestVersion) {
+        setDeadLetterError(
+          cause instanceof Error ? cause.message : "Redrive request rejected",
         );
       }
     } finally {
@@ -1021,9 +1077,21 @@ function App() {
           </button>
         </div>
         <p className="muted">
-          Acknowledging a dead letter records review only. It never retries a
-          projection, approves recovery, or changes a target.
+          Review and redrive are separate actions. Redrive requires an independent
+          security administrator and creates one new local-only projection intent.
+          Neither action changes infrastructure or promotes an AI policy.
         </p>
+        {canRedrive &&
+          <label>
+            Redrive remediation reason
+            <select value={redriveReason} disabled={deadLetterBusy}
+              onChange={event => setRedriveReason(
+                event.target.value as "STORE_RESTORED" | "TRANSIENT_FIX_VERIFIED"
+              )}>
+              <option value="STORE_RESTORED">Storage restored</option>
+              <option value="TRANSIENT_FIX_VERIFIED">Transient issue independently verified fixed</option>
+            </select>
+          </label>}
         {deadLetterError && <p className="error" role="alert">{deadLetterError}</p>}
         {deadLetterPage && <div aria-live="polite">
           {deadLetterPage.records.length === 0 &&
@@ -1033,11 +1101,21 @@ function App() {
               <strong>Projection #{record.id} — {record.code.replaceAll("_", " ")}</strong>
               <span>Incident {record.incident_id} · {record.attempts} attempt(s)</span>
               <span>{record.reviewed ? "Reviewed" : "Needs review"}</span>
+              {record.redriven_to !== null &&
+                <span>Redrive queued as projection #{record.redriven_to}</span>}
               {canOperate && !record.reviewed &&
                 <button type="button" className="secondary"
                   disabled={deadLetterBusy}
                   onClick={() => void acknowledgeDeadLetter(record)}>
                   Acknowledge review
+                </button>}
+              {canRedrive && record.reviewed &&
+                record.code === "RETRY_EXHAUSTED" &&
+                record.redriven_to === null &&
+                <button type="button" className="secondary"
+                  disabled={deadLetterBusy}
+                  onClick={() => void redriveDeadLetter(record)}>
+                  Authorize single redrive
                 </button>}
             </div>
           )}
