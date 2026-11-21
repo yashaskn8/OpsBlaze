@@ -112,6 +112,8 @@ async def test_two_dispatchers_then_worker_handoff_preserves_one_effect():
             )
             async with Worker(**config):
                 await until_state("VERIFIED")
+                # E1 projection is a separate idempotent local outbox step.
+                assert await dispatch_once(env.client, sessions, tenant_filter=tenant)
 
         async with sessions() as session:
             target = await session.get(SimulatorTarget, (tenant, "checkout"))
@@ -136,7 +138,7 @@ async def test_two_dispatchers_then_worker_handoff_preserves_one_effect():
                 ).order_by(OutboxEntry.id)
             )).all()
             assert [item.kind for item in outbox] == [
-                "START_WORKFLOW", "PLAN_DECIDED",
+                "START_WORKFLOW", "PLAN_DECIDED", "PROJECT_EXPERIENCE",
             ]
             assert all(item.delivered_at is not None for item in outbox)
     finally:
