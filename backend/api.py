@@ -203,44 +203,11 @@ async def tenant_queues(
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, int]:
-    from sqlalchemy import func, select
-    from backend.models import Incident, OutboxEntry
-    from backend.services import ACTIVE_STATES
+    from backend.operations import queue_health
 
-    pending = await session.scalar(
-        select(func.count())
-        .select_from(OutboxEntry)
-        .join(Incident, Incident.id == OutboxEntry.incident_id)
-        .where(Incident.tenant_id == tenant_id, OutboxEntry.delivered_at.is_(None))
+    return await queue_health(
+        session, tenant_id, get_settings().stuck_after_seconds,
     )
-    active = await session.scalar(
-        select(func.count())
-        .select_from(Incident)
-        .where(
-            Incident.tenant_id == tenant_id,
-            Incident.status_projection.in_(ACTIVE_STATES),
-        )
-    )
-    from datetime import datetime, timezone
-    from backend.adapters.simulator import utc
-
-    oldest_pending = await session.scalar(
-        select(func.min(OutboxEntry.created_at))
-        .join(Incident, Incident.id == OutboxEntry.incident_id)
-        .where(
-            Incident.tenant_id == tenant_id,
-            OutboxEntry.delivered_at.is_(None),
-        )
-    )
-    oldest_age = (
-        max(0, int((datetime.now(timezone.utc) - utc(oldest_pending)).total_seconds()))
-        if oldest_pending is not None else 0
-    )
-    return {
-        "pending_outbox": pending or 0,
-        "active_incidents": active or 0,
-        "oldest_pending_seconds": oldest_age,
-    }
 
 
 @app.get("/v1/incidents/{incident_id}/evidence")
