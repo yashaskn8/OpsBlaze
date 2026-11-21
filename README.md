@@ -97,10 +97,35 @@ actor pseudonym, and never redrives the entry or changes live effects.
 The React workbench shows the review list and an unresolved count on the
 Queue health panel. Dead-lettered items are excluded from pending queue age.
 
-**An acknowledged failure remains terminal.** Fixing and replaying a
-dead-lettered projection is not yet an authorized capability; do not
-manually edit outbox rows to bypass review. Dead-letter diagnostics never
-persist raw exceptions, target IDs, payloads or secrets.
+**The original dead letter always remains terminal.** A production
+`security_admin` (independent of operator/reviewer roles) may request a
+single new local-only projection after an operator acknowledges review:
+
+```http
+POST /v1/operations/dead-letters/{id}/redrive
+If-Match: 5
+Content-Type: application/json
+
+{"reason":"STORE_RESTORED"}
+```
+
+The alternative fixed reason is `TRANSIENT_FIX_VERIFIED`. The API
+returns `202` with the new intent ID and source ID, not proof of capture.
+A unique source link enforces **one authorized redrive per original**;
+the old row remains untouched. Redrive requires an intact, exhausted
+`RETRY_EXHAUSTED` source, a different administrator identity, an
+independently verified and current outcome, still-effective incident and
+tenant consent **unchanged since the original intent**, a source inside
+retention, and no existing capsule. A second-generation redrive and
+`INVALID_PAYLOAD` bypasses are forbidden. At dispatch the existing
+projector checks consent and outcome *again*, so a later revocation or
+dispute prevents memory capture. Redrive does not send an external effect.
+
+The React operator workbench shows the source-to-replacement link.
+Only an independently authenticated production security administrator
+gets the redrive control; development credentials cannot authorize it.
+Dead-letter diagnostics never persist raw exceptions, target IDs,
+arbitrary payloads or secrets. No direct outbox editing is supported.
 
 ### Redacted diagnostic traces and synthetic capacity evidence
 
