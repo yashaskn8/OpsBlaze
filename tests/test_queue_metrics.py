@@ -114,7 +114,7 @@ async def test_redteam_queue_api_never_exposes_other_tenant_data(sessions_fixtur
             yield session
 
     app.dependency_overrides[get_settings] = lambda: Settings(
-        local_token="queue-metrics-test",
+        local_token="queue-metrics-test", stuck_after_seconds=900,
     )
     app.dependency_overrides[get_session] = override_session
     try:
@@ -127,6 +127,7 @@ async def test_redteam_queue_api_never_exposes_other_tenant_data(sessions_fixtur
             report = response.json()
             assert report["pending_outbox"] == 1
             assert report["active_incidents"] == 1
+            assert report["stuck_after_seconds"] == 900
             assert all(type(value) is int for value in report.values())
             assert "private" not in str(report)
             denied = await client.get(
@@ -187,3 +188,47 @@ async def test_redteam_unknown_effect_is_reported_as_aged_work(sessions_fixture,
         assert health["unresolved_effects"] == 0
         assert health["aged_unresolved_effects"] == 0
     assert await scan_stuck() == 2
+
+
+@pytest.mark.asyncio
+async def test_redteam_database_outage_rejects_admission_without_phantom_202(
+    sessions_fixture, monkeypatch,
+):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    async def offline(*args, **kwargs):
+        raise SQLAlchemyError("private connection string with credentials")
+
+    async def override_session():
+        async with sessions_fixture() as session:
+            yield session
+
+    monkeypatch.setattr("backend.api.admit_incident", offline)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        local_token="admission-outage-test",
+    )
+    app.dependency_overrides[get_session] = override_session
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/v1/incidents",
+                json={"target_id": "checkout"},
+                headers={
+                    "X-Tenant-Id": "alpha",
+                    "X-OpsBlaze-Token": "admission-outage-test",
+                    "Idempotency-Key": "outage-key",
+                },
+            )
+            assert response.status_code == 503
+            assert response.headers["retry-after"] == "30"
+            assert "credentials" not in response.text
+            assert "private" not in response.text
+            assert "temporarily unavailable" in response.text
+    finally:
+        app.dependency_overrides.clear()
+
+    async with sessions_fixture() as session:
+        assert (await session.scalars(select(Incident))).all() == []
+        assert (await session.scalars(select(OutboxEntry))).all() == []
