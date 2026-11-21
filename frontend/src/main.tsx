@@ -65,6 +65,7 @@ type Lineage = {
 
 type QueueHealth = {
   pending_outbox: number;
+  experience_dead_letters_unreviewed: number;
   active_incidents: number;
   unresolved_effects: number;
   aged_unresolved_effects: number;
@@ -75,6 +76,21 @@ type QueueHealth = {
   aged_active_incidents: number;
   max_pending_attempts: number;
   stuck_after_seconds: number;
+};
+
+type ExperienceDeadLetter = {
+  id: number;
+  incident_id: string;
+  attempts: number;
+  code: "INVALID_PAYLOAD" | "RETRY_EXHAUSTED";
+  dead_lettered_at: string;
+  reviewed: boolean;
+};
+
+type ExperienceDeadLetterPage = {
+  records: ExperienceDeadLetter[];
+  next_cursor: number | null;
+  metadata_only: boolean;
 };
 
 type LineagePage = {
@@ -151,6 +167,10 @@ function App() {
   const [queueBusy, setQueueBusy] = useState(false);
   const [queueError, setQueueError] = useState("");
   const queueRequestVersion = useRef(0);
+  const [deadLetterPage, setDeadLetterPage] = useState<ExperienceDeadLetterPage | null>(null);
+  const [deadLetterBusy, setDeadLetterBusy] = useState(false);
+  const [deadLetterError, setDeadLetterError] = useState("");
+  const deadLetterRequestVersion = useRef(0);
   const [events, setEvents] = useState<UIEvent[]>([]);
   const [connection, setConnection] = useState<"SYNCING" | "LIVE" | "STALE">("SYNCING");
   const [replayFixture, setReplayFixture] = useState<ReplayFixture>("recoverable-v1");
@@ -402,9 +422,13 @@ function App() {
   useEffect(() => {
     // Never display a queue snapshot under different browser credentials.
     queueRequestVersion.current += 1;
+    deadLetterRequestVersion.current += 1;
     setQueueHealth(null);
     setQueueError("");
     setQueueBusy(false);
+    setDeadLetterPage(null);
+    setDeadLetterError("");
+    setDeadLetterBusy(false);
   }, [tenant, token, accessToken]);
 
   async function loadQueueHealth() {
@@ -430,6 +454,86 @@ function App() {
       }
     } finally {
       if (queueRequestVersion.current === requestVersion) setQueueBusy(false);
+    }
+  }
+
+  async function loadDeadLetters(more = false) {
+    if (!authenticated || deadLetterBusy) return;
+    const cursor = more ? deadLetterPage?.next_cursor : 0;
+    if (cursor === null || cursor === undefined) return;
+    const requestVersion = ++deadLetterRequestVersion.current;
+    setDeadLetterBusy(true);
+    setDeadLetterError("");
+    try {
+      const params = new URLSearchParams({
+        cursor: String(cursor), limit: "25",
+      });
+      const response = await fetch(
+        "/v1/operations/dead-letters?" + params.toString(),
+        { headers: headers() },
+      );
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(result));
+      const page = result as ExperienceDeadLetterPage;
+      if (deadLetterRequestVersion.current === requestVersion) {
+        setDeadLetterPage(previous => ({
+          ...page,
+          records: more
+            ? [...(previous?.records ?? []), ...page.records]
+            : page.records,
+        }));
+      }
+    } catch (cause) {
+      if (deadLetterRequestVersion.current === requestVersion) {
+        setDeadLetterError(
+          cause instanceof Error ? cause.message : "Dead-letter history unavailable"
+        );
+      }
+    } finally {
+      if (deadLetterRequestVersion.current === requestVersion) {
+        setDeadLetterBusy(false);
+      }
+    }
+  }
+
+  async function acknowledgeDeadLetter(record: ExperienceDeadLetter) {
+    if (!canOperate || deadLetterBusy || record.reviewed) return;
+    const requestVersion = ++deadLetterRequestVersion.current;
+    setDeadLetterBusy(true);
+    setDeadLetterError("");
+    try {
+      const response = await fetch(
+        "/v1/operations/dead-letters/" + record.id + "/acknowledge",
+        { method: "POST", headers: {
+          ...headers(), "If-Match": String(record.attempts),
+        }},
+      );
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(result));
+      if (deadLetterRequestVersion.current === requestVersion) {
+        setDeadLetterPage(previous => previous && ({
+          ...previous,
+          records: previous.records.map(item =>
+            item.id === record.id ? { ...item, reviewed: true } : item
+          ),
+        }));
+        setQueueHealth(previous => previous && ({
+          ...previous,
+          experience_dead_letters_unreviewed: Math.max(
+            0, previous.experience_dead_letters_unreviewed - 1
+          ),
+        }));
+      }
+    } catch (cause) {
+      if (deadLetterRequestVersion.current === requestVersion) {
+        setDeadLetterError(
+          cause instanceof Error ? cause.message : "Review acknowledgment failed"
+        );
+      }
+    } finally {
+      if (deadLetterRequestVersion.current === requestVersion) {
+        setDeadLetterBusy(false);
+      }
     }
   }
 
@@ -897,10 +1001,52 @@ function App() {
           <p><strong>{queueHealth.active_incidents}</strong> active incidents · <strong>{queueHealth.pending_outbox}</strong> pending outbox intents · <strong>{queueHealth.unresolved_effects}</strong> unresolved effects</p>
           <p className="muted">Pending age p95: {queueHealth.pending_age_p95_seconds}s · Oldest pending: {queueHealth.oldest_pending_seconds}s · Oldest active phase: {queueHealth.oldest_active_phase_seconds}s</p>
           <p className="muted">Maximum pending delivery attempts: {queueHealth.max_pending_attempts} · Stuck threshold: {queueHealth.stuck_after_seconds}s</p>
+          {queueHealth.experience_dead_letters_unreviewed > 0 &&
+            <p role="alert" className="error">
+              {queueHealth.experience_dead_letters_unreviewed} experience projection dead letter(s) need operator review. These are excluded from the pending queue.
+            </p>}
           {(queueHealth.aged_active_incidents > 0 || queueHealth.aged_pending_outbox > 0 || queueHealth.aged_unresolved_effects > 0) &&
             <p role="alert" className="error">
               Backlog requires review: {queueHealth.aged_active_incidents} aged active incidents, {queueHealth.aged_pending_outbox} aged outbox intents and {queueHealth.aged_unresolved_effects} aged unresolved effects. Inspect receipts and worker health before admitting more work.
             </p>}
+        </div>}
+      </section>
+      <section className="incident-history" aria-label="Experience projection dead-letter review">
+        <div className="history-header">
+          <h2>Experience projection review</h2>
+          <button type="button" className="secondary"
+            disabled={!authenticated || deadLetterBusy}
+            onClick={() => void loadDeadLetters()}>
+            {deadLetterBusy ? "Loading..." : "Load dead letters"}
+          </button>
+        </div>
+        <p className="muted">
+          Acknowledging a dead letter records review only. It never retries a
+          projection, approves recovery, or changes a target.
+        </p>
+        {deadLetterError && <p className="error" role="alert">{deadLetterError}</p>}
+        {deadLetterPage && <div aria-live="polite">
+          {deadLetterPage.records.length === 0 &&
+            <p className="muted">No experience dead letters for this tenant.</p>}
+          {deadLetterPage.records.map(record =>
+            <div className="audit-item" key={record.id}>
+              <strong>Projection #{record.id} — {record.code.replaceAll("_", " ")}</strong>
+              <span>Incident {record.incident_id} · {record.attempts} attempt(s)</span>
+              <span>{record.reviewed ? "Reviewed" : "Needs review"}</span>
+              {canOperate && !record.reviewed &&
+                <button type="button" className="secondary"
+                  disabled={deadLetterBusy}
+                  onClick={() => void acknowledgeDeadLetter(record)}>
+                  Acknowledge review
+                </button>}
+            </div>
+          )}
+          {deadLetterPage.next_cursor !== null &&
+            <button type="button" className="secondary"
+              disabled={deadLetterBusy}
+              onClick={() => void loadDeadLetters(true)}>
+              Load more dead letters
+            </button>}
         </div>}
       </section>
       <section className="incident-history">
