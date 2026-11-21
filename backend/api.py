@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth import (
@@ -97,11 +98,7 @@ async def create_incident(
         raise HTTPException(409, str(exc)) from exc
     except RateLimited as exc:
         raise HTTPException(429, str(exc), headers={"Retry-After": "60"}) from exc
-    except Exception as exc:
-        from sqlalchemy.exc import SQLAlchemyError
-
-        if not isinstance(exc, SQLAlchemyError):
-            raise
+    except SQLAlchemyError as exc:
         # Failure to commit admission/outbox is not a 202 acceptance.
         # Do not echo SQL statements, credentials, or DSNs in the error body.
         raise HTTPException(
