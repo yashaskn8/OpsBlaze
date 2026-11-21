@@ -7,12 +7,11 @@ A LAB_PASS report is not production enablement or external adapter certification
 import asyncio
 import hashlib
 import json
-from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import (
