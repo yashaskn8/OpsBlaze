@@ -12,7 +12,7 @@ from backend.models import WorkerHeartbeat
 from backend.settings import get_settings
 
 log = logging.getLogger(__name__)
-REQUIRED_ROLES = frozenset({"dispatcher", "incident_worker"})
+REQUIRED_ROLES = frozenset({"dispatcher", "incident_worker", "experience_projector"})
 
 
 def utc(value: datetime) -> datetime:
@@ -66,12 +66,16 @@ async def present_workers(
     )
 
 
-async def heartbeat_loop(role: str) -> None:
+async def heartbeat_loop(
+    role: str, sessions: async_sessionmaker[AsyncSession] | None = None,
+) -> None:
     if role not in REQUIRED_ROLES:
         raise ValueError("unsupported worker role")
     while True:
         try:
-            await record_heartbeat(get_session_maker(), role)
+            await record_heartbeat(
+                sessions if sessions is not None else get_session_maker(), role,
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
