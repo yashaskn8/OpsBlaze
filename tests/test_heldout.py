@@ -1,7 +1,5 @@
 """E5 offline holdout runner tests; synthetic data cannot certify production."""
 
-import json
-
 import pytest
 
 from backend.evaluation.heldout import (
