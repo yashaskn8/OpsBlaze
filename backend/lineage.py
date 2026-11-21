@@ -210,7 +210,9 @@ async def build_lineage(
                 or grant.plan_digest != plan.plan_digest
                 or grant.scope != plan.action_id
                 or grant.decision != "APPROVE"
-                or grant.state not in {"APPROVED", "CONSUMED"}
+                or grant.state != "CONSUMED"
+                or plan.status != "APPROVED"
+                or plan.decided_by != grant.reviewer_id
             ):
                 missing.append({
                     "source": f"effect:{effect.id}",
