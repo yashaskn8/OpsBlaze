@@ -1,7 +1,6 @@
 """B1 lost-ack replay against native Temporal, with a durable outbox row."""
 
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
