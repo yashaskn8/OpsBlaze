@@ -182,9 +182,17 @@ async def dispatch_once(
                 entry_id, intent[5], code or "RETRYABLE",
             )
             if code is not None:
-                await mark_projection_dead_letter(
-                    sessions, entry_id, intent[1], intent[5], code,
-                )
+                try:
+                    await mark_projection_dead_letter(
+                        sessions, entry_id, intent[1], intent[5], code,
+                    )
+                except Exception:
+                    # A store outage must not terminate the dispatcher. The
+                    # still-pending leased intent can retry on DB recovery.
+                    log.error(
+                        "E1 dead-letter ledger unavailable: intent_id=%s",
+                        entry_id,
+                    )
         else:
             log.exception("Outbox dispatch failed: intent_id=%s", entry_id)
         # Only local projection is dead-lettered; recovery signals retain retry.
