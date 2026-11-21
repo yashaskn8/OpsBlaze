@@ -12,8 +12,12 @@ For a tenant-authorized incident, `GET /v1/incidents/{id}/lineage` returns
 bounded durable nodes, typed causal links, explicit missing references and
 `truncated_sources`. If any source is truncated, the React workbench offers
 additional read-only records through `GET /v1/incidents/{id}/lineage/records?kind=hypothesis&cursor=<uuid>&limit=50`.
-Pages contain only UUID, type and status metadata; they do **not** invent
-missing OpenTelemetry spans or complete graph edges.
+Pages contain only UUID, type/status metadata, independently checked
+causal links, and explicit missing or out-of-scope reference markers.
+Relationships are capped at 200 references per page with an explicit
+truncation warning. The explorer does **not** invent missing OpenTelemetry
+spans, claim that a plan digest alone authorizes an effect, or certify
+a complete cross-service trace.
 
 Operators can export their tenant's **metadata-only** privacy ledger from
 `GET /v1/privacy/export?kind=consents&limit=50` or
