@@ -869,7 +869,7 @@ function App() {
           {(queueHealth.aged_active_incidents > 0 || queueHealth.aged_pending_outbox > 0 || queueHealth.aged_unresolved_effects > 0) &&
             <p role="alert" className="error">
               Backlog requires review: {queueHealth.aged_active_incidents} aged active incidents, {queueHealth.aged_pending_outbox} aged outbox intents and {queueHealth.aged_unresolved_effects} aged unresolved effects. Inspect receipts and worker health before admitting more work.
-            </p>
+            </p>}
         </div>}
       </section>
       <section className="incident-history">
