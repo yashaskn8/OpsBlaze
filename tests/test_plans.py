@@ -48,7 +48,9 @@ async def test_approval_is_version_bound_and_simulator_only(proposed_lab):
         target = await session.get(SimulatorTarget, ("a", "checkout"))
         assert target.healthy and target.version == 4
         intents = list((await session.scalars(select(OutboxEntry))).all())
-        assert [row.kind for row in intents] == ["START_WORKFLOW", "PLAN_DECIDED"]
+        assert [row.kind for row in intents] == [
+            "START_WORKFLOW", "PLAN_DECIDED", "PROJECT_EXPERIENCE",
+        ]
 
 
 @pytest.mark.asyncio
