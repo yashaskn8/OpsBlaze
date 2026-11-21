@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.adapters.simulator import SimulatorAdapter, observed_healthy_at_version
 from backend.models import EffectReceipt, Incident, OutboxEntry, OutcomeRevision
 from backend.learning.invalidation import invalidate_outcome_dependents
+from backend.telemetry import trace_operation
 
 
 class OutcomeConflict(Exception):
@@ -61,7 +62,8 @@ async def adjudicate_simulator(
         effect_version = receipt.observed_version
         effect_state = receipt.state
 
-    observation = await adapter.observe(tenant_id, target_id)
+    with trace_operation("opsblaze.outcome.observe", incident_id=incident_id):
+        observation = await adapter.observe(tenant_id, target_id)
     verified = (
         effect_state == "VERIFIED"
         and observed_healthy_at_version(observation, effect_version)
