@@ -195,32 +195,48 @@ async def build_lineage(
     }
     grants_by_plan = {grant.plan_id: grant for grant in grants}
     for effect in records["effect"]:
+        source = f"effect:{effect.id}"
         plan = plans_by_digest.get(effect.plan_digest)
-        if plan is None:
+        if (
+            plan is None
+            or plan.incident_id != effect.incident_id
+            or plan.target_id != effect.target_id
+            or plan.expected_version != effect.expected_version
+            or plan.action_id != "SIMULATOR_MARK_HEALTHY"
+            or effect.adapter_id != "simulator"
+        ):
             missing.append({
-                "source": f"effect:{effect.id}",
-                "missing_target": f"plan-digest:{effect.plan_digest}",
-                "relation": "AUTHORIZED_BY",
+                "source": source,
+                "missing_target": f"matching-plan-digest:{effect.plan_digest}",
+                "relation": "REFERENCES_PLAN",
             })
-        else:
-            edge(f"effect:{effect.id}", f"plan:{plan.id}", "AUTHORIZED_BY")
-            grant = grants_by_plan.get(plan.id)
-            if (
-                grant is None
-                or grant.plan_digest != plan.plan_digest
-                or grant.scope != plan.action_id
-                or grant.decision != "APPROVE"
-                or grant.state != "CONSUMED"
-                or plan.status != "APPROVED"
-                or plan.decided_by != grant.reviewer_id
-            ):
-                missing.append({
-                    "source": f"effect:{effect.id}",
-                    "missing_target": f"valid-approval-for-plan:{plan.id}",
-                    "relation": "AUTHORIZED_BY_GRANT",
-                })
-            else:
-                edge(f"effect:{effect.id}", f"approval:{grant.id}", "AUTHORIZED_BY_GRANT")
+            continue
+        if effect.state == "PREPARED" and effect.attempt_count == 0:
+            edge(source, f"plan:{plan.id}", "PREPARED_FOR")
+            continue
+        grant = grants_by_plan.get(plan.id)
+        if (
+            effect.attempt_count != 1
+            or effect.state == "PREPARED"
+            or grant is None
+            or grant.plan_digest != plan.plan_digest
+            or grant.scope != plan.action_id
+            or grant.decision != "APPROVE"
+            or grant.state != "CONSUMED"
+            or plan.status != "APPROVED"
+            or plan.decided_by != grant.reviewer_id
+        ):
+            # The digest still links a forensic plan reference, but that
+            # reference must not be displayed as valid effect authority.
+            edge(source, f"plan:{plan.id}", "REFERENCES_PLAN")
+            missing.append({
+                "source": source,
+                "missing_target": f"valid-approval-for-plan:{plan.id}",
+                "relation": "AUTHORIZED_BY_GRANT",
+            })
+            continue
+        edge(source, f"plan:{plan.id}", "AUTHORIZED_BY")
+        edge(source, f"approval:{grant.id}", "AUTHORIZED_BY_GRANT")
 
     for outcome in records["outcome"]:
         if outcome.effect_id is not None:
