@@ -6,7 +6,7 @@ import pytest
 
 from backend.experiences import (
     ConsentConflict, capture_capsule, export_privacy_page, list_capsules,
-    quarantine_capsule, set_consent,
+    quarantine_capsule, read_capsules_page, set_consent,
 )
 from backend.models import ExperienceCapsule, OutcomeRevision
 from backend.schemas import IncidentCreate
@@ -294,3 +294,127 @@ async def test_redteam_quarantine_scrubs_capsule_and_immediately_revokes_lessons
     async with sessions_fixture() as session:
         with pytest.raises(ConsentConflict, match="stale"):
             await capture_capsule(session, "t", incident.id)
+
+
+@pytest.mark.asyncio
+async def test_redteam_experience_cursor_pages_skip_forged_rows_without_stalling(
+    sessions_fixture,
+):
+    own = []
+    for index in range(3):
+        async with sessions_fixture() as session:
+            incident = await admit_incident(
+                session, "alpha", f"page-capsule-{index}",
+                IncidentCreate(target_id=f"checkout-{index}"),
+            )
+        async with sessions_fixture() as session:
+            await set_consent(session, "alpha", incident.id, 0, True)
+        async with sessions_fixture() as session:
+            async with session.begin():
+                session.add(OutcomeRevision(
+                    id=uuid4(), tenant_id="alpha", incident_id=incident.id,
+                    revision=1, label="VERIFIED", effect_id=None,
+                    witness_source="SIMULATOR_WITNESS", observed_version=1,
+                    reason="synthetic verified source",
+                ))
+        async with sessions_fixture() as session:
+            own.append(await capture_capsule(session, "alpha", incident.id))
+
+    async with sessions_fixture() as session:
+        foreign = await admit_incident(
+            session, "beta", "another-tenant",
+            IncidentCreate(target_id="private-target"),
+        )
+    async with sessions_fixture() as session:
+        await set_consent(session, "beta", foreign.id, 0, True)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutcomeRevision(
+                id=uuid4(), tenant_id="beta", incident_id=foreign.id,
+                revision=1, label="VERIFIED", effect_id=None,
+                witness_source="SIMULATOR_WITNESS", observed_version=1,
+                reason="foreign synthetic source",
+            ))
+    async with sessions_fixture() as session:
+        foreign_capsule = await capture_capsule(session, "beta", foreign.id)
+
+    collected = []
+    cursor = None
+    for _ in range(4):
+        async with sessions_fixture() as session:
+            rows, next_cursor = await read_capsules_page(
+                session, "alpha", cursor=cursor, limit=1,
+            )
+            assert len(rows) <= 1
+            collected.extend(row.id for row in rows)
+            if next_cursor is None:
+                break
+            assert next_cursor != str(cursor)
+            cursor = UUID(next_cursor)
+    assert set(collected) == {row.id for row in own}
+    assert foreign_capsule.id not in collected
+
+    forged = min(own, key=lambda row: row.id)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            row = await session.get(ExperienceCapsule, forged.id)
+            row.target_digest = hashlib.sha256(b"alpha:wrong-target").hexdigest()
+    async with sessions_fixture() as session:
+        first, advanced = await read_capsules_page(
+            session, "alpha", limit=1,
+        )
+        assert first == [] and advanced == str(forged.id)
+    async with sessions_fixture() as session:
+        next_rows, next_cursor = await read_capsules_page(
+            session, "alpha", cursor=UUID(advanced), limit=1,
+        )
+        assert len(next_rows) == 1
+        assert next_rows[0].id != forged.id
+        assert next_cursor is not None
+
+    async with sessions_fixture() as session:
+        with pytest.raises(ValueError):
+            await read_capsules_page(session, "alpha", limit=0)
+        with pytest.raises(ValueError):
+            await read_capsules_page(session, "alpha", limit=51)
+
+
+@pytest.mark.asyncio
+async def test_redteam_experiences_http_cursor_and_tenant_scope(sessions_fixture):
+    from httpx import ASGITransport, AsyncClient
+    from backend.api import app
+    from backend.database import get_session
+    from backend.settings import Settings, get_settings
+
+    async def override_session():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        local_token="experience-cursor-test",
+    )
+    headers = {
+        "X-Tenant-Id": "alpha", "X-OpsBlaze-Token": "experience-cursor-test",
+    }
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+        ) as client:
+            ok = await client.get(
+                "/v1/experiences", params={"limit": 1}, headers=headers,
+            )
+            assert ok.status_code == 200
+            assert ok.json() == {
+                "records": [], "next_cursor": None, "redacted": True,
+            }
+            for params in (
+                {"limit": 0}, {"limit": 51}, {"cursor": "invalid-uuid"},
+            ):
+                denied = await client.get(
+                    "/v1/experiences", params=params, headers=headers,
+                )
+                assert denied.status_code == 422
+            assert (await client.get("/v1/experiences")).status_code == 422
+    finally:
+        app.dependency_overrides.clear()
