@@ -5,13 +5,13 @@ import logging
 from contextlib import suppress
 from uuid import UUID
 
-  from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from backend.database import get_session_maker
- from backend.settings import get_settings
+from backend.settings import get_settings
 from backend.telemetry import initialize_tracing, trace_operation
 from backend.temporal_connection import connect_temporal
 from backend.workflows.incident import IncidentWorkflow
