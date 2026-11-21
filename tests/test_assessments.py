@@ -7,7 +7,6 @@ import pytest
 from sqlalchemy import select
 
 from backend.investigator.abstain import assess_decision
-from backend.investigator.baseline import inspect
 from backend.models import (
     DecisionAssessment, Evidence, ProbeCall, SimulatorTarget,
 )
