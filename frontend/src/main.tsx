@@ -81,6 +81,9 @@ type LineagePage = {
   incident_id: string;
   kind: string;
   nodes: Lineage["nodes"];
+  edges: Lineage["edges"];
+  missing_refs: Lineage["missing_refs"];
+  links_truncated: boolean;
   next_cursor: string | null;
 };
 
@@ -378,6 +381,13 @@ function App() {
             [kind]: {
               ...page,
               nodes: [...(pages[kind]?.nodes ?? []), ...page.nodes],
+              edges: [...(pages[kind]?.edges ?? []), ...page.edges],
+              missing_refs: [
+                ...(pages[kind]?.missing_refs ?? []), ...page.missing_refs,
+              ],
+              links_truncated: Boolean(
+                pages[kind]?.links_truncated || page.links_truncated
+              ),
             },
           },
         };
@@ -700,6 +710,12 @@ function App() {
     }
   }
 
+  const additionalLineagePages = incident && lineagePages.incidentId === incident.id
+    ? Object.values(lineagePages.pages) : [];
+  const allLineageEdges = lineage
+    ? [...lineage.edges, ...additionalLineagePages.flatMap(page => page.edges)]
+    : [];
+
   return (
     <main>
       <header><span className="mark">OB</span><div><strong>OpsBlaze</strong><small>Controlled incident recovery lab</small></div></header>
@@ -829,6 +845,10 @@ function App() {
               </>}
               {lineage.missing_refs.length > 0 &&
                 <p className="error">{lineage.missing_refs.length} missing durable link(s). Do not infer the omitted evidence.</p>}
+              {additionalLineagePages.some(page => page.links_truncated) &&
+                <p className="error">One or more record pages have over 200 references. Some links were intentionally omitted; this is not a complete trace.</p>}
+              {additionalLineagePages.some(page => page.missing_refs.length > 0) &&
+                <p className="error">Additional record pages contain {additionalLineagePages.reduce((n, page) => n + page.missing_refs.length, 0)} out-of-scope or missing references.</p>}
               <div className="trace-scroll">
                 {lineage.nodes.map(node => <div className="trace-node" key={node.id}>
                   <strong>{node.kind}</strong><span>{node.status}</span>
@@ -840,6 +860,17 @@ function App() {
                     <strong>{node.kind} (additional)</strong><span>{node.status}</span>
                     <code>{node.id.split(":")[1]}</code>
                   </div>)}
+              </div>
+              <h3>Causal links ({allLineageEdges.length})</h3>
+              {allLineageEdges.length > 80 &&
+                <p className="muted">Showing 80 of {allLineageEdges.length} links. Page records remain available above.</p>}
+              <div className="trace-scroll">
+                {allLineageEdges.slice(0, 80).map((edge, index) =>
+                  <div className="trace-node" key={edge.from + edge.to + edge.relation + index}>
+                    <strong>{edge.relation.replaceAll("_", " ")}</strong>
+                    <code>{edge.from} → {edge.to}</code>
+                  </div>
+                )}
               </div>
             </div>}
             {effects.length > 0 && <div className="audit">
