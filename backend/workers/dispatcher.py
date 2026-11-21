@@ -141,7 +141,19 @@ async def dispatch_once(
         return False
     entry_id = intent[0]
     try:
-        await deliver_intent(client, intent)
+        if intent[3] == "PROJECT_EXPERIENCE":
+            from backend.workers.experience_projector import project_experience_outbox
+
+            result = await project_experience_outbox(
+                sessions, intent[1], intent[2], intent[4],
+            )
+            if result != "CAPTURED":
+                log.info(
+                    "E1 projection intentionally skipped: intent_id=%s state=%s",
+                    entry_id, result,
+                )
+        else:
+            await deliver_intent(client, intent)
     except Exception:
         log.exception("Outbox dispatch failed: intent_id=%s", entry_id)
         # The lease ensures bounded retry; never drop the intent.
