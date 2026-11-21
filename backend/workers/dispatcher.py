@@ -169,17 +169,24 @@ async def dispatch_once(
             else:
                 await deliver_intent(client, intent)
     except Exception as exc:
-        log.exception("Outbox dispatch failed: intent_id=%s", entry_id)
         if intent[3] == "PROJECT_EXPERIENCE":
+            # Stored events and operator diagnostics use fixed codes only.
+            # Never log arbitrary exception strings from a private source.
             code = (
                 "INVALID_PAYLOAD" if isinstance(exc, InvalidProjectionIntent)
                 else "RETRY_EXHAUSTED"
                 if intent[5] >= MAX_PROJECTOR_ATTEMPTS else None
             )
+            log.warning(
+                "E1 projector failed: intent_id=%s attempt=%s code=%s",
+                entry_id, intent[5], code or "RETRYABLE",
+            )
             if code is not None:
                 await mark_projection_dead_letter(
                     sessions, entry_id, intent[1], intent[5], code,
                 )
+        else:
+            log.exception("Outbox dispatch failed: intent_id=%s", entry_id)
         # Only local projection is dead-lettered; recovery signals retain retry.
         return True
     async with sessions() as session:
