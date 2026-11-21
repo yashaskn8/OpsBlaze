@@ -356,7 +356,6 @@ async def test_forbidden_probe_after_approval_blocks_new_effect(proposed_lab):
 
 @pytest.mark.asyncio
 async def test_redteam_revoked_creator_cannot_dispatch_preapproved_effect(proposed_lab):
-    from backend.models import RevokedIdentity
     from backend.security.revocation import revoke_identity
 
     sessions, incident_id, plan_id = proposed_lab
