@@ -77,3 +77,33 @@ async def test_redteam_age_monitor_retries_after_database_failure(monkeypatch, c
     assert len(attempts) == 2
     assert "B4 state-age scan failed" in caplog.text
     assert "synthetic database outage" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_redteam_stuck_monitor_never_reports_100_as_the_total_of_101(
+    sessions_fixture, monkeypatch, caplog,
+):
+    from uuid import uuid4
+
+    monkeypatch.setattr(
+        "backend.workers.state_age.get_session_maker", lambda: sessions_fixture,
+    )
+    monkeypatch.setattr(
+        "backend.workers.state_age.get_settings",
+        lambda: Settings(stuck_after_seconds=300),
+    )
+    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add_all([
+                Incident(
+                    id=uuid4(), tenant_id="t", client_key=f"old-{index}",
+                    request_sha256="a" * 64, target_id="checkout",
+                    status_projection="EXECUTING", status_version=1,
+                    phase_entered_at=old,
+                )
+                for index in range(101)
+            ])
+    assert await scan_stuck() == 101
+    assert "incidents=1 outbox=0" in caplog.text
+    assert caplog.text.count("Incident exceeded phase-age threshold") == 100
