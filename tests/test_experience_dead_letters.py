@@ -241,7 +241,7 @@ async def test_redteam_terminal_ledger_outage_preserves_unacknowledged_work(
             assert row.delivered_at is None and row.dead_lettered_at is None
             row.available_at = datetime.now(timezone.utc) - timedelta(seconds=1)
     assert "private database DSN" not in caplog.text
-    assert "dead-letter ledger unavailable" in caplog.text
+    assert "Experience dead-letter store unavailable" in caplog.text
 
     # When the store is healthy again, the very same poison is terminalized.
     assert await run_projector_once(sessions)
