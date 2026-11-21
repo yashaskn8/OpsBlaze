@@ -210,6 +210,45 @@ async def test_redteam_approval_grant_is_part_of_effect_causal_chain(sessions_fi
             for e in broken["edges"]
         )
 
+    # Merely matching a plan digest is not evidence of dispatch authority.
+    for field, value in (
+        ("target_id", "another-target"),
+        ("expected_version", 99),
+        ("adapter_id", "unqualified-external"),
+        ("attempt_count", 0),
+        ("state", "PREPARED"),
+    ):
+        async with sessions_fixture() as session:
+            async with session.begin():
+                grant = await session.get(ApprovalGrant, grant_id)
+                grant.state = "CONSUMED"
+                grant.plan_digest = digest
+                grant.reviewer_id = "DEV_REVIEWER_CREDENTIAL"
+                receipt = await session.get(EffectReceipt, effect_id)
+                receipt.target_id = "checkout"
+                receipt.expected_version = 1
+                receipt.adapter_id = "simulator"
+                receipt.attempt_count = 1
+                receipt.state = "SENT"
+                setattr(receipt, field, value)
+        async with sessions_fixture() as session:
+            graph = await build_lineage(session, "t", incident.id)
+        effect_edges = [
+            edge["relation"] for edge in graph["edges"]
+            if edge["from"] == f"effect:{effect_id}"
+        ]
+        assert "AUTHORIZED_BY" not in effect_edges
+        assert "AUTHORIZED_BY_GRANT" not in effect_edges
+        if field == "state":
+            assert "PREPARED_FOR" in effect_edges
+        else:
+            assert graph["projection"] == "PARTIAL_LINKS"
+            assert any(
+                item["source"] == f"effect:{effect_id}"
+                for item in graph["missing_refs"]
+            )
+
+
 
 @pytest.mark.asyncio
 async def test_redteam_lineage_page_api_rejects_cross_tenant_and_unbounded_queries(
