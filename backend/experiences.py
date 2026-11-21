@@ -132,6 +132,7 @@ async def set_consent(
 
 async def capture_capsule(
     session: AsyncSession, tenant_id: str, incident_id: UUID,
+    expected_outcome_id: UUID | None = None,
 ) -> ExperienceCapsule | None:
     now = datetime.now(timezone.utc)
     retention = get_settings().experience_retention_days
@@ -168,6 +169,8 @@ async def capture_capsule(
         )
         if outcome is None or outcome.label != "VERIFIED":
             raise ConsentConflict("independently verified undisputed outcome required")
+        if expected_outcome_id is not None and outcome.id != expected_outcome_id:
+            raise ConsentConflict("source outcome was superseded before projection")
         existing = await session.scalar(
             select(ExperienceCapsule).where(
                 ExperienceCapsule.incident_id == incident_id,
