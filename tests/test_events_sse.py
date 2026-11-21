@@ -264,3 +264,70 @@ async def test_redteam_sse_expires_between_frames_even_inside_one_event_batch(
     )
     with pytest.raises(StopAsyncIteration):
         await already_expired.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_redteam_revocation_blocks_second_prefetched_sse_frame(
+    sessions_fixture,
+):
+    from datetime import datetime, timezone
+    from backend.models import RevokedIdentity
+
+    actor = "oidc:" + "8" * 32
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "stream-revoke-middle",
+            IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(UIEvent(
+                tenant_id="alpha", incident_id=incident.id,
+                kind="FOLLOW_UP", projection_version=2,
+            ))
+
+    async def connected():
+        return False
+
+    stream = stream_incident_events(
+        sessions_fixture, "alpha", incident.id, 0, connected,
+        poll_seconds=0, max_ticks=1, actor_id=actor,
+    )
+    first = await stream.__anext__()
+    assert '"kind":"ADMITTED"' in first
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(RevokedIdentity(
+                tenant_id="alpha", actor_id=actor,
+                revoked_at=datetime.now(timezone.utc),
+                revoked_by="oidc:" + "9" * 32,
+                reason="mid-batch revocation",
+            ))
+    with pytest.raises(StopAsyncIteration):
+        await stream.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_redteam_sse_denylist_outage_never_fails_open(
+    sessions_fixture, monkeypatch,
+):
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "revoke-store-offline",
+            IncidentCreate(target_id="checkout"),
+        )
+    async def unavailable(*args, **kwargs):
+        raise ConnectionError("revocation storage unavailable")
+
+    async def connected():
+        return False
+
+    monkeypatch.setattr(
+        "backend.events.is_stream_identity_revoked", unavailable,
+    )
+    stream = stream_incident_events(
+        sessions_fixture, "alpha", incident.id, 0, connected,
+        poll_seconds=0, max_ticks=1, actor_id="oidc:" + "a" * 32,
+    )
+    with pytest.raises(StopAsyncIteration):
+        await stream.__anext__()
