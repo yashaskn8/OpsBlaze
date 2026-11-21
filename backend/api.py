@@ -492,21 +492,29 @@ async def capture_incident_experience(
 
 @app.get("/v1/experiences")
 async def tenant_experiences(
+    cursor: UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=50),
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
-) -> list[dict]:
-    from backend.experiences import list_capsules
+) -> dict:
+    from backend.experiences import read_capsules_page
 
-    rows = await list_capsules(session, tenant_id)
-    return [
-        {"id": str(row.id), "incident_id": str(row.incident_id),
-         "outcome_revision_id": str(row.outcome_revision_id),
-         "consent_epoch": row.consent_epoch,
-         "target_digest": row.target_digest,
-         "evidence_ids": row.evidence_ids,
-         "expires_at": row.expires_at.isoformat()}
-        for row in rows
-    ]
+    rows, next_cursor = await read_capsules_page(
+        session, tenant_id, cursor=cursor, limit=limit,
+    )
+    return {
+        "records": [
+            {"id": str(row.id), "incident_id": str(row.incident_id),
+             "outcome_revision_id": str(row.outcome_revision_id),
+             "consent_epoch": row.consent_epoch,
+             "target_digest": row.target_digest,
+             "evidence_ids": row.evidence_ids,
+             "expires_at": row.expires_at.isoformat()}
+            for row in rows
+        ],
+        "next_cursor": next_cursor,
+        "redacted": True,
+    }
 
 
 @app.post("/v1/experiences/{capsule_id}/quarantine", status_code=202)
