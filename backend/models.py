@@ -75,6 +75,7 @@ class OutboxEntry(Base):
             "ix_outbox_dead_letter", "dead_lettered_at", "id",
             postgresql_where=text("dead_lettered_at IS NOT NULL"),
         ),
+        Index("uq_outbox_redrive_source", "redrive_source_id", unique=True),
     )
 
     id: Mapped[int] = mapped_column(
@@ -95,6 +96,11 @@ class OutboxEntry(Base):
     dead_letter_code: Mapped[str | None] = mapped_column(String(32))
     dead_letter_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     dead_letter_reviewed_by: Mapped[str | None] = mapped_column(String(48))
+    redrive_source_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("outbox.id", ondelete="RESTRICT"),
+    )
+    redrive_authorized_by: Mapped[str | None] = mapped_column(String(48))
+    redrive_reason: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
