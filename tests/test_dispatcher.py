@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -143,3 +144,59 @@ async def test_redteam_poisoned_approval_outbox_cannot_signal_temporal(payload):
     with pytest.raises(ValueError):
         await deliver_intent(client, intent)
     client.get_workflow_handle.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_redteam_older_dispatcher_cannot_ack_a_newer_delivery_claim(
+    sessions_fixture,
+):
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    sessions = sessions_fixture
+    async with sessions() as session:
+        incident = await admit_incident(
+            session, "tenant", "stale-ack", IncidentCreate(target_id="synthetic"),
+        )
+    async with sessions() as session:
+        async with session.begin():
+            start = await session.scalar(select(OutboxEntry).where(
+                OutboxEntry.incident_id == incident.id,
+                OutboxEntry.kind == "START_WORKFLOW",
+            ))
+            start.delivered_at = datetime.now(timezone.utc)
+            followup = OutboxEntry(
+                incident_id=incident.id, kind="ACKNOWLEDGE_REVIEW",
+            )
+            session.add(followup)
+            await session.flush()
+            followup_id = followup.id
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_delivery(*args, **kwargs):
+        started.set()
+        await release.wait()
+
+    with patch(
+        "backend.workers.dispatcher.deliver_intent",
+        side_effect=delayed_delivery,
+    ):
+        older_task = asyncio.create_task(dispatch_once(AsyncMock(), sessions))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        async with sessions() as session:
+            async with session.begin():
+                row = await session.get(OutboxEntry, followup_id)
+                assert row.attempt == 1
+                row.available_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        newer_claim = await claim_intent(sessions)
+        assert newer_claim is not None
+        assert newer_claim[0] == followup_id and newer_claim[5] == 2
+        release.set()
+        assert await asyncio.wait_for(older_task, timeout=5)
+
+    async with sessions() as session:
+        row = await session.get(OutboxEntry, followup_id)
+        assert row.attempt == 2
+        assert row.delivered_at is None
