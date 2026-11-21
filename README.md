@@ -79,6 +79,38 @@ Admission returns `429` for capacity or rate limits and `503` with a
 reports a phantom `202` acceptance on that path. This lab does not
 establish throughput, multi-host scheduling latency, or production SLOs.
 
+### Redacted diagnostic traces and synthetic capacity evidence
+
+OpsBlaze emits allowlisted OpenTelemetry spans from durable admission,
+outbox delivery, workflow status projection, independent recovery
+observation, and experience capture. Only `incident_id`, durable outbox
+entry ID, and a fixed component label are attached; **never** raw target
+IDs, tokens, user identifiers, excerpts, prompts or exception text.
+Tracing exports nothing by default. To configure your own collector:
+
+```bash
+python -m pip install -e ".[observability]"
+# Set OPSBLAZE_OTEL_TRACES_ENDPOINT=https://your-trusted-collector/v1/traces
+# Set OPSBLAZE_OTEL_SAMPLE_RATIO=0.1
+```
+
+Production endpoints require HTTPS without embedded URL credentials or
+query tokens; development permits only loopback HTTP. Independently
+deployed collectors, W3C propagation through Temporal, sampling decisions,
+retention, and end-to-end span links are **not yet certified**.
+
+CI also runs a Docker-free **in-process only** latency profile against a
+fresh synthetic SQLite database using FastAPI's ASGI transport. Its raw
+p50/p95/p99 samples are uploaded as the `synthetic-local-capacity` Actions
+artifact. To reproduce without external network traffic:
+
+```bash
+python -m backend.benchmarks.local_capacity --output ci-artifacts/local-capacity.json
+```
+
+These numbers are not PostgreSQL, Temporal, multi-host, or production SLO
+measurements. Real workload capacity and failover campaigns remain open.
+
 ## Setup (no Docker)
 
 Install Python 3.11+, native PostgreSQL and a native Temporal development server. Create a PostgreSQL database and credentials, then configure them in a local untracked `.env` copied from `.env.example`.
