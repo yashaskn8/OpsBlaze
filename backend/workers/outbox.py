@@ -7,6 +7,7 @@ workflow signal; projection itself still waits for prior workflow signals.
 
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+from uuid import UUID
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -97,7 +98,7 @@ async def acknowledge_claim(
             row = await session.scalar(
                 select(OutboxEntry).where(
                     OutboxEntry.id == claim[0],
-                    OutboxEntry.incident_id == claim[2],
+                    OutboxEntry.incident_id == UUID(claim[2]),
                     OutboxEntry.kind == claim[3],
                 ).with_for_update()
             )
