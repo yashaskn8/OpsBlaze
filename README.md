@@ -19,8 +19,11 @@ Operators can export their tenant's **metadata-only** privacy ledger from
 `GET /v1/privacy/export?kind=consents&limit=50` or
 `?kind=capsules&cursor=<uuid>&limit=50`. The result includes durable
 consent and revoked/expired capsule identifiers and status, but no target
-digest, raw probe evidence, token, secret or prompt. It is **not** a full
-personal-data access/export or cross-store/backup erasure certification.
+digest, raw probe evidence, token, secret or prompt. Operators can
+also use `POST /v1/experiences/{id}/quarantine` with the capsule's
+`consent_epoch` in `If-Match` to invalidate suspect memory and all derived
+lessons. This is **not** a full personal-data access/export or cross-store/
+backup erasure certification.
 
 
 ## Setup (no Docker)
