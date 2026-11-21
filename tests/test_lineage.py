@@ -171,6 +171,12 @@ async def test_redteam_approval_grant_is_part_of_effect_causal_chain(sessions_fi
             ))
     async with sessions_fixture() as session:
         graph = await build_lineage(session, "t", incident.id)
+        page = await read_lineage_page(session, "t", incident.id, "effect")
+    assert {
+        edge["relation"] for edge in page["edges"]
+    } >= {"BELONGS_TO", "AUTHORIZED_BY", "AUTHORIZED_BY_GRANT"}
+    assert page["missing_refs"] == []
+    assert page["links_truncated"] is False
     assert graph["projection"] == "COMPLETE"
     assert any(n["id"] == f"approval:{grant_id}" for n in graph["nodes"])
     assert {
@@ -236,6 +242,11 @@ async def test_redteam_approval_grant_is_part_of_effect_causal_chain(sessions_fi
                     receipt.attempt_count = 0
         async with sessions_fixture() as session:
             graph = await build_lineage(session, "t", incident.id)
+            page = await read_lineage_page(session, "t", incident.id, "effect")
+        assert not any(
+            edge["relation"] in {"AUTHORIZED_BY", "AUTHORIZED_BY_GRANT"}
+            for edge in page["edges"]
+        )
         effect_edges = [
             edge["relation"] for edge in graph["edges"]
             if edge["from"] == f"effect:{effect_id}"
@@ -250,6 +261,80 @@ async def test_redteam_approval_grant_is_part_of_effect_causal_chain(sessions_fi
                 item["source"] == f"effect:{effect_id}"
                 for item in graph["missing_refs"]
             )
+
+
+
+@pytest.mark.asyncio
+async def test_redteam_paginated_lineage_resolves_real_references_without_leaks(
+    sessions_fixture,
+):
+    from datetime import datetime, timezone
+    from backend.models import Evidence
+
+    async with sessions_fixture() as session:
+        own = await admit_incident(
+            session, "alpha", "page-refs-own",
+            IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        foreign = await admit_incident(
+            session, "beta", "page-refs-other",
+            IncidentCreate(target_id="sensitive-service"),
+        )
+    own_evidence_id, foreign_evidence_id = uuid4(), uuid4()
+    now = datetime.now(timezone.utc)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            for tenant, incident_id, evidence_id, target in [
+                ("alpha", own.id, own_evidence_id, "checkout"),
+                ("beta", foreign.id, foreign_evidence_id, "sensitive-service"),
+            ]:
+                session.add(Evidence(
+                    id=evidence_id, tenant_id=tenant, incident_id=incident_id,
+                    target_id=target, source="simulator.health",
+                    source_version="simulator-v1", target_version=1,
+                    observed_at=now, sha256="e" * 64,
+                    redacted_excerpt='{"healthy":false}',
+                    classification="INTERNAL", validity="VALID",
+                ))
+            session.add(HypothesisStep(
+                id=uuid4(), incident_id=own.id, step_no=1,
+                model_id="deterministic-baseline-v1", prompt_version="none",
+                evidence_ids=[
+                    str(own_evidence_id), str(foreign_evidence_id),
+                    str(uuid4()), "not-a-uuid",
+                ],
+                cause_scores={}, probe_id="simulator.health",
+                decision="ABSTAINED", token_reserved=0, token_used=0,
+            ))
+    async with sessions_fixture() as session:
+        page = await read_lineage_page(
+            session, "alpha", own.id, "hypothesis",
+        )
+        assert len(page["nodes"]) == 1
+        assert page["links_truncated"] is False
+        assert any(
+            edge["relation"] == "CITES"
+            and edge["to"] == f"evidence:{own_evidence_id}"
+            for edge in page["edges"]
+        )
+        assert not any(
+            edge["to"] == f"evidence:{foreign_evidence_id}"
+            for edge in page["edges"]
+        )
+        assert len(page["missing_refs"]) == 3
+        assert str(foreign_evidence_id) not in str(page["missing_refs"])
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            step = await session.scalar(
+                select(HypothesisStep).where(HypothesisStep.incident_id == own.id)
+            )
+            step.evidence_ids = [str(own_evidence_id)] * 205
+    async with sessions_fixture() as session:
+        capped = await read_lineage_page(session, "alpha", own.id, "hypothesis")
+        assert capped["links_truncated"] is True
+        assert len(capped["edges"]) <= 201
 
 
 
