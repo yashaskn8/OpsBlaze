@@ -6,6 +6,7 @@ from temporalio import activity
 
 from backend.database import get_session_maker
 from backend.models import Incident, UIEvent
+from backend.telemetry import trace_operation
 
 
 # A projection is only a cached view of Temporal history. These state guards
@@ -35,29 +36,30 @@ async def project_incident_status(
     except KeyError as exc:
         raise ValueError("unsupported workflow projection") from exc
 
-    async with get_session_maker()() as session:
-        async with session.begin():
-            result = await session.execute(
-                update(Incident)
-                .where(
-                    Incident.id == UUID(incident_id),
-                    Incident.tenant_id == tenant_id,
-                    Incident.status_projection.in_(predecessors),
+    with trace_operation("opsblaze.incident.project", incident_id=UUID(incident_id)):
+        async with get_session_maker()() as session:
+            async with session.begin():
+                result = await session.execute(
+                    update(Incident)
+                    .where(
+                        Incident.id == UUID(incident_id),
+                        Incident.tenant_id == tenant_id,
+                        Incident.status_projection.in_(predecessors),
+                    )
+                    .values(
+                        status_projection=state,
+                        status_version=Incident.status_version + 1,
+                        phase_entered_at=datetime.now(timezone.utc),
+                    )
                 )
-                .values(
-                    status_projection=state,
-                    status_version=Incident.status_version + 1,
-                    phase_entered_at=datetime.now(timezone.utc),
-                )
-            )
-            if result.rowcount == 1:
-                incident = await session.get(Incident, UUID(incident_id))
-                session.add(UIEvent(
-                    tenant_id=tenant_id, incident_id=incident.id,
-                    kind=state, projection_version=incident.status_version,
-                ))
-            # Duplicate deliveries, stale projections and cancellation races
-            # change neither status_version nor the event ledger.
+                if result.rowcount == 1:
+                    incident = await session.get(Incident, UUID(incident_id))
+                    session.add(UIEvent(
+                        tenant_id=tenant_id, incident_id=incident.id,
+                        kind=state, projection_version=incident.status_version,
+                    ))
+                # Duplicate deliveries, stale projections and cancellation races
+                # change neither status_version nor the event ledger.
 
 
 @activity.defn(name="inspect_incident_read_only")
