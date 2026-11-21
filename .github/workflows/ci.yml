@@ -68,6 +68,7 @@ jobs:
       OPSBLAZE_LOCAL_TOKEN: ci-local-token
       OPSBLAZE_REVIEW_TOKEN: ci-separate-reviewer-token
       OPSBLAZE_ENVIRONMENT: development
+      OPSBLAZE_PROJECTOR_DATABASE_URL: postgresql+asyncpg://opsblaze_projector:ci-only-projector@127.0.0.1:5432/opsblaze
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -81,6 +82,9 @@ jobs:
           sudo -u postgres createdb -O opsblaze opsblaze
       - run: python -m pip install -e ".[dev]"
       - run: alembic upgrade head
+      - run: |
+          sudo -u postgres psql -c "CREATE ROLE opsblaze_projector LOGIN NOINHERIT PASSWORD 'ci-only-projector';"
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -d opsblaze -f scripts/projector_grants.sql
       - run: python -m backend.adapters.conformance
       - run: python -m pytest -q -o addopts= -m pg_e2e
       - run: alembic downgrade base
