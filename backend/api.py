@@ -1,7 +1,7 @@
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -846,6 +846,28 @@ async def incident_lineage(
     if lineage is None:
         raise HTTPException(404, "incident not found")
     return lineage
+
+
+@app.get("/v1/incidents/{incident_id}/lineage/records")
+async def incident_lineage_records(
+    incident_id: UUID,
+    kind: Literal[
+        "evidence", "hypothesis", "plan", "effect", "outcome",
+        "experience", "failure", "lesson", "approval",
+    ],
+    cursor: UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.lineage import read_lineage_page
+
+    page = await read_lineage_page(
+        session, tenant_id, incident_id, kind, cursor, limit,
+    )
+    if page is None:
+        raise HTTPException(404, "incident not found")
+    return page
 
 
 @app.get("/v1/incidents/{incident_id}/route")
