@@ -267,7 +267,6 @@ function App() {
       setEvidence([]);
       setEffects([]);
       setLineage(null);
-    setLineagePages({ incidentId: "", pages: {} });
       setLineagePages({ incidentId: "", pages: {} });
       setEvents([]);
     } catch (cause) {
