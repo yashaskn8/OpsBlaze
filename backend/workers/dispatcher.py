@@ -20,6 +20,12 @@ from backend.telemetry import initialize_tracing, trace_operation
 from backend.temporal_connection import connect_temporal
 from backend.workflows.incident import IncidentWorkflow
 from backend.workers.heartbeat import heartbeat_loop
+from backend.workers.dead_letters import (
+    MAX_PROJECTOR_ATTEMPTS, mark_projection_dead_letter,
+)
+from backend.workers.experience_projector import (
+    InvalidProjectionIntent, project_experience_outbox,
+)
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +37,7 @@ def workflow_id(tenant_id: str, incident_id: UUID) -> str:
 async def claim_intent(
     sessions: async_sessionmaker[AsyncSession],
     tenant_filter: str | None = None,
-) -> tuple[int, str, str, str, dict | None] | None:
+) -> tuple[int, str, str, str, dict | None, int] | None:
     now = datetime.now(timezone.utc)
     start = aliased(OutboxEntry)
     older = aliased(OutboxEntry)
@@ -41,6 +47,7 @@ async def claim_intent(
             older.incident_id == OutboxEntry.incident_id,
             older.id < OutboxEntry.id,
             older.delivered_at.is_(None),
+            older.dead_lettered_at.is_(None),
         )
         .correlate(OutboxEntry)
         .exists()
@@ -62,6 +69,7 @@ async def claim_intent(
                 .join(Incident, Incident.id == OutboxEntry.incident_id)
                 .where(
                     OutboxEntry.delivered_at.is_(None),
+                    OutboxEntry.dead_lettered_at.is_(None),
                     OutboxEntry.available_at <= now,
                     # Preserve per-incident signal ordering across parallel
                     # dispatchers, including lost-ack leases and retries.
@@ -85,11 +93,14 @@ async def claim_intent(
             # transaction. After a crash the intent becomes eligible again.
             retry_seconds = min(300, 2 ** min(entry.attempt, 8))
             entry.available_at = now + timedelta(seconds=retry_seconds)
-            return (entry.id, tenant_id, str(entry.incident_id), entry.kind, entry.payload)
+            return (
+                entry.id, tenant_id, str(entry.incident_id),
+                entry.kind, entry.payload, entry.attempt,
+            )
 
 
 async def deliver_intent(client: Client, intent: tuple[int, str, str, str, dict | None]) -> None:
-    _, tenant_id, incident_id, kind, payload = intent
+    _, tenant_id, incident_id, kind, payload = intent[:5]
     wid = workflow_id(tenant_id, UUID(incident_id))
     if kind == "START_WORKFLOW":
         try:
@@ -147,8 +158,6 @@ async def dispatch_once(
             event_id=entry_id,
         ):
             if intent[3] == "PROJECT_EXPERIENCE":
-                from backend.workers.experience_projector import project_experience_outbox
-    
                 result = await project_experience_outbox(
                     sessions, intent[1], intent[2], intent[4],
                 )
@@ -159,9 +168,19 @@ async def dispatch_once(
                     )
             else:
                 await deliver_intent(client, intent)
-    except Exception:
+    except Exception as exc:
         log.exception("Outbox dispatch failed: intent_id=%s", entry_id)
-        # The lease ensures bounded retry; never drop the intent.
+        if intent[3] == "PROJECT_EXPERIENCE":
+            code = (
+                "INVALID_PAYLOAD" if isinstance(exc, InvalidProjectionIntent)
+                else "RETRY_EXHAUSTED"
+                if intent[5] >= MAX_PROJECTOR_ATTEMPTS else None
+            )
+            if code is not None:
+                await mark_projection_dead_letter(
+                    sessions, entry_id, intent[1], intent[5], code,
+                )
+        # Only local projection is dead-lettered; recovery signals retain retry.
         return True
     async with sessions() as session:
         async with session.begin():
