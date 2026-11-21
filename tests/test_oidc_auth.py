@@ -597,3 +597,116 @@ async def test_redteam_projection_dead_letters_require_tenant_and_operator_for_r
         assert stored.dead_letter_reviewed_by is not None
         assert stored.dead_letter_reviewed_by.startswith("oidc:")
         assert stored.incident_id == UUID(str(incident.id))
+
+
+@pytest.mark.asyncio
+async def test_redteam_redrive_requires_prior_operator_review_and_independent_admin(
+    signer, production_client, sessions_fixture,
+):
+    from backend.experiences import set_consent
+    from backend.models import OutboxEntry, OutcomeRevision
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "redrive-oidc",
+            IncidentCreate(target_id="synthetic-only"),
+        )
+    async with sessions_fixture() as session:
+        await set_consent(session, "alpha", incident.id, 0, True)
+    outcome_id = uuid4()
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutcomeRevision(
+                id=outcome_id, tenant_id="alpha", incident_id=incident.id,
+                revision=1, label="VERIFIED", effect_id=None,
+                witness_source="SIMULATOR_WITNESS", observed_version=2,
+                reason="synthetic independent verification",
+            ))
+            source = OutboxEntry(
+                incident_id=incident.id, kind="PROJECT_EXPERIENCE",
+                payload={"outcome_id": str(outcome_id)}, attempt=5,
+                created_at=datetime.now(timezone.utc),
+                dead_lettered_at=datetime.now(timezone.utc),
+                dead_letter_code="RETRY_EXHAUSTED",
+            )
+            session.add(source)
+            await session.flush()
+            entry_id = source.id
+
+    operator = bearer(signer(
+        subject="operator-review", roles=("operator",),
+    ))
+    administrator = bearer(signer(
+        subject="independent-admin", roles=("security_admin",),
+    ))
+    viewer = bearer(signer(roles=("viewer",)))
+    reviewer = bearer(signer(roles=("reviewer",)))
+    combined = bearer(signer(roles=("operator", "security_admin")))
+    foreign = bearer(signer(
+        tenant="beta", roles=("security_admin",),
+    ), tenant="beta")
+    base = f"/v1/operations/dead-letters/{entry_id}"
+    action = {"reason": "STORE_RESTORED"}
+    headers = {"If-Match": "5"}
+
+    for denied in (operator, viewer, reviewer, combined):
+        response = await production_client.post(
+            base + "/redrive", json=action, headers={**denied, **headers},
+        )
+        assert response.status_code == 403
+    assert (await production_client.post(
+        base + "/redrive", json=action,
+        headers={**foreign, **headers},
+    )).status_code == 404
+    assert (await production_client.post(
+        base + "/redrive", json=action,
+        headers={**administrator, **headers},
+    )).status_code == 409  # No operator review yet.
+    for invalid in ({}, {"reason": "UNSAFE"}, {"reason": "STORE_RESTORED", "debug": True}):
+        assert (await production_client.post(
+            base + "/redrive", json=invalid,
+            headers={**administrator, **headers},
+        )).status_code == 422
+
+    assert (await production_client.post(
+        base + "/acknowledge", headers={**operator, **headers},
+    )).status_code == 202
+    assert (await production_client.post(
+        base + "/redrive", json=action, headers={
+            **administrator, "If-Match": "4",
+        },
+    )).status_code == 409
+    successful = await production_client.post(
+        base + "/redrive", json=action,
+        headers={**administrator, **headers},
+    )
+    assert successful.status_code == 202, successful.text
+    child_id = successful.json()["id"]
+    assert successful.json() == {
+        "id": child_id, "source_id": entry_id,
+        "state": "PENDING_PROJECTION",
+    }
+    assert (await production_client.post(
+        base + "/redrive", json=action,
+        headers={**administrator, **headers},
+    )).status_code == 409
+
+    page = await production_client.get(
+        "/v1/operations/dead-letters", headers=viewer,
+    )
+    assert page.json()["records"][0]["redriven_to"] == child_id
+    async with sessions_fixture() as session:
+        source = await session.get(OutboxEntry, entry_id)
+        child = await session.get(OutboxEntry, child_id)
+        assert source.dead_lettered_at is not None
+        assert source.delivered_at is None
+        assert child.redrive_source_id == entry_id
+        assert child.redrive_authorized_by == verify_bearer(
+            signer(subject="independent-admin", roles=("security_admin",)),
+            AUTH_SETTINGS,
+        ).subject
+        assert child.redrive_authorized_by != source.dead_letter_reviewed_by
+        assert child.redrive_reason == "STORE_RESTORED"
+        assert child.payload == {"outcome_id": str(outcome_id)}
