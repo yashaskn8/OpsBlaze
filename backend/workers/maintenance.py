@@ -14,7 +14,7 @@ from backend.database import get_session_maker
 from backend.settings import Settings, get_settings
 from backend.workers.budget_retention import prune_budget_windows
 from backend.workers.event_retention import purge_ui_events
-from backend.workers.retention import expire_capsules
+from backend.workers.retention import expire_capsules, scrub_revoked_tenant_capsules
 
 
 async def run_maintenance(
@@ -36,6 +36,8 @@ async def run_maintenance(
     totals = {
         "capsules_scrubbed": 0,
         "lessons_revoked": 0,
+        "tenant_capsules_scrubbed": 0,
+        "tenant_lessons_revoked": 0,
         "ui_events_deleted": 0,
         "admission_windows_deleted": 0,
         "ai_windows_deleted": 0,
@@ -45,6 +47,13 @@ async def run_maintenance(
         totals["capsules_scrubbed"] += result["capsules_scrubbed"]
         totals["lessons_revoked"] += result["lessons_revoked"]
         if result["capsules_scrubbed"] < 500:
+            break
+
+    for _ in range(max_batches):
+        scrubbed = await scrub_revoked_tenant_capsules(sessions)
+        totals["tenant_capsules_scrubbed"] += scrubbed["capsules_scrubbed"]
+        totals["tenant_lessons_revoked"] += scrubbed["lessons_revoked"]
+        if scrubbed["capsules_scrubbed"] < 500:
             break
 
     ui_cutoff = today - timedelta(days=settings.ui_event_retention_days)
