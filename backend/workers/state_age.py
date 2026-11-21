@@ -50,7 +50,14 @@ async def scan_stuck() -> int:
 
 async def main() -> None:
     while True:
-        await scan_stuck()
+        try:
+            await scan_stuck()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # An unavailable DB must not silently stop the only age monitor.
+            # A fresh session is opened by the next scan; no work is mutated.
+            log.exception("B4 state-age scan failed; retrying next interval")
         await asyncio.sleep(30)
 
 
