@@ -37,109 +37,109 @@ async def set_tenant_consent(
     """CAS tenant-wide reuse consent. Re-enabling never restores old capsules."""
     if expected_epoch < 0:
         raise ConsentConflict("invalid tenant consent epoch")
-    with trace_operation("opsblaze.experience.capture", incident_id=incident_id):
-        async with session.begin():
-            await lock_tenant_consent(session, tenant_id)
-            policy = await session.get(
-                TenantExperienceConsent, tenant_id, with_for_update=True,
-            )
-            actual = 0 if policy is None else policy.epoch
-            if actual != expected_epoch:
-                raise ConsentConflict("tenant consent epoch changed")
-            now = datetime.now(timezone.utc)
-            if policy is None:
-                policy = TenantExperienceConsent(
-                    tenant_id=tenant_id, epoch=1, allowed=allowed, decided_at=now,
-                )
-                session.add(policy)
-            else:
-                policy.epoch += 1
-                policy.allowed = allowed
-                policy.decided_at = now
-        return policy
-    
-    
-    async def current_tenant_consent(
-        session: AsyncSession, tenant_id: str,
-        recorded_epoch: int,
-    ) -> bool:
-        """Legacy epoch zero uses explicit incident consent until a tenant rule exists."""
-        policy = await session.get(TenantExperienceConsent, tenant_id)
-        return (
-            recorded_epoch == (0 if policy is None else policy.epoch)
-            and (policy is None or policy.allowed)
+    async with session.begin():
+        await lock_tenant_consent(session, tenant_id)
+        policy = await session.get(
+            TenantExperienceConsent, tenant_id, with_for_update=True,
         )
-    
-    
-    async def set_consent(
-        session: AsyncSession, tenant_id: str, incident_id: UUID,
-        expected_epoch: int, allowed: bool,
-    ) -> ExperienceConsent | None:
-        async with session.begin():
-            incident = await session.scalar(
-                select(Incident).where(
-                    Incident.tenant_id == tenant_id, Incident.id == incident_id
-                ).with_for_update()
-            )
-            if incident is None:
-                return None
-            consent = await session.get(
-                ExperienceConsent, incident_id, with_for_update=True
-            )
-            actual_epoch = 0 if consent is None else consent.epoch
-            if actual_epoch != expected_epoch:
-                raise ConsentConflict("consent epoch changed; refetch before retrying")
-            if consent is None:
-                consent = ExperienceConsent(
-                    incident_id=incident_id, tenant_id=tenant_id, epoch=1,
-                    allowed=allowed, decided_at=datetime.now(timezone.utc),
-                )
-                session.add(consent)
-            else:
-                consent.epoch += 1
-                consent.allowed = allowed
-                consent.decided_at = datetime.now(timezone.utc)
-            if not allowed:
-                # Keep minimum audit metadata; revoke all previously captured content.
-                ids = list((await session.scalars(
-                    select(ExperienceCapsule.id).where(
-                        ExperienceCapsule.tenant_id == tenant_id,
-                        ExperienceCapsule.incident_id == incident_id,
-                    )
-                )).all())
-                await session.execute(
-                    update(ExperienceCapsule)
-                    .where(
-                        ExperienceCapsule.tenant_id == tenant_id,
-                        ExperienceCapsule.incident_id == incident_id,
-                    )
-                    .values(status="REVOKED", evidence_ids=[], target_digest="")
-                )
-                if ids:
-                    await session.execute(
-                        update(OperationalLesson)
-                        .where(
-                            OperationalLesson.tenant_id == tenant_id,
-                            OperationalLesson.source_capsule_id.in_(ids),
-                            OperationalLesson.status != "REVOKED",
-                        )
-                        .values(
-                            status="REVOKED",
-                            version=OperationalLesson.version + 1,
-                            target_digest="",
-                        )
-                    )
-        return consent
-    
-    
-    async def capture_capsule(
-        session: AsyncSession, tenant_id: str, incident_id: UUID,
-        expected_outcome_id: UUID | None = None,
-    ) -> ExperienceCapsule | None:
+        actual = 0 if policy is None else policy.epoch
+        if actual != expected_epoch:
+            raise ConsentConflict("tenant consent epoch changed")
         now = datetime.now(timezone.utc)
-        retention = get_settings().experience_retention_days
-        if not 1 <= retention <= 30:
-            raise ValueError("experience retention must be within 1–30 days")
+        if policy is None:
+            policy = TenantExperienceConsent(
+                tenant_id=tenant_id, epoch=1, allowed=allowed, decided_at=now,
+            )
+            session.add(policy)
+        else:
+            policy.epoch += 1
+            policy.allowed = allowed
+            policy.decided_at = now
+    return policy
+
+
+async def current_tenant_consent(
+    session: AsyncSession, tenant_id: str,
+    recorded_epoch: int,
+) -> bool:
+    """Legacy epoch zero uses explicit incident consent until a tenant rule exists."""
+    policy = await session.get(TenantExperienceConsent, tenant_id)
+    return (
+        recorded_epoch == (0 if policy is None else policy.epoch)
+        and (policy is None or policy.allowed)
+    )
+
+
+async def set_consent(
+    session: AsyncSession, tenant_id: str, incident_id: UUID,
+    expected_epoch: int, allowed: bool,
+) -> ExperienceConsent | None:
+    async with session.begin():
+        incident = await session.scalar(
+            select(Incident).where(
+                Incident.tenant_id == tenant_id, Incident.id == incident_id
+            ).with_for_update()
+        )
+        if incident is None:
+            return None
+        consent = await session.get(
+            ExperienceConsent, incident_id, with_for_update=True
+        )
+        actual_epoch = 0 if consent is None else consent.epoch
+        if actual_epoch != expected_epoch:
+            raise ConsentConflict("consent epoch changed; refetch before retrying")
+        if consent is None:
+            consent = ExperienceConsent(
+                incident_id=incident_id, tenant_id=tenant_id, epoch=1,
+                allowed=allowed, decided_at=datetime.now(timezone.utc),
+            )
+            session.add(consent)
+        else:
+            consent.epoch += 1
+            consent.allowed = allowed
+            consent.decided_at = datetime.now(timezone.utc)
+        if not allowed:
+            # Keep minimum audit metadata; revoke all previously captured content.
+            ids = list((await session.scalars(
+                select(ExperienceCapsule.id).where(
+                    ExperienceCapsule.tenant_id == tenant_id,
+                    ExperienceCapsule.incident_id == incident_id,
+                )
+            )).all())
+            await session.execute(
+                update(ExperienceCapsule)
+                .where(
+                    ExperienceCapsule.tenant_id == tenant_id,
+                    ExperienceCapsule.incident_id == incident_id,
+                )
+                .values(status="REVOKED", evidence_ids=[], target_digest="")
+            )
+            if ids:
+                await session.execute(
+                    update(OperationalLesson)
+                    .where(
+                        OperationalLesson.tenant_id == tenant_id,
+                        OperationalLesson.source_capsule_id.in_(ids),
+                        OperationalLesson.status != "REVOKED",
+                    )
+                    .values(
+                        status="REVOKED",
+                        version=OperationalLesson.version + 1,
+                        target_digest="",
+                    )
+                )
+    return consent
+
+
+async def capture_capsule(
+    session: AsyncSession, tenant_id: str, incident_id: UUID,
+    expected_outcome_id: UUID | None = None,
+) -> ExperienceCapsule | None:
+    now = datetime.now(timezone.utc)
+    retention = get_settings().experience_retention_days
+    if not 1 <= retention <= 30:
+        raise ValueError("experience retention must be within 1–30 days")
+    with trace_operation("opsblaze.experience.capture", incident_id=incident_id):
         async with session.begin():
             await lock_tenant_consent(session, tenant_id)
             tenant_policy = await session.get(
