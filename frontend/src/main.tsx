@@ -63,6 +63,13 @@ type Lineage = {
   missing_refs: { source: string; missing_target: string; relation: string }[];
 };
 
+type LineagePage = {
+  incident_id: string;
+  kind: string;
+  nodes: Lineage["nodes"];
+  next_cursor: string | null;
+};
+
 type UIEvent = {
   id: number;
   kind: string;
@@ -119,6 +126,9 @@ function App() {
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [effects, setEffects] = useState<Effect[]>([]);
   const [lineage, setLineage] = useState<Lineage | null>(null);
+  const [lineagePages, setLineagePages] = useState<{
+    incidentId: string; pages: Record<string, LineagePage>;
+  }>({ incidentId: "", pages: {} });
   const [recent, setRecent] = useState<Incident[]>([]);
   const [events, setEvents] = useState<UIEvent[]>([]);
   const [connection, setConnection] = useState<"SYNCING" | "LIVE" | "STALE">("SYNCING");
@@ -257,6 +267,8 @@ function App() {
       setEvidence([]);
       setEffects([]);
       setLineage(null);
+    setLineagePages({ incidentId: "", pages: {} });
+      setLineagePages({ incidentId: "", pages: {} });
       setEvents([]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Request failed");
@@ -308,6 +320,7 @@ function App() {
       const lineageBody: unknown = await lineageResponse.json();
       if (!lineageResponse.ok) throw new Error(detail(lineageBody));
       setLineage(lineageBody as Lineage);
+      setLineagePages({ incidentId: "", pages: {} });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
@@ -316,6 +329,48 @@ function App() {
   }
 
 
+
+  async function loadMoreLineage(kind: string) {
+    if (!incident || !authenticated || !lineage || busy) return;
+    const previous = lineagePages.incidentId === incident.id
+      ? lineagePages.pages[kind] : undefined;
+    if (previous && previous.next_cursor === null) return;
+    const firstPageLast = lineage.nodes.filter(node => node.kind === kind).at(-1);
+    const cursor = previous?.next_cursor ?? firstPageLast?.id.split(":")[1];
+    if (!cursor) return;
+    setBusy(true);
+    setError("");
+    try {
+      const query = new URLSearchParams({ kind, cursor, limit: "50" });
+      const response = await fetch(
+        "/v1/incidents/" + incident.id + "/lineage/records?" + query.toString(),
+        { headers: headers() }
+      );
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(result));
+      const page = result as LineagePage;
+      if (page.incident_id !== incident.id || page.kind !== kind) {
+        throw new Error("Lineage page did not match the selected incident");
+      }
+      setLineagePages(current => {
+        const pages = current.incidentId === page.incident_id ? current.pages : {};
+        return {
+          incidentId: page.incident_id,
+          pages: {
+            ...pages,
+            [kind]: {
+              ...page,
+              nodes: [...(pages[kind]?.nodes ?? []), ...page.nodes],
+            },
+          },
+        };
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load lineage page");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function loadRecent() {
     setError("");
@@ -336,6 +391,7 @@ function App() {
     setEvidence([]);
     setEffects([]);
     setLineage(null);
+    setLineagePages({ incidentId: "", pages: {} });
     setEvents([]);
     setConnection("SYNCING");
   }
@@ -626,7 +682,7 @@ function App() {
             <p className="key">Idempotency key <code>{key}</code></p>
             <div className="actions">
               <button type="submit" disabled={busy || !canOperate}>{busy ? "Working..." : "Admit incident"}</button>
-              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setPlan(null); setApproval(null); setEvidence([]); setEffects([]); setLineage(null); setEvents([]); setConnection("SYNCING"); setError(""); }}>New request key</button>
+              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setPlan(null); setApproval(null); setEvidence([]); setEffects([]); setLineage(null); setLineagePages({ incidentId: "", pages: {} }); setEvents([]); setConnection("SYNCING"); setError(""); }}>New request key</button>
             </div>
           </form>
         </section>
@@ -708,8 +764,18 @@ function App() {
               <h3>Evidence-to-effect trace</h3>
               <p className="muted">{lineage.projection.replaceAll("_", " ")} · {lineage.nodes.length} durable records · {lineage.edges.length} links</p>
               {!lineage.trace_spans_available && <p className="muted">Telemetry spans unavailable; durable records are shown instead.</p>}
-              {lineage.truncated_sources.length > 0 &&
-                <p className="error">Incomplete forensic graph: over 50 records in {lineage.truncated_sources.join(", ")}. Do not treat this view as complete.</p>}
+              {lineage.truncated_sources.length > 0 && <>
+                <p className="error">Incomplete forensic graph: over 50 records in {lineage.truncated_sources.join(", ")}. Do not treat this view as complete.</p>
+                {lineage.truncated_sources.map(kind => {
+                  const page = lineagePages.incidentId === incident.id
+                    ? lineagePages.pages[kind] : undefined;
+                  return <button type="button" className="secondary" key={kind}
+                    disabled={busy || page?.next_cursor === null}
+                    onClick={() => loadMoreLineage(kind)}>
+                    {page?.next_cursor === null ? "All " + kind + " records loaded" : "Load more " + kind + " records"}
+                  </button>;
+                })}
+              </>}
               {lineage.missing_refs.length > 0 &&
                 <p className="error">{lineage.missing_refs.length} missing durable link(s). Do not infer the omitted evidence.</p>}
               <div className="trace-scroll">
@@ -717,6 +783,12 @@ function App() {
                   <strong>{node.kind}</strong><span>{node.status}</span>
                   <code>{node.id.split(":")[1]}</code>
                 </div>)}
+                {(lineagePages.incidentId === incident.id
+                  ? Object.values(lineagePages.pages).flatMap(page => page.nodes)
+                  : []).map(node => <div className="trace-node" key={node.id}>
+                    <strong>{node.kind} (additional)</strong><span>{node.status}</span>
+                    <code>{node.id.split(":")[1]}</code>
+                  </div>)}
               </div>
             </div>}
             {effects.length > 0 && <div className="audit">
