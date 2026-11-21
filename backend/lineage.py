@@ -42,6 +42,35 @@ def record_status(kind: str, record: object) -> str:
     ))
 
 
+def matching_effect_plan(
+    effect: EffectReceipt, plan: IncidentPlan | None,
+) -> bool:
+    return (
+        plan is not None
+        and plan.incident_id == effect.incident_id
+        and plan.target_id == effect.target_id
+        and plan.expected_version == effect.expected_version
+        and plan.action_id == "SIMULATOR_MARK_HEALTHY"
+        and effect.adapter_id == "simulator"
+    )
+
+
+def consumed_effect_authority(
+    effect: EffectReceipt, plan: IncidentPlan, grant: ApprovalGrant | None,
+) -> bool:
+    return (
+        effect.attempt_count == 1
+        and effect.state != "PREPARED"
+        and grant is not None
+        and grant.plan_digest == plan.plan_digest
+        and grant.scope == plan.action_id
+        and grant.decision == "APPROVE"
+        and grant.state == "CONSUMED"
+        and plan.status == "APPROVED"
+        and plan.decided_by == grant.reviewer_id
+    )
+
+
 async def read_lineage_page(
     session: AsyncSession, tenant_id: str, incident_id: UUID,
     kind: str, cursor: UUID | None = None, limit: int = 50,
@@ -197,14 +226,7 @@ async def build_lineage(
     for effect in records["effect"]:
         source = f"effect:{effect.id}"
         plan = plans_by_digest.get(effect.plan_digest)
-        if (
-            plan is None
-            or plan.incident_id != effect.incident_id
-            or plan.target_id != effect.target_id
-            or plan.expected_version != effect.expected_version
-            or plan.action_id != "SIMULATOR_MARK_HEALTHY"
-            or effect.adapter_id != "simulator"
-        ):
+        if not matching_effect_plan(effect, plan):
             missing.append({
                 "source": source,
                 "missing_target": f"matching-plan-digest:{effect.plan_digest}",
@@ -215,17 +237,7 @@ async def build_lineage(
             edge(source, f"plan:{plan.id}", "PREPARED_FOR")
             continue
         grant = grants_by_plan.get(plan.id)
-        if (
-            effect.attempt_count != 1
-            or effect.state == "PREPARED"
-            or grant is None
-            or grant.plan_digest != plan.plan_digest
-            or grant.scope != plan.action_id
-            or grant.decision != "APPROVE"
-            or grant.state != "CONSUMED"
-            or plan.status != "APPROVED"
-            or plan.decided_by != grant.reviewer_id
-        ):
+        if not consumed_effect_authority(effect, plan, grant):
             # The digest still links a forensic plan reference, but that
             # reference must not be displayed as valid effect authority.
             edge(source, f"plan:{plan.id}", "REFERENCES_PLAN")
