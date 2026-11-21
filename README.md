@@ -54,13 +54,50 @@ background `python -m backend.workers.maintenance` run scrubs the
 superseded capsules and lessons in up to 500-row batches. Retrieval is
 denied **before** the sweep; a backup erasure certificate is not implied.
 
-A verified E2 outcome now commits a `PROJECT_EXPERIENCE` outbox
-intent in the same database transaction. The dispatcher handles that
-local intent (never a real effect), pins it to the exact outcome revision,
-and either captures an eligible capsule idempotently, skips revoked/
-superseded sources, or retains the intent for retry after a storage
-failure. Replaying after a lost outbox ACK cannot duplicate a capsule.
-This does not yet provide a dedicated least-privilege projection process.
+A verified E2 outcome commits a `PROJECT_EXPERIENCE` intent
+with the outcome revision. The **separate experience projector** consumes
+only local memory intents; the Temporal dispatcher processes only workflow
+signals. A delayed or retried projection never blocks a later Temporal
+signal, and a projector waits until prior workflow signals are delivered.
+Capture is outcome-pinned and idempotent across lost acknowledgments.
+A local projector cannot send effects or Temporal workflow signals.
+
+### Dedicated PostgreSQL projector account (E1)
+
+After native PostgreSQL migrations, the DBA creates a distinct
+`opsblaze_projector` LOGIN role and applies the post-migration grant file
+from a trusted database-owner session:
+
+```bash
+# Create the LOGIN role with a secret supplied outside this repository.
+# Run this SQL grant file using the database owner (not the projector).
+psql -d opsblaze -v ON_ERROR_STOP=1 -f scripts/projector_grants.sql
+```
+
+Start the independent, Docker-free worker with the **separate** secret
+`OPSBLAZE_PROJECTOR_DATABASE_URL` set in its untracked environment:
+
+```bash
+python -m backend.workers.experience_projector
+```
+
+The process refuses an unset URL, SQLite or application-owner credentials.
+It verifies `current_user` at startup, uses that database session for
+claiming, projection, dead-letter handling and heartbeats, and never
+connects to Temporal. The grant file permits source reads, capsule
+inserts and restricted memory-intent updates. Row-level security prevents
+it modifying Temporal outbox rows; column-level permissions prevent
+changing approval, effect, incident-status or consent-decision fields.
+CI tests these permissions using a real limited PostgreSQL role.
+
+Production readiness requires the dedicated credentials and a fresh
+`experience_projector` heartbeat, in addition to the previous roles.
+
+**Permission boundary:** The worker still needs visibility into previous
+outbox rows for ordering. Full per-row outbox payload confidentiality,
+cross-host scheduling, external provider privacy and independent security
+review remain open; do not treat the CI role test as production
+certification.
 
 ### Durable queue health (B4)
 
