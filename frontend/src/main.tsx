@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import { authManager, oidcConfigError, usingOidc } from "./auth";
@@ -61,6 +61,18 @@ type Lineage = {
   nodes: { id: string; kind: string; status: string }[];
   edges: { from: string; to: string; relation: string }[];
   missing_refs: { source: string; missing_target: string; relation: string }[];
+};
+
+type QueueHealth = {
+  pending_outbox: number;
+  active_incidents: number;
+  oldest_pending_seconds: number;
+  oldest_active_phase_seconds: number;
+  pending_age_p95_seconds: number;
+  aged_pending_outbox: number;
+  aged_active_incidents: number;
+  max_pending_attempts: number;
+  stuck_after_seconds: number;
 };
 
 type LineagePage = {
@@ -130,6 +142,10 @@ function App() {
     incidentId: string; pages: Record<string, LineagePage>;
   }>({ incidentId: "", pages: {} });
   const [recent, setRecent] = useState<Incident[]>([]);
+  const [queueHealth, setQueueHealth] = useState<QueueHealth | null>(null);
+  const [queueBusy, setQueueBusy] = useState(false);
+  const [queueError, setQueueError] = useState("");
+  const queueRequestVersion = useRef(0);
   const [events, setEvents] = useState<UIEvent[]>([]);
   const [connection, setConnection] = useState<"SYNCING" | "LIVE" | "STALE">("SYNCING");
   const [replayFixture, setReplayFixture] = useState<ReplayFixture>("recoverable-v1");
@@ -368,6 +384,40 @@ function App() {
       setError(cause instanceof Error ? cause.message : "Could not load lineage page");
     } finally {
       setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    // Never display a queue snapshot under different browser credentials.
+    queueRequestVersion.current += 1;
+    setQueueHealth(null);
+    setQueueError("");
+    setQueueBusy(false);
+  }, [tenant, token, accessToken]);
+
+  async function loadQueueHealth() {
+    if (!authenticated) return;
+    const requestVersion = ++queueRequestVersion.current;
+    setQueueBusy(true);
+    setQueueError("");
+    setQueueHealth(null);
+    try {
+      const response = await fetch("/v1/operations/queues", {
+        headers: headers(),
+      });
+      const data: unknown = await response.json();
+      if (!response.ok) throw new Error(detail(data));
+      if (queueRequestVersion.current === requestVersion) {
+        setQueueHealth(data as QueueHealth);
+      }
+    } catch (cause) {
+      if (queueRequestVersion.current === requestVersion) {
+        setQueueError(
+          cause instanceof Error ? cause.message : "Queue health unavailable"
+        );
+      }
+    } finally {
+      if (queueRequestVersion.current === requestVersion) setQueueBusy(false);
     }
   }
 
@@ -800,6 +850,26 @@ function App() {
           </> : <p className="muted empty">No incident selected yet.</p>}
         </section>
       </div>
+      <section className="incident-history" aria-label="Tenant queue health">
+        <div className="history-header">
+          <h2>Queue health</h2>
+          <button type="button" className="secondary"
+            disabled={!authenticated || queueBusy} onClick={() => void loadQueueHealth()}>
+            {queueBusy ? "Checking queues..." : "Refresh queue health"}
+          </button>
+        </div>
+        <p className="muted">Durable, tenant-scoped snapshot. This is not a multi-host capacity certification.</p>
+        {queueError && <p role="alert" className="error">{queueError}</p>}
+        {queueHealth && <div aria-live="polite">
+          <p><strong>{queueHealth.active_incidents}</strong> active incidents · <strong>{queueHealth.pending_outbox}</strong> pending outbox intents</p>
+          <p className="muted">Pending age p95: {queueHealth.pending_age_p95_seconds}s · Oldest pending: {queueHealth.oldest_pending_seconds}s · Oldest active phase: {queueHealth.oldest_active_phase_seconds}s</p>
+          <p className="muted">Maximum pending delivery attempts: {queueHealth.max_pending_attempts} · Stuck threshold: {queueHealth.stuck_after_seconds}s</p>
+          {(queueHealth.aged_active_incidents > 0 || queueHealth.aged_pending_outbox > 0) &&
+            <p role="alert" className="error">
+              Backlog requires review: {queueHealth.aged_active_incidents} aged active incidents and {queueHealth.aged_pending_outbox} aged outbox intents. Check workers before admitting more work.
+            </p>}
+        </div>}
+      </section>
       <section className="incident-history">
         <div className="history-header">
           <h2>Recent incidents</h2>
