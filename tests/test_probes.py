@@ -1,12 +1,10 @@
 import hashlib
-from uuid import UUID
-
 import pytest
 from sqlalchemy import select
 
 from backend.investigator.baseline import inspect
 from backend.models import (
-    Evidence, HypothesisStep, Incident, ProbeCall, ResourceEpoch, SimulatorTarget
+    Evidence, HypothesisStep, Incident, ProbeCall, SimulatorTarget
 )
 from backend.probes.gateway import ProbeDenied, invoke_probe
 from backend.schemas import IncidentCreate
