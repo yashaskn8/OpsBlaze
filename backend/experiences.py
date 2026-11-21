@@ -201,6 +201,66 @@ async def list_capsules(session: AsyncSession, tenant_id: str) -> list[Experienc
     ]
 
 
+async def quarantine_capsule(
+    session: AsyncSession, tenant_id: str, capsule_id: UUID,
+    expected_consent_epoch: int,
+) -> ExperienceCapsule | None:
+    """One-winner E1 quarantine; immediately invalidate derived lessons."""
+    if expected_consent_epoch < 1:
+        raise ConsentConflict("invalid capsule consent epoch")
+    async with session.begin():
+        source = await session.scalar(
+            select(ExperienceCapsule.incident_id).where(
+                ExperienceCapsule.id == capsule_id,
+                ExperienceCapsule.tenant_id == tenant_id,
+            )
+        )
+        if source is None:
+            return None
+        incident = await session.scalar(
+            select(Incident.id).where(
+                Incident.id == source,
+                Incident.tenant_id == tenant_id,
+            ).with_for_update()
+        )
+        if incident is None:
+            return None
+        capsule = await session.scalar(
+            select(ExperienceCapsule).where(
+                ExperienceCapsule.id == capsule_id,
+                ExperienceCapsule.tenant_id == tenant_id,
+                ExperienceCapsule.incident_id == incident,
+            ).with_for_update().execution_options(populate_existing=True)
+        )
+        if capsule is None:
+            return None
+        if (
+            capsule.status != "VALID"
+            or capsule.consent_epoch != expected_consent_epoch
+        ):
+            raise ConsentConflict("capsule status or consent epoch changed")
+        consent = await session.get(ExperienceConsent, incident)
+        if (
+            consent is None or consent.tenant_id != tenant_id
+            or not consent.allowed or consent.epoch != capsule.consent_epoch
+        ):
+            raise ConsentConflict("capsule source consent is no longer valid")
+        capsule.status = "QUARANTINED"
+        capsule.target_digest = ""
+        capsule.evidence_ids = []
+        await session.execute(
+            update(OperationalLesson).where(
+                OperationalLesson.tenant_id == tenant_id,
+                OperationalLesson.source_capsule_id == capsule_id,
+                OperationalLesson.status != "REVOKED",
+            ).values(
+                status="REVOKED", target_digest="",
+                version=OperationalLesson.version + 1,
+            )
+        )
+    return capsule
+
+
 async def export_privacy_page(
     session: AsyncSession, tenant_id: str, kind: str,
     cursor: UUID | None = None, limit: int = 50,
