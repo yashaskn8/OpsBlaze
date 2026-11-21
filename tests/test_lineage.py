@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from backend.investigator.baseline import inspect
-from backend.lineage import build_lineage
+from backend.lineage import build_lineage, read_lineage_page
 from backend.models import HypothesisStep, SimulatorTarget
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
@@ -108,6 +108,22 @@ async def test_redteam_large_lineage_never_claims_complete_when_truncated(sessio
         assert len([n for n in graph["nodes"] if n["kind"] == "hypothesis"]) == 50
         assert await build_lineage(session, "foreign", incident.id) is None
 
+        first = await read_lineage_page(
+            session, "tenant", incident.id, "hypothesis", limit=50,
+        )
+        assert len(first["nodes"]) == 50 and first["next_cursor"]
+        second = await read_lineage_page(
+            session, "tenant", incident.id, "hypothesis",
+            cursor=__import__("uuid").UUID(first["next_cursor"]), limit=50,
+        )
+        assert len(second["nodes"]) == 1 and second["next_cursor"] is None
+        assert not {n["id"] for n in first["nodes"]}.intersection(
+            n["id"] for n in second["nodes"]
+        )
+        assert await read_lineage_page(
+            session, "foreign", incident.id, "hypothesis",
+        ) is None
+
 
 @pytest.mark.asyncio
 async def test_redteam_approval_grant_is_part_of_effect_causal_chain(sessions_fixture):
@@ -184,3 +200,51 @@ async def test_redteam_approval_grant_is_part_of_effect_causal_chain(sessions_fi
             and e["relation"] == "AUTHORIZED_BY_GRANT"
             for e in broken["edges"]
         )
+
+
+@pytest.mark.asyncio
+async def test_redteam_lineage_page_api_rejects_cross_tenant_and_unbounded_queries(
+    sessions_fixture,
+):
+    from httpx import ASGITransport, AsyncClient
+
+    from backend.api import app
+    from backend.database import get_session
+    from backend.settings import Settings, get_settings
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "t", "paged-api", IncidentCreate(target_id="checkout"),
+        )
+
+    async def session_override():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = session_override
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        local_token="paged-lineage-test-token",
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+        ) as client:
+            url = f"/v1/incidents/{incident.id}/lineage/records"
+            own = {"X-Tenant-Id": "t", "X-OpsBlaze-Token": "paged-lineage-test-token"}
+            result = await client.get(url, params={"kind": "evidence", "limit": 10},
+                                      headers=own)
+            assert result.status_code == 200
+            assert result.json()["nodes"] == []
+            assert result.json()["next_cursor"] is None
+            wrong = {**own, "X-Tenant-Id": "other"}
+            assert (await client.get(url, params={"kind": "evidence"},
+                                     headers=wrong)).status_code == 404
+            assert (await client.get(url, params={"kind": "effect", "limit": 51},
+                                     headers=own)).status_code == 422
+            assert (await client.get(url, params={"kind": "unbounded-internal"},
+                                     headers=own)).status_code == 422
+            assert (await client.get(url, params={
+                "kind": "evidence", "cursor": "not-a-uuid",
+            }, headers=own)).status_code == 422
+    finally:
+        app.dependency_overrides.clear()
