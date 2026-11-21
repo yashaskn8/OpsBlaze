@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
 
 from backend.experiences import capture_capsule, set_consent
 from backend.memory.lessons import (
