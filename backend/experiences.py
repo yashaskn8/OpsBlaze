@@ -5,18 +5,68 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.adapters.simulator import utc
 from backend.models import (
-    Evidence, ExperienceCapsule, ExperienceConsent, Incident, OperationalLesson, OutcomeRevision
+    Evidence, ExperienceCapsule, ExperienceConsent, Incident, OperationalLesson,
+    OutcomeRevision, TenantExperienceConsent,
 )
 from backend.settings import get_settings
 
 
 class ConsentConflict(Exception):
     pass
+
+
+async def lock_tenant_consent(session: AsyncSession, tenant_id: str) -> None:
+    """Serialize tenant policy change against new capsule capture on PostgreSQL."""
+    if session.bind.dialect.name == "postgresql":
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(923411, hashtext(:tenant))"),
+            {"tenant": tenant_id},
+        )
+
+
+async def set_tenant_consent(
+    session: AsyncSession, tenant_id: str,
+    expected_epoch: int, allowed: bool,
+) -> TenantExperienceConsent:
+    """CAS tenant-wide reuse consent. Re-enabling never restores old capsules."""
+    if expected_epoch < 0:
+        raise ConsentConflict("invalid tenant consent epoch")
+    async with session.begin():
+        await lock_tenant_consent(session, tenant_id)
+        policy = await session.get(
+            TenantExperienceConsent, tenant_id, with_for_update=True,
+        )
+        actual = 0 if policy is None else policy.epoch
+        if actual != expected_epoch:
+            raise ConsentConflict("tenant consent epoch changed")
+        now = datetime.now(timezone.utc)
+        if policy is None:
+            policy = TenantExperienceConsent(
+                tenant_id=tenant_id, epoch=1, allowed=allowed, decided_at=now,
+            )
+            session.add(policy)
+        else:
+            policy.epoch += 1
+            policy.allowed = allowed
+            policy.decided_at = now
+    return policy
+
+
+async def current_tenant_consent(
+    session: AsyncSession, tenant_id: str,
+    recorded_epoch: int,
+) -> bool:
+    """Legacy epoch zero uses explicit incident consent until a tenant rule exists."""
+    policy = await session.get(TenantExperienceConsent, tenant_id)
+    return (
+        recorded_epoch == (0 if policy is None else policy.epoch)
+        and (policy is None or policy.allowed)
+    )
 
 
 async def set_consent(
@@ -88,6 +138,13 @@ async def capture_capsule(
     if not 1 <= retention <= 30:
         raise ValueError("experience retention must be within 1–30 days")
     async with session.begin():
+        await lock_tenant_consent(session, tenant_id)
+        tenant_policy = await session.get(
+            TenantExperienceConsent, tenant_id, with_for_update=True,
+        )
+        if tenant_policy is not None and not tenant_policy.allowed:
+            raise ConsentConflict("tenant has revoked experience reuse")
+        tenant_epoch = 0 if tenant_policy is None else tenant_policy.epoch
         incident = await session.scalar(
             select(Incident).where(
                 Incident.id == incident_id, Incident.tenant_id == tenant_id
@@ -122,6 +179,7 @@ async def capture_capsule(
                 existing.status != "VALID"
                 or existing.tenant_id != tenant_id
                 or existing.consent_epoch != consent.epoch
+                or existing.tenant_consent_epoch != tenant_epoch
                 or existing.target_digest != hashlib.sha256(
                     f"{tenant_id}:{incident.target_id}".encode("utf-8")
                 ).hexdigest()
@@ -145,7 +203,7 @@ async def capture_capsule(
         capsule = ExperienceCapsule(
             id=uuid4(), tenant_id=tenant_id, incident_id=incident_id,
             outcome_revision_id=outcome.id, consent_epoch=consent.epoch,
-            target_digest=digest, evidence_ids=[str(item) for item in evidence],
+            tenant_consent_epoch=tenant_epoch, target_digest=digest, evidence_ids=[str(item) for item in evidence],
             status="VALID", expires_at=now + timedelta(days=retention),
         )
         session.add(capsule)
@@ -184,7 +242,22 @@ async def read_capsules_page(
             OutcomeRevision,
             OutcomeRevision.id == ExperienceCapsule.outcome_revision_id,
         )
+        .outerjoin(
+            TenantExperienceConsent,
+            TenantExperienceConsent.tenant_id == ExperienceCapsule.tenant_id,
+        )
         .where(
+            or_(
+                and_(
+                    TenantExperienceConsent.tenant_id.is_(None),
+                    ExperienceCapsule.tenant_consent_epoch == 0,
+                ),
+                and_(
+                    TenantExperienceConsent.allowed.is_(True),
+                    TenantExperienceConsent.epoch
+                    == ExperienceCapsule.tenant_consent_epoch,
+                ),
+            ),
             ExperienceCapsule.tenant_id == tenant_id,
             Incident.tenant_id == tenant_id,
             ExperienceConsent.tenant_id == tenant_id,
