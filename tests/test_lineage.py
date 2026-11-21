@@ -144,8 +144,12 @@ async def test_redteam_approval_grant_is_part_of_effect_causal_chain(sessions_fi
         )
     assert await inspect(sessions_fixture, "t", incident.id) == "SIMULATOR_REVIEW_REQUIRED"
     async with sessions_fixture() as session:
-        plan = await session.scalar(select(IncidentPlan))
-        plan_id, digest = plan.id, plan.plan_digest
+        async with session.begin():
+            plan = await session.scalar(select(IncidentPlan))
+            plan.status = "APPROVED"
+            plan.version = 2
+            plan.decided_by = "DEV_REVIEWER_CREDENTIAL"
+            plan_id, digest = plan.id, plan.plan_digest
 
     grant_id, effect_id = uuid4(), uuid4()
     async with sessions_fixture() as session:
@@ -180,7 +184,12 @@ async def test_redteam_approval_grant_is_part_of_effect_causal_chain(sessions_fi
 
     # A durable grant remains visible in historical provenance, but a
     # rejected or digest-mismatched grant must NEVER be marked as authority.
-    for field, value in (("state", "REJECTED"), ("plan_digest", "f" * 64)):
+    for field, value in (
+        ("state", "REJECTED"),
+        ("state", "APPROVED"),
+        ("plan_digest", "f" * 64),
+        ("reviewer_id", "WRONG_REVIEWER"),
+    ):
         async with sessions_fixture() as session:
             async with session.begin():
                 grant = await session.get(ApprovalGrant, grant_id)
