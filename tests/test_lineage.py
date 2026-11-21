@@ -231,6 +231,9 @@ async def test_redteam_approval_grant_is_part_of_effect_causal_chain(sessions_fi
                 receipt.attempt_count = 1
                 receipt.state = "SENT"
                 setattr(receipt, field, value)
+                if field == "state":
+                    # A valid PREPARED receipt has no durable send attempt.
+                    receipt.attempt_count = 0
         async with sessions_fixture() as session:
             graph = await build_lineage(session, "t", incident.id)
         effect_edges = [
