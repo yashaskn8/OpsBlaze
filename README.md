@@ -6,6 +6,23 @@ OpsBlaze is a **local, simulator-only incident investigation and controlled reco
 
 See [implementation status](docs/implementation-status.md) for all 20 TITAN-20 capability areas, test evidence, and missing gates. Coding guidelines are in [AGENTS.md](AGENTS.md).
 
+### Forensic paging and redacted privacy export
+
+For a tenant-authorized incident, `GET /v1/incidents/{id}/lineage` returns
+bounded durable nodes, typed causal links, explicit missing references and
+`truncated_sources`. If any source is truncated, the React workbench offers
+additional read-only records through `GET /v1/incidents/{id}/lineage/records?kind=hypothesis&cursor=<uuid>&limit=50`.
+Pages contain only UUID, type and status metadata; they do **not** invent
+missing OpenTelemetry spans or complete graph edges.
+
+Operators can export their tenant's **metadata-only** privacy ledger from
+`GET /v1/privacy/export?kind=consents&limit=50` or
+`?kind=capsules&cursor=<uuid>&limit=50`. The result includes durable
+consent and revoked/expired capsule identifiers and status, but no target
+digest, raw probe evidence, token, secret or prompt. It is **not** a full
+personal-data access/export or cross-store/backup erasure certification.
+
+
 ## Setup (no Docker)
 
 Install Python 3.11+, native PostgreSQL and a native Temporal development server. Create a PostgreSQL database and credentials, then configure them in a local untracked `.env` copied from `.env.example`.
