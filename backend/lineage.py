@@ -138,8 +138,11 @@ async def read_lineage_page(
                     "relation": relation,
                 })
             else:
+                if len(row.evidence_ids) > 200:
+                    links_truncated = True
                 related = [
-                    ("evidence", value, relation) for value in row.evidence_ids
+                    ("evidence", value, relation)
+                    for value in row.evidence_ids[:200]
                 ]
         elif kind == "approval":
             related = [("plan", row.plan_id, "REVIEWS")]
@@ -354,13 +357,14 @@ async def build_lineage(
         for evidence_id in plan.evidence_ids:
             edge(f"plan:{plan.id}", f"evidence:{evidence_id}", "JUSTIFIED_BY")
 
-    plans_by_digest = {
-        plan.plan_digest: plan for plan in records["plan"]
-    }
+    plans_by_digest: dict[str, list[IncidentPlan]] = {}
+    for plan in records["plan"]:
+        plans_by_digest.setdefault(plan.plan_digest, []).append(plan)
     grants_by_plan = {grant.plan_id: grant for grant in grants}
     for effect in records["effect"]:
         source = f"effect:{effect.id}"
-        plan = plans_by_digest.get(effect.plan_digest)
+        matches = plans_by_digest.get(effect.plan_digest, [])
+        plan = matches[0] if len(matches) == 1 else None
         if not matching_effect_plan(effect, plan):
             missing.append({
                 "source": source,
