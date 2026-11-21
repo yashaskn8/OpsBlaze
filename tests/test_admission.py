@@ -1,9 +1,7 @@
-from datetime import datetime, timezone
-
 import pytest
 from sqlalchemy import select
 
-from backend.models import AdmissionUsage, Incident, OutboxEntry
+from backend.models import AdmissionUsage
 from backend.schemas import IncidentCreate
 from backend.services import (
     IdempotencyConflict, RateLimited, admit_incident, reserve_admission_slot
@@ -12,7 +10,6 @@ from backend.services import (
 
 @pytest.mark.asyncio
 async def test_quota_slot_is_atomic_and_bounded(sessions_fixture) -> None:
-    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
     async with sessions_fixture() as session:
         async with session.begin():
             await reserve_admission_slot(session, "tenant-a", limit=1)
