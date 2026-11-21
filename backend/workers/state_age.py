@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from backend.database import get_session_maker
 from backend.models import Incident, OutboxEntry
@@ -18,21 +18,29 @@ async def scan_stuck() -> int:
     threshold = datetime.now(timezone.utc) - timedelta(
         seconds=get_settings().stuck_after_seconds
     )
+    incident_filter = (
+        Incident.phase_entered_at < threshold,
+        Incident.status_projection.in_(ACTIVE_STATES),
+    )
+    intent_filter = (
+        OutboxEntry.created_at < threshold,
+        OutboxEntry.delivered_at.is_(None),
+    )
     async with get_session_maker()() as session:
+        incident_count = int((await session.scalar(
+            select(func.count()).select_from(Incident).where(*incident_filter)
+        )) or 0)
+        intent_count = int((await session.scalar(
+            select(func.count()).select_from(OutboxEntry).where(*intent_filter)
+        )) or 0)
         incidents = (await session.scalars(
-            select(Incident).where(
-                Incident.phase_entered_at < threshold,
-                Incident.status_projection.in_(ACTIVE_STATES),
-            )
-            .order_by(Incident.phase_entered_at)
+            select(Incident).where(*incident_filter)
+            .order_by(Incident.phase_entered_at, Incident.id)
             .limit(100)
         )).all()
         intents = (await session.scalars(
-            select(OutboxEntry).where(
-                OutboxEntry.created_at < threshold,
-                OutboxEntry.delivered_at.is_(None),
-            )
-            .order_by(OutboxEntry.created_at)
+            select(OutboxEntry).where(*intent_filter)
+            .order_by(OutboxEntry.created_at, OutboxEntry.id)
             .limit(100)
         )).all()
     for incident in incidents:
@@ -45,7 +53,13 @@ async def scan_stuck() -> int:
             "Outbox delivery exceeded age threshold: intent_id=%s kind=%s attempt=%s",
             intent.id, intent.kind, intent.attempt,
         )
-    return len(incidents) + len(intents)
+    if incident_count > len(incidents) or intent_count > len(intents):
+        log.warning(
+            "Additional aged items omitted from detailed logs: "
+            "incidents=%s outbox=%s",
+            incident_count - len(incidents), intent_count - len(intents),
+        )
+    return incident_count + intent_count
 
 
 async def main() -> None:
