@@ -121,7 +121,7 @@ async def test_projector_retry_preserves_intent_on_store_outage(sessions_fixture
     incident_id, _ = await setup_projector_lab(sessions, allowed=True)
     client = AsyncMock()
     with patch(
-        "backend.workers.experience_projector.project_experience_outbox",
+        "backend.workers.dispatcher.project_experience_outbox",
         side_effect=ConnectionError("synthetic DB outage"),
     ):
         assert await dispatch_once(client, sessions)
