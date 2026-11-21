@@ -1,6 +1,5 @@
 """B3: persisted receipt before call, no blind retry after uncertainty."""
 
-from dataclasses import dataclass
 from uuid import UUID, NAMESPACE_URL, uuid5
 
 from sqlalchemy import select
