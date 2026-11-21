@@ -16,6 +16,89 @@ from backend.models import (
 )
 
 
+# Shared authoritative kinds for graph projection and paginated detail reads.
+LINEAGE_SOURCE_MODELS = {
+    "evidence": Evidence,
+    "hypothesis": HypothesisStep,
+    "plan": IncidentPlan,
+    "effect": EffectReceipt,
+    "outcome": OutcomeRevision,
+    "experience": ExperienceCapsule,
+    "failure": FailureCase,
+}
+
+
+def record_status(kind: str, record: object) -> str:
+    if kind == "evidence":
+        return str(record.validity)
+    if kind == "failure":
+        return str(record.review_status)
+    return str(getattr(
+        record, "state",
+        getattr(
+            record, "status",
+            getattr(record, "label", getattr(record, "decision", "RECORDED")),
+        ),
+    ))
+
+
+async def read_lineage_page(
+    session: AsyncSession, tenant_id: str, incident_id: UUID,
+    kind: str, cursor: UUID | None = None, limit: int = 50,
+) -> dict | None:
+    """P3 stable keyset page of redacted durable node metadata, never raw evidence."""
+    if not 1 <= limit <= 50:
+        raise ValueError("lineage page size must be 1–50")
+    if kind not in LINEAGE_SOURCE_MODELS and kind not in {"lesson", "approval"}:
+        raise ValueError("unsupported lineage record kind")
+    exists = await session.scalar(
+        select(Incident.id).where(
+            Incident.id == incident_id, Incident.tenant_id == tenant_id,
+        )
+    )
+    if exists is None:
+        return None
+    if kind == "lesson":
+        model = OperationalLesson
+        stmt = select(model).join(
+            ExperienceCapsule, ExperienceCapsule.id == model.source_capsule_id,
+        ).where(
+            model.tenant_id == tenant_id,
+            ExperienceCapsule.tenant_id == tenant_id,
+            ExperienceCapsule.incident_id == incident_id,
+        )
+    elif kind == "approval":
+        model = ApprovalGrant
+        stmt = select(model).join(
+            IncidentPlan, IncidentPlan.id == model.plan_id,
+        ).where(
+            model.tenant_id == tenant_id,
+            IncidentPlan.tenant_id == tenant_id,
+            IncidentPlan.incident_id == incident_id,
+        )
+    else:
+        model = LINEAGE_SOURCE_MODELS[kind]
+        stmt = select(model).where(model.incident_id == incident_id)
+        if hasattr(model, "tenant_id"):
+            stmt = stmt.where(model.tenant_id == tenant_id)
+    if cursor is not None:
+        stmt = stmt.where(model.id > cursor)
+    rows = list((await session.scalars(
+        stmt.order_by(model.id).limit(limit + 1)
+    )).all())
+    visible = rows[:limit]
+    return {
+        "incident_id": str(incident_id), "kind": kind,
+        "nodes": [
+            {"id": f"{kind}:{row.id}", "kind": kind,
+             "status": record_status(kind, row)}
+            for row in visible
+        ],
+        "next_cursor": str(visible[-1].id) if len(rows) > limit else None,
+        "trace_spans_available": False,
+    }
+
+
 async def build_lineage(
     session: AsyncSession, tenant_id: str, incident_id: UUID,
 ) -> dict | None:
@@ -47,15 +130,7 @@ async def build_lineage(
             edges.append({"from": source, "to": target, "relation": relation})
 
     root = node("incident", incident.id, incident.status_projection)
-    sources = (
-        ("evidence", Evidence),
-        ("hypothesis", HypothesisStep),
-        ("plan", IncidentPlan),
-        ("effect", EffectReceipt),
-        ("outcome", OutcomeRevision),
-        ("experience", ExperienceCapsule),
-        ("failure", FailureCase),
-    )
+    sources = LINEAGE_SOURCE_MODELS.items()
     records: dict[str, list] = {}
     for kind, model in sources:
         query = select(model).where(model.incident_id == incident_id)
@@ -68,18 +143,7 @@ async def build_lineage(
             truncated_sources.append(kind)
         records[kind] = rows[:50]
         for record in records[kind]:
-            state = getattr(
-                record, "state",
-                getattr(
-                    record, "status",
-                    getattr(record, "label", getattr(record, "decision", "RECORDED")),
-                ),
-            )
-            if kind == "evidence":
-                state = record.validity
-            if kind == "failure":
-                state = record.review_status
-            node(kind, record.id, str(state))
+            node(kind, record.id, record_status(kind, record))
 
     capsule_ids = [row.id for row in records["experience"]]
     lessons = []
