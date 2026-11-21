@@ -10,9 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import (
-    Evidence, EffectReceipt, ExperienceCapsule, FailureCase,
-    HypothesisStep, Incident, IncidentPlan, OperationalLesson,
-    OutcomeRevision,
+    ApprovalGrant, Evidence, EffectReceipt, ExperienceCapsule,
+    FailureCase, HypothesisStep, Incident, IncidentPlan,
+    OperationalLesson, OutcomeRevision,
 )
 
 
@@ -31,12 +31,11 @@ async def build_lineage(
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
     missing: list[dict] = []
-    refs: dict[str, set[str]] = {}
+    truncated_sources: list[str] = []
 
     def node(kind: str, id_value: UUID, status: str) -> str:
         node_id = f"{kind}:{id_value}"
         nodes[node_id] = {"id": node_id, "kind": kind, "status": status}
-        refs.setdefault(kind, set()).add(str(id_value))
         return node_id
 
     def edge(source: str, target: str, relation: str) -> None:
@@ -59,16 +58,16 @@ async def build_lineage(
     )
     records: dict[str, list] = {}
     for kind, model in sources:
-        rows = (await session.scalars(
-            select(model).where(
-                model.incident_id == incident_id,
-                model.tenant_id == tenant_id,
-            ).limit(50)
-        )).all() if hasattr(model, "tenant_id") else (await session.scalars(
-            select(model).where(model.incident_id == incident_id).limit(50)
-        )).all()
-        records[kind] = list(rows)
-        for record in rows:
+        query = select(model).where(model.incident_id == incident_id)
+        if hasattr(model, "tenant_id"):
+            query = query.where(model.tenant_id == tenant_id)
+        rows = list((await session.scalars(
+            query.order_by(model.id).limit(51)
+        )).all())
+        if len(rows) > 50:
+            truncated_sources.append(kind)
+        records[kind] = rows[:50]
+        for record in records[kind]:
             state = getattr(
                 record, "state",
                 getattr(
@@ -85,14 +84,33 @@ async def build_lineage(
     capsule_ids = [row.id for row in records["experience"]]
     lessons = []
     if capsule_ids:
-        lessons = (await session.scalars(
+        lessons = list((await session.scalars(
             select(OperationalLesson).where(
                 OperationalLesson.tenant_id == tenant_id,
                 OperationalLesson.source_capsule_id.in_(capsule_ids),
-            ).limit(50)
-        )).all()
+            ).order_by(OperationalLesson.id).limit(51)
+        )).all())
+        if len(lessons) > 50:
+            truncated_sources.append("lesson")
+        lessons = lessons[:50]
     for lesson in lessons:
         node("lesson", lesson.id, lesson.status)
+
+    plan_ids = [row.id for row in records["plan"]]
+    grants = []
+    if plan_ids:
+        grants = list((await session.scalars(
+            select(ApprovalGrant).where(
+                ApprovalGrant.tenant_id == tenant_id,
+                ApprovalGrant.plan_id.in_(plan_ids),
+            ).order_by(ApprovalGrant.id).limit(51)
+        )).all())
+        if len(grants) > 50:
+            truncated_sources.append("approval")
+        grants = grants[:50]
+    for grant in grants:
+        node("approval", grant.id, grant.state)
+        edge(f"approval:{grant.id}", f"plan:{grant.plan_id}", "REVIEWS")
 
     for kind in ("evidence", "hypothesis", "plan", "effect", "outcome", "experience", "failure"):
         for record in records[kind]:
@@ -111,6 +129,7 @@ async def build_lineage(
     plans_by_digest = {
         plan.plan_digest: plan for plan in records["plan"]
     }
+    grants_by_plan = {grant.plan_id: grant for grant in grants}
     for effect in records["effect"]:
         plan = plans_by_digest.get(effect.plan_digest)
         if plan is None:
@@ -121,6 +140,15 @@ async def build_lineage(
             })
         else:
             edge(f"effect:{effect.id}", f"plan:{plan.id}", "AUTHORIZED_BY")
+            grant = grants_by_plan.get(plan.id)
+            if grant is None:
+                missing.append({
+                    "source": f"effect:{effect.id}",
+                    "missing_target": f"approval-for-plan:{plan.id}",
+                    "relation": "AUTHORIZED_BY_GRANT",
+                })
+            else:
+                edge(f"effect:{effect.id}", f"approval:{grant.id}", "AUTHORIZED_BY_GRANT")
 
     for outcome in records["outcome"]:
         if outcome.effect_id is not None:
@@ -157,6 +185,7 @@ async def build_lineage(
         "nodes": list(nodes.values()),
         "edges": edges,
         "missing_refs": missing,
-        "projection": "PARTIAL_LINKS" if missing else "COMPLETE",
+        "projection": "PARTIAL_LINKS" if missing or truncated_sources else "COMPLETE",
+        "truncated_sources": truncated_sources,
         "trace_spans_available": False,
     }
