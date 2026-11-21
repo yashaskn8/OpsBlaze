@@ -66,6 +66,8 @@ type Lineage = {
 type QueueHealth = {
   pending_outbox: number;
   active_incidents: number;
+  unresolved_effects: number;
+  aged_unresolved_effects: number;
   oldest_pending_seconds: number;
   oldest_active_phase_seconds: number;
   pending_age_p95_seconds: number;
@@ -861,13 +863,13 @@ function App() {
         <p className="muted">Durable, tenant-scoped snapshot. This is not a multi-host capacity certification.</p>
         {queueError && <p role="alert" className="error">{queueError}</p>}
         {queueHealth && <div aria-live="polite">
-          <p><strong>{queueHealth.active_incidents}</strong> active incidents · <strong>{queueHealth.pending_outbox}</strong> pending outbox intents</p>
+          <p><strong>{queueHealth.active_incidents}</strong> active incidents · <strong>{queueHealth.pending_outbox}</strong> pending outbox intents · <strong>{queueHealth.unresolved_effects}</strong> unresolved effects</p>
           <p className="muted">Pending age p95: {queueHealth.pending_age_p95_seconds}s · Oldest pending: {queueHealth.oldest_pending_seconds}s · Oldest active phase: {queueHealth.oldest_active_phase_seconds}s</p>
           <p className="muted">Maximum pending delivery attempts: {queueHealth.max_pending_attempts} · Stuck threshold: {queueHealth.stuck_after_seconds}s</p>
-          {(queueHealth.aged_active_incidents > 0 || queueHealth.aged_pending_outbox > 0) &&
+          {(queueHealth.aged_active_incidents > 0 || queueHealth.aged_pending_outbox > 0 || queueHealth.aged_unresolved_effects > 0) &&
             <p role="alert" className="error">
-              Backlog requires review: {queueHealth.aged_active_incidents} aged active incidents and {queueHealth.aged_pending_outbox} aged outbox intents. Check workers before admitting more work.
-            </p>}
+              Backlog requires review: {queueHealth.aged_active_incidents} aged active incidents, {queueHealth.aged_pending_outbox} aged outbox intents and {queueHealth.aged_unresolved_effects} aged unresolved effects. Inspect receipts and worker health before admitting more work.
+            </p>
         </div>}
       </section>
       <section className="incident-history">
