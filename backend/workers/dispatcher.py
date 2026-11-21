@@ -16,6 +16,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from backend.database import get_session_maker
 from backend.models import Incident, OutboxEntry
 from backend.settings import get_settings
+from backend.telemetry import initialize_tracing, trace_operation
 from backend.temporal_connection import connect_temporal
 from backend.workflows.incident import IncidentWorkflow
 from backend.workers.heartbeat import heartbeat_loop
@@ -141,19 +142,23 @@ async def dispatch_once(
         return False
     entry_id = intent[0]
     try:
-        if intent[3] == "PROJECT_EXPERIENCE":
-            from backend.workers.experience_projector import project_experience_outbox
-
-            result = await project_experience_outbox(
-                sessions, intent[1], intent[2], intent[4],
-            )
-            if result != "CAPTURED":
-                log.info(
-                    "E1 projection intentionally skipped: intent_id=%s state=%s",
-                    entry_id, result,
+        with trace_operation(
+            "opsblaze.outbox.deliver", incident_id=UUID(intent[2]),
+            event_id=entry_id,
+        ):
+            if intent[3] == "PROJECT_EXPERIENCE":
+                from backend.workers.experience_projector import project_experience_outbox
+    
+                result = await project_experience_outbox(
+                    sessions, intent[1], intent[2], intent[4],
                 )
-        else:
-            await deliver_intent(client, intent)
+                if result != "CAPTURED":
+                    log.info(
+                        "E1 projection intentionally skipped: intent_id=%s state=%s",
+                        entry_id, result,
+                    )
+            else:
+                await deliver_intent(client, intent)
     except Exception:
         log.exception("Outbox dispatch failed: intent_id=%s", entry_id)
         # The lease ensures bounded retry; never drop the intent.
@@ -168,6 +173,7 @@ async def dispatch_once(
 
 async def main() -> None:
     settings = get_settings()
+    initialize_tracing(settings)
     client = await connect_temporal(settings)
     sessions = get_session_maker()
     heartbeat = asyncio.create_task(heartbeat_loop("dispatcher"))
