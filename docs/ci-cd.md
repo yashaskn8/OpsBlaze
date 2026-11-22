@@ -110,3 +110,15 @@ canonical RSA JWKs and negative redirect/malformed/oversized behaviors.
 CI does not call a real IdP. Passing locally does not prove access-token
 issuance, secure client redirects, revocation delivery, independent
 reviewer control, key rotation or G1 certification.
+
+
+## External adapter G2 evidence contract tests
+
+Python unit/security CI now exercises a source-only G2 qualification
+verifier with synthetic, disposable traces and generated public/private
+test-key pairs kept in test memory. It rejects altered or missing trace
+bytes, unsafe redispatch of unresolved effects, forged success on stale
+fences, mismatched provider digests, duplicate scenarios and signatures,
+and same-key role impersonation. CI does not invoke an external provider,
+create real provider credentials or enable any real effect adapter.
+The `EVIDENCE_INTEGRITY_VALID_ONLY` result does not certify G2.

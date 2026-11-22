@@ -44,8 +44,18 @@ delivery remain untested until real provider access is supplied.
 - Require separate security and release owners before enabling a digest.
   No model, fixture PASS or local operator may grant an external capability.
 
-Implemented lab evidence: seventeen disposable simulator scenarios. No real
-adapter has been enabled; a green `LAB_PASS` is not provider certification.
+Implemented lab evidence: seventeen disposable simulator scenarios. A separate
+**offline G2 qualification-evidence verifier** now checks a frozen provider,
+adapter, target, action, code/config/contract digest and bounded retention
+window against 14 required external failure scenarios. It hashes each local
+raw trace (without publishing trace content), validates conservative failure
+states and single-send behavior, and verifies three distinct externally
+pinned Ed25519 review signatures for provider witness, security reviewer and
+release owner. This is source-and-signature integrity checking: a synthetic
+file or a valid signature is **not** evidence of a real provider execution,
+independent signer custody, provider-side fencing, or true idempotency
+retention. No real adapter has been enabled; a green `LAB_PASS` or
+`EVIDENCE_INTEGRITY_VALID_ONLY` is not provider certification.
 
 ## G3 — Multi-host recovery, restore and operational reliability: BLOCKED
 

@@ -269,3 +269,54 @@ a trusted independent authority must verify each human key's custody,
 role, independence and timing before a future production release gate.
 This script writes no registry or production state, and is never called
 by the live admission, rollout or effect boundaries.
+
+
+## G2 external-adapter qualification evidence (offline, not an adapter)
+
+`python -m backend.adapters.qualification` verifies a separately collected
+**disposable, authorized integration-environment evidence package**.
+It never connects to the provider and is deliberately not registered with
+OpsBlaze's effect gateway. Do not commit raw traces, tokens, private keys,
+provider response bodies or identifying target data.
+
+The operator supplies `--manifest manifest.json`, `--traces-dir traces/`,
+`--reviews reviews.json`, `--provider-key provider-public.pem`,
+`--security-key security-public.pem`, and
+`--release-owner-key release-owner-public.pem`. Public keys must be
+independently pinned outside the candidate's evidence bundle.
+
+The manifest schema is `opsblaze-g2-qualification-v1` and requires a
+specific non-simulator adapter, provider, disposable environment, target
+family, effect action and source commit. Frozen SHA-256 digests bind the
+adapter source, configuration, provider contract, status reader and separate
+postcondition reader. A declared provider-side atomic refusal contract must
+be either `ATOMIC_FENCE_AND_CAS` or
+`PROVIDER_TRANSACTIONAL_REFUSAL`. The idempotency-retention window
+must exceed the maximum declared retry window. These are signed claims
+that still need independent verification against actual provider behavior.
+
+The manifest records exactly 14 mandatory fault scenarios:
+first apply, duplicate call, competing workers, stale fence, target-version
+CAS, permit expiry, external edit, effect identity mismatch, lost response
+after commit, status outage, independent-oracle outage, partial apply,
+retention gap and status recovery. Each scenario fixes its allowed
+conservative result, attempt count, applied-effect count and required
+status/oracle observations. An uncertain effect must never be sent again
+blindly. For every scenario `traces/<scenario>.jsonl` must exist and match
+its pinned SHA-256; input is bounded to 2 MB per file. The tool reports
+only aggregate proof metadata, not the private trace content.
+
+Reviewers sign `REVIEW_EVIDENCE_ONLY` records using domain-separated
+Ed25519 signatures. Three **distinct** externally pinned public keys are
+required for `provider_witness`, `security_reviewer`, and
+`release_owner`. The signed record binds the entire immutable manifest
+digest, role, fingerprint and signing-time claim. The timestamp and role
+are not independently certified by the signature alone.
+
+Even with an internally consistent package, output is only
+`EVIDENCE_INTEGRITY_VALID_ONLY` with `production_gate_passed=false`
+and `external_effects_enabled=false`. G2 remains blocked until a named
+real provider, externally witnessed tests, independently reviewed contracts,
+actual retention guarantees and authorized release evidence exist. No
+candidate AI, local operator or fixture may turn this report into a
+production permission.

@@ -200,6 +200,16 @@ python -m backend.benchmarks.local_capacity --output ci-artifacts/local-capacity
 These numbers are not PostgreSQL, Temporal, multi-host, or production SLO
 measurements. Real workload capacity and failover campaigns remain open.
 
+### External-adapter qualification evidence (G2, offline only)
+
+The `backend.adapters.qualification` CLI now verifies frozen
+provider/target contracts, 14 required failure-scenario trace digests and
+three independently pinned evidence-review signatures. It reads only
+locally supplied files, and a valid package returns
+`EVIDENCE_INTEGRITY_VALID_ONLY` — **not** production permission.
+No external adapter is installed, selected or enabled. See
+[the G2 qualification evidence contract](docs/feature-notes.md#g2-external-adapter-qualification-evidence-offline-not-an-adapter).
+
 ### Live IdP metadata preflight (G1, read-only)
 
 For an authorized real OIDC provider, configure
