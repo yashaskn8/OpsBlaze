@@ -219,8 +219,19 @@ jobs:
           path: ci-artifacts/pg-restore-evidence.json
           if-no-files-found: warn
           retention-days: 14
-      - name: Verify migration downgrade
-        run: alembic downgrade base
+      - name: Verify source-RLS rollback fails closed, then downgrade to base
+        run: |
+          set -euo pipefail
+          alembic downgrade 0036_projector_outbox_rls
+          # Preserve deny-by-default source RLS with the old service grants.
+          for table in incident outcome_revision evidence experience_consent tenant_experience_consent experience_capsule; do
+            count="$(PGPASSWORD=ci-only-projector psql -h 127.0.0.1 -U opsblaze_projector -d opsblaze -v ON_ERROR_STOP=1 -Atqc "SELECT count(*) FROM public.$table")"
+            if [ "$count" != "0" ]; then
+              echo "::error::Projector source access survived rollback: $table"
+              exit 1
+            fi
+          done
+          alembic downgrade base
 
   codeql:
     name: CodeQL ${{ matrix.language }} analysis

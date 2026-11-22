@@ -59,10 +59,12 @@ adapter has been enabled; a green `LAB_PASS` is not provider certification.
 Implemented lab evidence: native Postgres/Temporal e2e, lost ACK tests,
 history replay, and a two-worker handoff with parallel dispatcher calls.
 A CI-only PostgreSQL dump/restore rehearsal now verifies a synthetic
-revocation/capsule sentinel, schema revision, completed outbox intent and
-source RLS policies, re-applied projector role grants, restricted login and
-denied source excerpts in a temporary isolated database. It does NOT restore
-Temporal persistence, prove backup erasure, or establish multi-host HA.
+revocation/capsule sentinel, schema revision, completed outbox intent,
+source RLS policies and re-applied restricted grants in an isolated database.
+It proves revoked source rows stay hidden and a forged capsule insert is
+refused. CI also checks that source-RLS rollback retains deny-by-default
+reads for the old projector role. It does NOT restore Temporal persistence,
+prove backup erasure, or establish multi-host HA.
 
 ## G4 — Protected independent held-out E5 evaluation: BLOCKED
 

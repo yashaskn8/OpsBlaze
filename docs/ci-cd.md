@@ -48,3 +48,13 @@ This verifies **local schema/data continuity only**. It is neither a
 backup-erasure certificate nor a Temporal-backup restore, multi-host RPO/RTO,
 production restore, or disaster-recovery signoff. Those remain blocked in G3
 and G6.
+
+## Fail-closed source-RLS rollback
+
+Before the full migration downgrade, CI rolls back the source-RLS migration
+and connects as the limited projector role to all six source tables. Each
+must return zero rows: RLS stays enabled without source-read policies even
+though earlier column-level grants may remain. The isolated restore rehearsal
+also verifies that revoked source records are hidden and that a forged
+capsule insert is refused after the database grants are reapplied. These
+checks do not certify production backup erasure or multi-host recovery.

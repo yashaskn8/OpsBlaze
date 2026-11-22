@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import insert, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.engine import make_url
 
@@ -190,6 +191,45 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
                         current_user, 'public.evidence', 'redacted_excerpt', 'SELECT'
                     )
                 """)) is False
+                assert await conn.scalar(text("""
+                    SELECT has_table_privilege(
+                        current_user, 'public.experience_capsule', 'INSERT'
+                    )
+                """)) is True, "projector capsule write grant was not restored"
+                # The restored revoked incident has no pending projection;
+                # RLS must not re-expose its source rows.
+                for table, column, value in (
+                    ("incident", "id", incident_id),
+                    ("outcome_revision", "id", outcome_id),
+                    ("experience_consent", "incident_id", incident_id),
+                    ("tenant_experience_consent", "tenant_id", tenant),
+                    ("experience_capsule", "id", capsule_id),
+                ):
+                    visible = await conn.scalar(text(
+                        f"SELECT count(*) FROM public.{table} "
+                        f"WHERE {column} = :value"
+                    ), {"value": value})
+                    assert visible == 0, f"restored RLS exposed revoked {table}"
+            try:
+                async with restricted.begin() as conn:
+                    await conn.execute(text("""
+                        INSERT INTO public.experience_capsule (
+                            id, tenant_id, incident_id, outcome_revision_id,
+                            consent_epoch, tenant_consent_epoch, target_digest,
+                            evidence_ids, status, expires_at
+                        ) VALUES (
+                            :id, :tenant, :incident, :outcome,
+                            2, 3, :digest, '[]'::json, 'VALID',
+                            now() + interval '1 day'
+                        )
+                    """), {
+                        "id": uuid4(), "tenant": tenant, "incident": incident_id,
+                        "outcome": outcome_id, "digest": "0" * 64,
+                    })
+            except DBAPIError:
+                pass  # RLS must deny a forged capsule without active intent.
+            else:
+                raise AssertionError("restored role can forge revoked capsule")
         finally:
             await restricted.dispose()
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -205,6 +245,8 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
             "outbox_rls_policies_preserved": policy,
             "projector_denied_source_excerpts": True,
             "projector_restored_login_checked": True,
+            "revoked_source_rows_hidden_from_projector": True,
+            "forged_capsule_denied_after_restore": True,
             "production_certified": False,
         }, indent=2), encoding="utf-8")
         print("Native PostgreSQL restore sentinel PASS (single-host simulator only)")
