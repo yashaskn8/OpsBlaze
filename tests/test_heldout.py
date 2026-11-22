@@ -239,3 +239,61 @@ def test_evaluation_file_rejects_invalid_utf8(tmp_path):
     bad_encoding.write_bytes(b'{"manifest": "' + bytes([0xFF]) + b'"}')
     with pytest.raises(ValueError, match="UTF-8"):
         read_json(str(bad_encoding))
+
+
+def test_family_cost_regression_fails_even_if_total_cost_improves():
+    manifest, oracle, runs = fixture()
+    for i, case in enumerate(oracle["cases"]):
+        case["family"] = "family-a" if i < 32 else "family-b"
+        runs["candidate"][i]["probe_cost_units"] = 0 if i < 32 else 3
+    manifest["oracle_sha256"] = canonical_digest(oracle)
+    report = evaluate_heldout(manifest, oracle, runs)
+    metrics = report["metrics"]
+    assert metrics["candidate_probe_cost_units"] < metrics["incumbent_probe_cost_units"]
+    assert metrics["conservative_95pct_interval"][0] > 0
+    assert metrics["regressed_families"] == []
+    assert metrics["resource_regressed_families"] == ["family-b"]
+    assert report["state"] == "OFFLINE_FAIL"
+
+
+def test_minor_family_latency_regression_is_not_masked_by_global_p95():
+    # Ten slow cases are less than 5% of the sample, so the global p95
+    # remains fast even though this entire family is slower.
+    cases = [
+        {
+            "case_id": f"latency-{i:03d}",
+            "family": "small-family" if i >= 246 else "large-family",
+            "expected": "PROPOSE" if i < 200 else "ABSTAIN",
+            "negative_control": i >= 200,
+        }
+        for i in range(256)
+    ]
+    oracle = {"cases": cases, "oracle_version": "synthetic-latency"}
+    manifest = {
+        "version": 1, "oracle_sha256": canonical_digest(oracle),
+        "min_pairs": 256, "training_families": [],
+    }
+    runs = {
+        "candidate": [
+            {
+                "case_id": case["case_id"],
+                "decision": case["expected"],
+                "probe_cost_units": 1,
+                "latency_ms": 100 if i >= 246 else 20,
+            }
+            for i, case in enumerate(cases)
+        ],
+        "incumbent": [
+            {
+                "case_id": case["case_id"],
+                "decision": "ABSTAIN",
+                "probe_cost_units": 2, "latency_ms": 40,
+            }
+            for case in cases
+        ],
+    }
+    report = evaluate_heldout(manifest, oracle, runs)
+    metrics = report["metrics"]
+    assert metrics["candidate_p95_latency_ms"] < metrics["incumbent_p95_latency_ms"]
+    assert metrics["resource_regressed_families"] == ["small-family"]
+    assert report["state"] == "OFFLINE_FAIL"
