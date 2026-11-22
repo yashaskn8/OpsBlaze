@@ -33,3 +33,18 @@ Not covered by this CI: real IdP/browser E2E, external effect fencing,
 multi-host failover and disaster recovery, independent blinded evaluation,
 production-scale load evidence, accessibility audit, and backup-erasure
 certification. Those remain explicit production blockers.
+
+
+## Native PostgreSQL restore rehearsal
+
+The PostgreSQL CI job uses native `pg_dump`/`pg_restore` to recover a
+temporary, isolated database on the same runner. A synthetic sentinel
+covers the incident, verified outcome, incident/tenant consent revocations,
+revoked capsule, completed projection intent, migration revision and RLS
+settings. It fails closed on any mismatch and uploads metadata-only evidence.
+The restored database and dump are removed after the check.
+
+This verifies **local schema/data continuity only**. It is neither a
+backup-erasure certificate nor a Temporal-backup restore, multi-host RPO/RTO,
+production restore, or disaster-recovery signoff. Those remain blocked in G3
+and G6.

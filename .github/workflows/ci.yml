@@ -198,6 +198,24 @@ jobs:
         run: python -m backend.adapters.conformance
       - name: Native PG and Temporal integration
         run: python -m pytest -q -o addopts= -m pg_e2e
+      - name: Native PostgreSQL dump/restore rehearsal (simulator only)
+        run: |
+          set -euo pipefail
+          python scripts/pg_restore_smoke.py seed --manifest "$RUNNER_TEMP/restore-sentinel.json"
+          restore_db="opsblaze_restore_$GITHUB_RUN_ID"
+          sudo -u postgres createdb -O opsblaze "$restore_db"
+          trap 'sudo -u postgres dropdb --if-exists "$restore_db"; rm -f "$RUNNER_TEMP/restore-sentinel.json" "$RUNNER_TEMP/opsblaze.dump"' EXIT
+          PGPASSWORD=opsblaze pg_dump -h 127.0.0.1 -U opsblaze -d opsblaze -F c -f "$RUNNER_TEMP/opsblaze.dump"
+          PGPASSWORD=opsblaze pg_restore -h 127.0.0.1 -U opsblaze --no-owner --no-acl --exit-on-error -d "$restore_db" "$RUNNER_TEMP/opsblaze.dump"
+          export OPSBLAZE_DATABASE_URL="postgresql+asyncpg://opsblaze:opsblaze@127.0.0.1:5432/$restore_db"
+          python scripts/pg_restore_smoke.py verify --manifest "$RUNNER_TEMP/restore-sentinel.json" --output ci-artifacts/pg-restore-evidence.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: native-pg-restore-evidence
+          path: ci-artifacts/pg-restore-evidence.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Verify migration downgrade
         run: alembic downgrade base
 

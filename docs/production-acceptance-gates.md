@@ -58,7 +58,10 @@ adapter has been enabled; a green `LAB_PASS` is not provider certification.
 
 Implemented lab evidence: native Postgres/Temporal e2e, lost ACK tests,
 history replay, and a two-worker handoff with parallel dispatcher calls.
-These do not establish multi-host HA.
+A CI-only PostgreSQL dump/restore rehearsal now verifies a synthetic
+revocation/capsule sentinel, schema revision, completed outbox intent and
+source RLS policies in a temporary isolated database. It does NOT restore
+Temporal persistence, prove backup erasure, or establish multi-host HA.
 
 ## G4 — Protected independent held-out E5 evaluation: BLOCKED
 
