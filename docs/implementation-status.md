@@ -25,6 +25,9 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 | E7 — Strategy routing | Pinned tenant-scoped RUNBOOK/HANDOFF choice, deterministic cost cap | Evaluated contextual policies, measured route accuracy, memory/agent variants |
 | E8 — Adapter conformance | Seventeen disposable simulator checks, including forged-permit reservation binding, status-retention gaps, external version edits and oracle outages, code-digest pinning and expiry gate | External adapter conformance/fault-injection/retention campaign, real provider effect retention evidence |
 
+The latest [cross-system hardening audit](hardening-audit-2026-11-22.md)
+tracks verified fixes, residual risks and the still-blocked release gates.
+
 ## Current demonstrated checks
 
 GitHub Actions now runs ten jobs including Python coverage and correctness lint, adversarial and dependency security checks, CodeQL Python/TypeScript, native Temporal and PostgreSQL integration/migration checks, and a gated attested **simulator-only** release bundle. The build is Docker-free. See [CI/CD controls](ci-cd.md). A green pipeline does **not** prove external deployment safety or eliminate unreachable code.
