@@ -555,9 +555,9 @@ observation for every case. The runner rejects duplicate/missing pairs,
 training-family overlap, oracle changes, unbounded costs, invalid
 negative controls and unregistered or unblinded trial fields. It rejects
 holdout families with fewer than 10 cases, and an aggregate improvement
-cannot override a correctness regression in any incident family.
-It returns aggregate and per-family safety/correctness, p95 latency,
-cost and conservative paired-correctness intervals without echoing
+cannot override a correctness, probe-cost or p95-latency regression
+in any incident family. It returns aggregate and per-family safety,
+correctness, p95 latency, cost and conservative paired-correctness intervals without echoing
 individual hidden labels. Input reads are byte-bounded and UTF-8-only.
 The `blinded_cases` helper exposes only case IDs and family
 names to a separately sandboxed candidate runner.
