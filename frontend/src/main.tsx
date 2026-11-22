@@ -878,6 +878,7 @@ function App() {
 
   return (
     <main>
+      <a className="skip-link" href="#incident-snapshot">Skip to incident snapshot</a>
       <header><span className="mark">OB</span><div><strong>OpsBlaze</strong><small>Controlled incident recovery lab</small></div></header>
       <div className="intro"><p className="eyebrow">TITAN-20 / OPERATOR WORKBENCH</p><h1>Incident operations</h1><p>Admit incidents, inspect evidence, and review simulator-only recovery.</p></div>
       <div className="layout">
@@ -913,9 +914,10 @@ function App() {
             </div>
           </form>
         </section>
-        <section aria-live="polite">
-          <h2>Incident snapshot</h2>
-          <p className={"connection " + connection.toLowerCase()}>
+        <section id="incident-snapshot" tabIndex={-1} aria-labelledby="incident-snapshot-title">
+          <h2 id="incident-snapshot-title">Incident snapshot</h2>
+          <p role="status" aria-live="polite" aria-atomic="true"
+            className={"connection " + connection.toLowerCase()}>
             {connection === "LIVE" ? "Live updates — server snapshot authoritative"
               : connection === "STALE" ? "Connection stale — action controls disabled"
               : "Synchronizing incident events"}
@@ -1105,6 +1107,7 @@ function App() {
                 <span>Redrive queued as projection #{record.redriven_to}</span>}
               {canOperate && !record.reviewed &&
                 <button type="button" className="secondary"
+                  aria-label={"Acknowledge review for projection " + record.id}
                   disabled={deadLetterBusy}
                   onClick={() => void acknowledgeDeadLetter(record)}>
                   Acknowledge review
@@ -1113,6 +1116,7 @@ function App() {
                 record.code === "RETRY_EXHAUSTED" &&
                 record.redriven_to === null &&
                 <button type="button" className="secondary"
+                  aria-label={"Authorize single redrive for projection " + record.id}
                   disabled={deadLetterBusy}
                   onClick={() => void redriveDeadLetter(record)}>
                   Authorize single redrive

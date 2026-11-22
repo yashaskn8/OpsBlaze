@@ -80,3 +80,31 @@ textarea:focus { outline: 2px solid #76a8ff; }
 .approval-review h4 { font-size: 14px; margin: 4px 0 12px; }
 .approval-review label { margin: 14px 0; }
 .review-reason { margin-top: 14px; }
+
+
+/* G6 keyboard/accessibility preparation: visible skip link and focus ring. */
+.skip-link {
+  position: absolute;
+  left: 16px;
+  top: -90px;
+  z-index: 10;
+  padding: 12px 16px;
+  border-radius: 8px;
+  color: #fff;
+  background: #162d5e;
+  text-decoration: underline;
+}
+.skip-link:focus-visible {
+  top: 12px;
+}
+:where(button, a, input, textarea, select):focus-visible {
+  outline: 3px solid #b6ddff;
+  outline-offset: 3px;
+}
+:where(button, a, input, textarea, select):disabled {
+  cursor: not-allowed;
+}
+#incident-snapshot:focus {
+  outline: 3px solid #b6ddff;
+  outline-offset: 3px;
+}

@@ -139,6 +139,11 @@ production-capable E5 result. No candidate policy is assigned live.
 - Independent security/tenant penetration testing, privacy review,
   retention/backup purge verification, UI keyboard/accessibility audit,
   load and multi-replica SSE validation, dependency/supply-chain review.
+  The React workbench now has a keyboard skip-to-snapshot link, visible
+  focus indications, scoped status announcements and individually named
+  dead-letter actions. These source-level improvements and a successful
+  frontend build do NOT substitute for assistive-technology/browser
+  accessibility testing.
 - Approvals and measured raw evidence must identify exact git commit,
   migrations, external adapter digest, data split, hardware and owner.
   Any change to a critical artifact invalidates its previous attestation.
