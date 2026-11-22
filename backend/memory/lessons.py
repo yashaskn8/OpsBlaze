@@ -77,6 +77,10 @@ async def valid_source(
         or newest.label != "VERIFIED"
     ):
         return None
+    from backend.experiences import capsule_evidence_intact
+
+    if not await capsule_evidence_intact(session, capsule, incident.target_id):
+        return None
     return capsule
 
 

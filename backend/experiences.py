@@ -219,6 +219,71 @@ async def capture_capsule(
     return capsule
 
 
+
+def capsule_evidence_refs(capsule: ExperienceCapsule) -> list[UUID] | None:
+    """Reject malformed, duplicated or unbounded stored evidence references."""
+    stored = capsule.evidence_ids
+    if not isinstance(stored, list) or len(stored) > 25:
+        return None
+    refs: list[UUID] = []
+    try:
+        for raw in stored:
+            if not isinstance(raw, str):
+                return None
+            ref = UUID(raw)
+            if str(ref) != raw:
+                return None
+            refs.append(ref)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return refs if len(set(refs)) == len(refs) else None
+
+
+def capsule_evidence_matches(
+    capsule: ExperienceCapsule, target_id: str,
+    proofs: dict[UUID, Evidence],
+) -> bool:
+    """A capsule cannot borrow other targets' proof or altered source data."""
+    refs = capsule_evidence_refs(capsule)
+    if refs is None:
+        return False
+    for ref in refs:
+        proof = proofs.get(ref)
+        if (
+            proof is None
+            or proof.tenant_id != capsule.tenant_id
+            or proof.incident_id != capsule.incident_id
+            or proof.target_id != target_id
+            or proof.validity != "VALID"
+            or proof.classification != "INTERNAL"
+            or not isinstance(proof.redacted_excerpt, str)
+            or hashlib.sha256(proof.redacted_excerpt.encode("utf-8")).hexdigest()
+                != proof.sha256
+        ):
+            return False
+    return True
+
+
+async def capsule_evidence_intact(
+    session: AsyncSession, capsule: ExperienceCapsule, target_id: str,
+) -> bool:
+    refs = capsule_evidence_refs(capsule)
+    if refs is None:
+        return False
+    if not refs:
+        return True
+    evidence = (await session.scalars(
+        select(Evidence).where(
+            Evidence.id.in_(refs),
+            Evidence.tenant_id == capsule.tenant_id,
+            Evidence.incident_id == capsule.incident_id,
+        )
+    )).all()
+    return capsule_evidence_matches(
+        capsule, target_id, {record.id: record for record in evidence},
+    )
+
+
 async def read_capsules_page(
     session: AsyncSession, tenant_id: str,
     cursor: UUID | None = None, limit: int = 50,
@@ -285,11 +350,29 @@ async def read_capsules_page(
         query.order_by(ExperienceCapsule.id).limit(limit + 1)
     )).all()
     scanned = rows[:limit]
+    # Batch up to 1,250 referenced rows so malformed stored JSON cannot
+    # cause unbounded reads or an N+1 query on the normal page path.
+    source_ids: set[UUID] = set()
+    for capsule, _target_id in scanned:
+        refs = capsule_evidence_refs(capsule)
+        if refs is not None:
+            source_ids.update(refs)
+    ordered_ids = sorted(source_ids)
+    proofs: dict[UUID, Evidence] = {}
+    for offset in range(0, len(ordered_ids), 400):
+        evidence = (await session.scalars(
+            select(Evidence).where(
+                Evidence.id.in_(ordered_ids[offset:offset + 400]),
+                Evidence.tenant_id == tenant_id,
+            )
+        )).all()
+        proofs.update({record.id: record for record in evidence})
     visible = [
         capsule for capsule, target_id in scanned
         if capsule.target_digest == hashlib.sha256(
             f"{tenant_id}:{target_id}".encode("utf-8")
         ).hexdigest()
+        and capsule_evidence_matches(capsule, target_id, proofs)
     ]
     # Advance past scanned (possibly invalid) rows, not only returned rows.
     # Otherwise a forged digest could produce an infinite cursor replay.

@@ -418,3 +418,69 @@ async def test_redteam_experiences_http_cursor_and_tenant_scope(sessions_fixture
             assert (await client.get("/v1/experiences")).status_code == 422
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_redteam_capsule_evidence_integrity_blocks_poisoned_memory(
+    sessions_fixture,
+):
+    """A valid source must not cite another incident's evidence or a forged hash."""
+    from datetime import datetime, timezone
+    from backend.memory.lessons import valid_source
+    from backend.models import Evidence
+
+    async with sessions_fixture() as session:
+        first = await admit_incident(
+            session, "alpha", "proof-source",
+            IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        second = await admit_incident(
+            session, "alpha", "other-proof",
+            IncidentCreate(target_id="payments"),
+        )
+    async with sessions_fixture() as session:
+        await set_consent(session, "alpha", first.id, 0, True)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutcomeRevision(
+                id=uuid4(), tenant_id="alpha", incident_id=first.id,
+                revision=1, label="VERIFIED", effect_id=None,
+                witness_source="SIMULATOR_WITNESS", observed_version=1,
+                reason="verified test source",
+            ))
+    async with sessions_fixture() as session:
+        capsule = await capture_capsule(session, "alpha", first.id)
+        assert await valid_source(session, "alpha", capsule.id) is not None
+
+    proof_id = uuid4()
+    excerpt = '{"healthy":false}'
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(Evidence(
+                id=proof_id, tenant_id="alpha", incident_id=second.id,
+                target_id="payments", source="simulator.health",
+                source_version="simulator-v1", target_version=1,
+                observed_at=datetime.now(timezone.utc),
+                sha256=hashlib.sha256(excerpt.encode()).hexdigest(),
+                redacted_excerpt=excerpt, classification="INTERNAL",
+                validity="VALID",
+            ))
+            stored = await session.get(ExperienceCapsule, capsule.id)
+            stored.evidence_ids = [str(proof_id)]
+    async with sessions_fixture() as session:
+        assert await list_capsules(session, "alpha") == []
+        assert await valid_source(session, "alpha", capsule.id) is None
+    async with sessions_fixture() as session:
+        async with session.begin():
+            stored = await session.get(ExperienceCapsule, capsule.id)
+            stored.evidence_ids = [str(uuid4())] * 26
+    async with sessions_fixture() as session:
+        assert await list_capsules(session, "alpha") == []
+        assert await valid_source(session, "alpha", capsule.id) is None
+    async with sessions_fixture() as session:
+        async with session.begin():
+            stored = await session.get(ExperienceCapsule, capsule.id)
+            stored.evidence_ids = []
+    async with sessions_fixture() as session:
+        assert [row.id for row in await list_capsules(session, "alpha")] == [capsule.id]
