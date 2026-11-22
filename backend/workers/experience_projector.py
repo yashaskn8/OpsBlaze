@@ -153,8 +153,27 @@ async def main() -> None:
         # PG identity is verified at runtime, not merely trusted from an env var.
         async with engine.connect() as conn:
             login = await conn.scalar(text("SELECT current_user"))
+            # A matching username alone is not a privilege boundary.
+            role = (await conn.execute(text(
+                "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb "
+                "FROM pg_catalog.pg_roles WHERE rolname = current_user"
+            ))).one_or_none()
+            forbidden = await conn.scalar(text(
+                "SELECT "
+                "has_table_privilege(current_user, 'public.effect_receipt', 'SELECT') "
+                "OR has_table_privilege(current_user, 'public.effect_receipt', 'UPDATE') "
+                "OR has_table_privilege(current_user, 'public.incident_plan', 'SELECT') "
+                "OR has_column_privilege(current_user, 'public.incident', "
+                "'created_by', 'SELECT') "
+                "OR has_column_privilege(current_user, 'public.outcome_revision', "
+                "'reason', 'SELECT') "
+                "OR has_column_privilege(current_user, 'public.evidence', "
+                "'redacted_excerpt', 'SELECT')"
+            ))
         if login != make_url(database_url).username:
             raise RuntimeError("projector database identity mismatch")
+        if role is None or any(role) or forbidden is not False:
+            raise RuntimeError("projector database privileges exceed restricted scope")
         heartbeat = asyncio.create_task(
             heartbeat_loop("experience_projector", sessions),
         )
