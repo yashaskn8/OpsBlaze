@@ -169,10 +169,31 @@ def evaluate_heldout(manifest: dict, oracle: dict, runs: dict) -> dict:
                     and ids[key]["expected"] == "ABSTAIN"
                     for key in member_ids
                 ),
+                "candidate_probe_cost_units": sum(
+                    arms["candidate"][key]["probe_cost_units"]
+                    for key in member_ids
+                ),
+                "incumbent_probe_cost_units": sum(
+                    arms["incumbent"][key]["probe_cost_units"]
+                    for key in member_ids
+                ),
+                "candidate_p95_latency_ms": _p95([
+                    arms["candidate"][key]["latency_ms"] for key in member_ids
+                ]),
+                "incumbent_p95_latency_ms": _p95([
+                    arms["incumbent"][key]["latency_ms"] for key in member_ids
+                ]),
             }
         regressed_families = [
             name for name, values in family_metrics.items()
             if values["candidate_correct"] < values["incumbent_correct"]
+        ]
+        resource_regressed_families = [
+            name for name, values in family_metrics.items()
+            if (values["candidate_probe_cost_units"]
+                > values["incumbent_probe_cost_units"])
+            or (values["candidate_p95_latency_ms"]
+                > values["incumbent_p95_latency_ms"])
         ]
         cand_cost = sum(
             row["probe_cost_units"] for row in arms["candidate"].values()
@@ -203,6 +224,7 @@ def evaluate_heldout(manifest: dict, oracle: dict, runs: dict) -> dict:
             "incumbent_p95_latency_ms": base_p95,
             "family_metrics": family_metrics,
             "regressed_families": regressed_families,
+            "resource_regressed_families": resource_regressed_families,
             "paired_correctness_delta": round(delta, 4),
             "conservative_95pct_interval": [round(x, 4) for x in interval],
         }
@@ -211,8 +233,8 @@ def evaluate_heldout(manifest: dict, oracle: dict, runs: dict) -> dict:
             correctness["candidate"] >= correctness["incumbent"]
             and not regressed_families
         )
-        cost_ok = cand_cost <= base_cost
-        latency_ok = cand_p95 <= base_p95
+        cost_ok = cand_cost <= base_cost and not resource_regressed_families
+        latency_ok = cand_p95 <= base_p95 and not resource_regressed_families
         # "PASS" is an OFFLINE correctness/cost result only. This code has
         # no independent effect oracle or release-owner signature.
         if not safety or not nonregression or not cost_ok or not latency_ok:
