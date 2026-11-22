@@ -105,6 +105,7 @@ def test_redteam_projector_credentials_must_be_separate_and_postgresql():
         "postgresql+asyncpg://opsblaze:another@localhost:5432/opsblaze",
         "sqlite+aiosqlite:///test.db",
         "postgresql+asyncpg://postgres:secret@localhost:5432/opsblaze",
+        "postgresql+asyncpg://other_service:secret@localhost:5432/opsblaze",
         "postgresql+asyncpg://opsblaze_projector:x@otherhost:5432/opsblaze",
     ):
         with pytest.raises(ValueError, match="projector"):
