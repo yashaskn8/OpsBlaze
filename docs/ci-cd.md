@@ -98,3 +98,15 @@ identifiers, and readiness denial under missing topology. CI's native
 PostgreSQL migration/rollback tests include the new schema; the external
 G3 acceptance gate still requires real physical/virtual host failover,
 Temporal and PostgreSQL restores, and independently witnessed RPO/RTO.
+
+## G1 real-provider configuration preflight
+
+`backend.security.provider_preflight` is a command-line-only, read-only
+HTTPS metadata verifier with a fixed maximum document size, no redirects,
+credential forwarding, proxy inheritance or bearer token usage. Its
+mocked-provider regressions enforce exact issuer/JWKS pins, same-issuer
+code/PKCE endpoints, accepted S256 and RS256 metadata, minimum-strength
+canonical RSA JWKs and negative redirect/malformed/oversized behaviors.
+CI does not call a real IdP. Passing locally does not prove access-token
+issuance, secure client redirects, revocation delivery, independent
+reviewer control, key rotation or G1 certification.

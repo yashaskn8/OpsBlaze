@@ -200,6 +200,20 @@ python -m backend.benchmarks.local_capacity --output ci-artifacts/local-capacity
 These numbers are not PostgreSQL, Temporal, multi-host, or production SLO
 measurements. Real workload capacity and failover campaigns remain open.
 
+### Live IdP metadata preflight (G1, read-only)
+
+For an authorized real OIDC provider, configure
+`OPSBLAZE_ENVIRONMENT=production`, `OPSBLAZE_OIDC_ISSUER`,
+`OPSBLAZE_OIDC_JWKS_URL` and `OPSBLAZE_OIDC_AUDIENCE` in a protected
+environment (not a committed file). Then run
+`python -m backend.security.provider_preflight`. This performs
+read-only, bounded HTTPS discovery and verifies issuer/JWKS pins,
+PKCE S256, authorization-code endpoints and strong RS256 signing-key
+metadata. It follows no redirects, sends no API tokens, and will not
+write or authorize anything. A passing result does **not** prove the
+provider's access-token signature policy, browser callback, real
+revocation events, human role separation or production acceptance.
+
 ### Three-authority policy evidence verification (G5, non-authorizing)
 
 An offline verifier checks separate evaluator, security-reviewer and
