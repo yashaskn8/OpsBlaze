@@ -36,6 +36,16 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
     try:
         async with restricted_engine.connect() as conn:
             assert await conn.scalar(text("SELECT current_user")) == "opsblaze_projector"
+            # Startup must reject privileged identities even when named correctly.
+            flags = (await conn.execute(text(
+                "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb "
+                "FROM pg_catalog.pg_roles WHERE rolname = current_user"
+            ))).one()
+            assert not any(flags)
+            for table in ("effect_receipt", "incident_plan"):
+                assert await conn.scalar(text(
+                    "SELECT has_table_privilege(current_user, :table, 'SELECT')"
+                ), {"table": f"public.{table}"}) is False
             assert (await conn.scalar(text(
                 "SELECT has_table_privilege(current_user, 'public.effect_receipt', 'UPDATE')"
             ))) is False
