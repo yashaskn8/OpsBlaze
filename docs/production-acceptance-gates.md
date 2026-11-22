@@ -111,6 +111,14 @@ record remains undelivered, eligible, not dead-lettered, and bound to
 its original retry count and stable tenant/incident workflow ID.
 The restricted projector must not see that pending operational intent.
 This tests PostgreSQL continuity only, not a Temporal snapshot restore.
+A new optional read-only G3 recovery audit scans bounded aged/attempted
+workflow starts, reads live Temporal descriptions by stable identity,
+and reports lost-ACK history, unavailable or identity-mismatched
+histories, contradictory projection/outbox states, and unresolved or
+invalid persisted effect receipts. It uses bounded network timeouts,
+never holds a PostgreSQL transaction across Temporal reads, and
+fails closed on truncated scans. It does **not** restart histories,
+re-send a side effect, or certify independent recovery.
 CI also checks that source-RLS rollback retains deny-by-default reads for
 the old projector role. It does NOT restore Temporal persistence,
 prove backup erasure, or establish multi-host HA.

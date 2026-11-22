@@ -208,3 +208,29 @@ attempt, false delivery, altered timestamp, forged workflow identity)
 and require fail-closed validation. The rehearsal **does not dispatch**
 this row. PostgreSQL state continuity is not proof of restored Temporal
 histories, external effect reconciliation or actual cross-host RPO/RTO.
+
+
+## G3 read-only PostgreSQL/Temporal recovery consistency
+
+Operators may run `python -m backend.workers.recovery_audit --stale-seconds 300
+--limit 20` with read access to the OpsBlaze database and an authorized
+Temporal namespace. The report is `AUDIT_ONLY` and contains bounded
+incident IDs, outbox IDs, non-sensitive state/reason codes and
+`safe_action=INSPECT_ONLY`, never provider payloads or secrets.
+It inspects attempted or acknowledged aged `START_WORKFLOW` rows,
+compares them against live Temporal descriptions (including workflow ID and
+workflow type), and classifies possible lost start ACKs, missing/unknown
+histories, projection conflicts, duplicate start rows, conflicting
+delivery/dead-letter markers, and unresolved or invalid simulator effect
+receipts. A lost history or unreachable Temporal service is **UNKNOWN**,
+not proof that the remote effect never occurred.
+
+CLI scanning is limited to 50 start records, 8 receipt rows per scanned
+start, 4 concurrent Temporal reads, and 3-second describe deadlines.
+Truncated scans return a nonzero CLI exit code, not a success certificate.
+The command reads only; it never invokes `start_workflow`,
+`signal`, `acknowledge_claim`, a provider adapter, or database writes.
+Both synthetic adversarial cases and the native local Temporal SDK test
+are exercised by CI. This is cross-system consistency **inspection only**;
+it cannot prove native persisted Temporal restore, multi-host HA, RPO/RTO,
+or independently witnessed provider effects.

@@ -672,3 +672,13 @@ version. A green `LAB_PASS` applies **only** to the disposable simulator:
 it is not proof that a third-party adapter has stable idempotency keys,
 atomic fences, independent postconditions or sufficient retention.
 No external effect connector is enabled.
+
+
+### Read-only PostgreSQL/Temporal recovery audit (G3)
+
+`python -m backend.workers.recovery_audit --stale-seconds 300 --limit 20`
+compares aged, attempted/acknowledged PostgreSQL starts with Temporal's
+reported workflow identity and conservatively classifies unresolved
+simulator receipts. It is bounded and non-mutating; audit findings require
+human review. Unknown history never authorizes a retry, and a green scan
+is not proof of multi-host recovery or a production certification.
