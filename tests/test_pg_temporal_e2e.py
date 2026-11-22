@@ -60,7 +60,9 @@ async def test_postgres_temporal_simulator_recovery() -> None:
                 )
                 assert created.status_code == 202, created.text
                 incident_id = created.json()["id"]
-                assert await dispatch_once(env.client, sessions)
+                # Other PG integration tests leave unrelated tenants' intents.
+                # Dispatch only the incident's tenant to avoid cross-test claims.
+                assert await dispatch_once(env.client, sessions, tenant_filter="demo")
 
                 async def await_state(expected: str) -> dict:
                     # Native Temporal startup can be slower under parallel CI
@@ -121,7 +123,7 @@ async def test_postgres_temporal_simulator_recovery() -> None:
                     json={"decision": "APPROVE"},
                 )
                 assert decision.status_code == 201, decision.text
-                assert await dispatch_once(env.client, sessions)
+                assert await dispatch_once(env.client, sessions, tenant_filter="demo")
 
                 final = await await_state("VERIFIED")
                 assert final["status_projection"] == "VERIFIED"
