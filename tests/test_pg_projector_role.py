@@ -41,6 +41,28 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
                 "SELECT has_column_privilege(current_user, 'public.incident',"
                 "'status_projection', 'UPDATE')"
             ))) is False
+            # Allow only capture inputs, not origin actor, raw probe excerpts
+            # or the adjudicator's free-form outcome rationale.
+            for table, column, allowed in (
+                ("incident", "target_id", True),
+                ("incident", "created_by", False),
+                ("incident", "request_sha256", False),
+                ("outcome_revision", "label", True),
+                ("outcome_revision", "reason", False),
+                ("outcome_revision", "witness_source", False),
+                ("evidence", "id", True),
+                ("evidence", "redacted_excerpt", False),
+                ("evidence", "target_id", False),
+                ("evidence", "sha256", False),
+            ):
+                permitted = await conn.scalar(text(
+                    "SELECT has_column_privilege(current_user, "
+                    ":table_name, :column_name, 'SELECT')"
+                ), {
+                    "table_name": f"public.{table}",
+                    "column_name": column,
+                })
+                assert permitted is allowed, (table, column)
 
         async with main() as session:
             incident = await admit_incident(
@@ -131,6 +153,9 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
             " WHERE tenant_id = :tenant",
             "SELECT id FROM public.effect_receipt LIMIT 1",
             "SELECT id FROM public.incident_plan LIMIT 1",
+            "SELECT created_by FROM public.incident LIMIT 1",
+            "SELECT redacted_excerpt FROM public.evidence LIMIT 1",
+            "SELECT reason FROM public.outcome_revision LIMIT 1",
         ):
             async with restricted_engine.connect() as conn:
                 with pytest.raises(DBAPIError):

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, or_, select, text, update
+from sqlalchemy.orm import load_only
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.adapters.simulator import utc
@@ -149,7 +150,9 @@ async def capture_capsule(
                 raise ConsentConflict("tenant has revoked experience reuse")
             tenant_epoch = 0 if tenant_policy is None else tenant_policy.epoch
             incident = await session.scalar(
-                select(Incident).where(
+                select(Incident)
+                .options(load_only(Incident.id, Incident.tenant_id, Incident.target_id))
+                .where(
                     Incident.id == incident_id, Incident.tenant_id == tenant_id
                 ).with_for_update()
             )
@@ -162,6 +165,7 @@ async def capture_capsule(
                 raise ConsentConflict("incident has not opted in to experience capture")
             outcome = await session.scalar(
                 select(OutcomeRevision)
+                .options(load_only(OutcomeRevision.id, OutcomeRevision.label))
                 .where(
                     OutcomeRevision.tenant_id == tenant_id,
                     OutcomeRevision.incident_id == incident_id,

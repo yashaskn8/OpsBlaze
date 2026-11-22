@@ -84,19 +84,22 @@ python -m backend.workers.experience_projector
 The process refuses an unset URL, SQLite or application-owner credentials.
 It verifies `current_user` at startup, uses that database session for
 claiming, projection, dead-letter handling and heartbeats, and never
-connects to Temporal. The grant file permits source reads, capsule
-inserts and restricted memory-intent updates. Row-level security prevents
-it modifying Temporal outbox rows; column-level permissions prevent
-changing approval, effect, incident-status or consent-decision fields.
+connects to Temporal. The grant file permits only necessary incident, outcome and evidence
+source **columns** (not raw excerpts, original actor IDs, request hashes or
+free-form outcome reasons), capsule inserts and restricted memory-intent
+updates. Row-level security hides Temporal outbox rows entirely;
+column-level write permissions prevent changing approval, effect,
+incident-status or consent-decision fields.
 CI tests these permissions using a real limited PostgreSQL role.
 
 Production readiness requires the dedicated credentials and a fresh
 `experience_projector` heartbeat, in addition to the previous roles.
 
-**Permission boundary:** The worker still needs visibility into previous
-outbox rows for ordering. Full per-row outbox payload confidentiality,
-cross-host scheduling, external provider privacy and independent security
-review remain open; do not treat the CI role test as production
+**Permission boundary:** The projector cannot read Temporal signal payloads.
+A restricted boolean function checks preceding workflow delivery. Source
+metadata remains readable across tenants by this service role; stronger
+source-row isolation, cross-host scheduling, backup privacy and independent
+security review remain open. Do not treat CI role tests as production
 certification.
 
 ### Durable queue health (B4)

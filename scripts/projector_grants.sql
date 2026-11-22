@@ -7,7 +7,9 @@
 --
 -- RLS hides Temporal outbox rows (including their payloads). A migration-owned
 -- boolean probe checks earlier signal completion without exposing those rows.
--- This protects Temporal payloads, NOT all incident/evidence source columns.
+-- Only required source columns are readable; source excerpts and outcome
+-- reasons remain inaccessible even if the projector process is compromised.
+-- Row-level isolation of source metadata still needs a separate boundary.
 -- The role must be non-superuser, non-owner and must not have BYPASSRLS.
 
 DO $$
@@ -29,11 +31,19 @@ GRANT USAGE ON SCHEMA public TO opsblaze_projector;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM opsblaze_projector;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM opsblaze_projector;
 
+-- Source reads are column-limited. Adding a source field must require a
+-- deliberate grant and an updated PostgreSQL negative regression test.
+GRANT SELECT (id, tenant_id, target_id)
+    ON TABLE public.incident TO opsblaze_projector;
+GRANT SELECT (id, tenant_id, incident_id, revision, label)
+    ON TABLE public.outcome_revision TO opsblaze_projector;
+GRANT SELECT (id, tenant_id, incident_id, validity, captured_at)
+    ON TABLE public.evidence TO opsblaze_projector;
+
+-- Local-only projection bookkeeping still requires the full projection row
+-- and consent/capsule metadata. Temporal outbox rows stay hidden by RLS.
 GRANT SELECT ON TABLE
-    public.incident,
     public.outbox,
-    public.outcome_revision,
-    public.evidence,
     public.experience_consent,
     public.tenant_experience_consent,
     public.experience_capsule

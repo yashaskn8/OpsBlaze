@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import load_only
 
 from backend.experiences import ConsentConflict, capture_capsule
 from backend.models import OutcomeRevision
@@ -50,7 +51,9 @@ async def project_experience_outbox(
         raise InvalidProjectionIntent("experience projection IDs must be canonical")
     async with sessions() as session:
         latest = await session.scalar(
-            select(OutcomeRevision).where(
+            select(OutcomeRevision)
+            .options(load_only(OutcomeRevision.id, OutcomeRevision.label))
+            .where(
                 OutcomeRevision.tenant_id == tenant_id,
                 OutcomeRevision.incident_id == source_id,
             ).order_by(OutcomeRevision.revision.desc()).limit(1)
