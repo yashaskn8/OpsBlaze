@@ -167,3 +167,16 @@ def test_preflight_does_not_read_any_credentials_or_log_response(provider, caplo
         verify_provider(settings, client)
     assert "rotation-1" not in caplog.text
     assert keys["keys"][0]["n"] not in caplog.text
+
+
+def test_https_default_port_is_same_origin_but_unrelated_ports_are_not():
+    from backend.security.provider_preflight import _same_secure_origin
+
+    issuer = "https://idp.example.test:443/tenant"
+    assert _same_secure_origin(issuer, "https://idp.example.test/tenant/keys")
+    assert not _same_secure_origin(
+        issuer, "https://idp.example.test:9443/tenant/keys"
+    )
+    assert not _same_secure_origin(
+        issuer, "https://idp.example.test/tenant/keys?other=1"
+    )

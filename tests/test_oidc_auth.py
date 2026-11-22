@@ -710,3 +710,63 @@ async def test_redteam_redrive_requires_prior_operator_review_and_independent_ad
         assert child.redrive_authorized_by != source.dead_letter_reviewed_by
         assert child.redrive_reason == "STORE_RESTORED"
         assert child.payload == {"outcome_id": str(outcome_id)}
+
+
+@pytest.mark.parametrize(("issuer", "jwks"), [
+    ("https://idp.example.test/", "https://idp.example.test:9443/jwks"),
+    ("https://idp.example.test:9443/", "https://idp.example.test/jwks"),
+    ("https://idp.example.test/?tenant=other", "https://idp.example.test/jwks"),
+    ("https://idp.example.test/#fragment", "https://idp.example.test/jwks"),
+    ("https://idp.example.test/", "https://idp.example.test/jwks?kid=other"),
+    ("https://idp.example.test/", "https://idp.example.test/jwks#fragment"),
+    ("https://user@idp.example.test/", "https://idp.example.test/jwks"),
+    ("https://idp.example.test/tenant/../other", "https://idp.example.test/jwks"),
+    ("https://idp.example.test/tenant", "https://idp.example.test/%2Fkeys"),
+    ("https://idp.example.test/tenant", r"https://idp.example.test/\keys"),
+    ("https://idp.example.test/", "https://idp.example.test:bad/jwks"),
+    ("https://idp.example.test/", "https://other.example.test/jwks"),
+    ("http://idp.example.test/", "https://idp.example.test/jwks"),
+])
+def test_redteam_ambiguous_cross_port_or_cross_origin_jwks_is_not_configured(
+    issuer, jwks,
+):
+    settings = Settings(
+        environment="production",
+        oidc_issuer=issuer, oidc_audience="opsblaze-api",
+        oidc_jwks_url=jwks,
+    )
+    assert configured_identity(settings) is False
+
+
+def test_same_default_https_port_is_a_single_valid_origin():
+    assert configured_identity(Settings(
+        environment="production",
+        oidc_issuer="https://idp.example.test:443/tenant",
+        oidc_audience="opsblaze-api",
+        oidc_jwks_url="https://idp.example.test/tenant/keys",
+    ))
+
+
+@pytest.mark.asyncio
+async def test_redteam_ambiguous_jwks_config_fails_before_fetching_token_keys(
+    signer, production_client, monkeypatch,
+):
+    called = False
+
+    def should_not_fetch(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("invalid identity config attempted external key fetch")
+
+    monkeypatch.setattr("backend.auth.signing_key", should_not_fetch)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        environment="production",
+        oidc_issuer=ISSUER, oidc_audience=AUDIENCE,
+        oidc_jwks_url="https://idp.example.test:9443/jwks",
+    )
+    response = await production_client.get(
+        "/v1/auth/me",
+        headers=bearer(signer()),
+    )
+    assert response.status_code == 503
+    assert called is False

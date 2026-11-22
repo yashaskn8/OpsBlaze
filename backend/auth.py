@@ -41,19 +41,46 @@ def jwks_client(url: str) -> PyJWKClient:
 
 
 def configured_identity(settings: Settings) -> bool:
+    """Reject ambiguous or cross-origin production issuer/JWKS configuration.
+
+    A trusted JWKS URI is controlled by the operator, never a token header.
+    The network origin includes the port, not just the hostname.
+    """
     values = (settings.oidc_issuer, settings.oidc_audience, settings.oidc_jwks_url)
-    if any(not value for value in values):
+    if any(not isinstance(value, str) or not value for value in values):
         return False
-    issuer = urlparse(settings.oidc_issuer)
-    jwks = urlparse(settings.oidc_jwks_url)
-    return (
-        issuer.scheme == jwks.scheme == "https"
-        and bool(issuer.hostname and jwks.hostname)
-        and issuer.hostname == jwks.hostname
-        and not issuer.username and not jwks.username
-        and not issuer.password and not jwks.password
-        and not jwks.fragment
-    )
+    try:
+        issuer = urlparse(settings.oidc_issuer)
+        jwks = urlparse(settings.oidc_jwks_url)
+        if (
+            issuer.scheme != "https" or jwks.scheme != "https"
+            or not issuer.hostname or issuer.hostname != jwks.hostname
+            or (issuer.port or 443) != (jwks.port or 443)
+            or any(
+                (uri.username, uri.password, uri.params, uri.query, uri.fragment)
+                != (None, None, "", "", "")
+                for uri in (issuer, jwks)
+            )
+            or not jwks.path.startswith("/")
+            or len(settings.oidc_issuer) > 1024
+            or len(settings.oidc_jwks_url) > 1024
+            or len(settings.oidc_audience) > 256
+        ):
+            return False
+        # Encoded path separators, backslashes and dot segments create
+        # different URL interpretations across proxies and HTTP clients.
+        for uri in (issuer, jwks):
+            raw = uri.path
+            lower = raw.lower()
+            if (
+                "\\" in raw or "%2f" in lower or "%5c" in lower
+                or any(segment in {".", ".."} for segment in raw.split("/"))
+            ):
+                return False
+        return True
+    except ValueError:
+        # urlparse / .port can reject malformed IPv6 and port numbers.
+        return False
 
 
 def supported_jws_header(header: dict) -> bool:

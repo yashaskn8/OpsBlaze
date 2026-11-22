@@ -146,3 +146,13 @@ outer trace digest is recalculated. A matching SHA and signed manifest
 alone no longer suffice; the G2 verifier requires typed source events
 that agree with the claimed scenario. This still does not independently
 prove that the claimed external provider events happened.
+
+## G1 production identity-origin red-team checks
+
+The production authentication configuration now rejects cross-port JWKS,
+issuer or JWKS credentials, query/fragment components, ambiguous path
+segments and encoded slashes before any token signing-key retrieval.
+The read-only IdP preflight uses the same HTTPS default-port normalization.
+Regression tests check that invalid configuration fails the API closed and
+never invokes a key fetch. They are not a substitute for real-provider OIDC
+login, key rotation, revocation and browser PKCE campaigns.

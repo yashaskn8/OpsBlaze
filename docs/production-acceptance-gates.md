@@ -26,8 +26,12 @@ pending-grant invalidation. An optional, credential-free **live** provider
 preflight checks exact OIDC issuer and JWKS pins, same-issuer authorization
 and token endpoints, authorization-code/PKCE S256 advertisement, RS256
 metadata, and bounded RSA signing keys. Redirects and malformed/oversized
-metadata fail closed. The repository cannot run this against an unspecified
-identity provider; live issuance, browser callback and signed revocation
+metadata fail closed. The production API now uses the same stricter
+issuer/JWKS HTTPS-origin and port checks and rejects query strings,
+fragments, credentials and ambiguous path encodings before key lookup;
+negative tests ensure malformed configuration never reaches the token
+signer. The repository cannot run this against an unspecified identity
+provider; live issuance, browser callback and signed revocation
 delivery remain untested until real provider access is supplied.
 
 ## G2 — External target adapter qualification: BLOCKED

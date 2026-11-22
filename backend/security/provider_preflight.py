@@ -57,10 +57,10 @@ def _same_secure_origin(a: str, b: str) -> bool:
         first.scheme == second.scheme == "https"
         and bool(first.hostname and second.hostname)
         and first.hostname == second.hostname
-        and first.port == second.port
+        and (first.port or 443) == (second.port or 443)
         and not any((
-            first.username, first.password, first.fragment, first.query,
-            second.username, second.password, second.fragment, second.query,
+            first.username, first.password, first.params, first.fragment, first.query,
+            second.username, second.password, second.params, second.fragment, second.query,
         ))
     )
 
