@@ -240,11 +240,18 @@ def _reject_nonstandard_number(value: str):
 
 
 def read_json(path: str) -> dict:
-    file = Path(path)
-    if file.stat().st_size > MAX_BYTES:
+    # Bound the actual bytes read, not just a pre-read stat: an untrusted
+    # file may change between stat() and open().
+    with Path(path).open("rb") as stream:
+        payload = stream.read(MAX_BYTES + 1)
+    if len(payload) > MAX_BYTES:
         raise ValueError("evaluation file exceeds fixed size bound")
+    try:
+        document = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("evaluation file must be UTF-8") from exc
     value = json.loads(
-        file.read_text(encoding="utf-8"),
+        document,
         object_pairs_hook=_unique_pairs,
         parse_constant=_reject_nonstandard_number,
     )
