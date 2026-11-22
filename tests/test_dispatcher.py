@@ -226,3 +226,51 @@ async def test_delivery_errors_never_log_provider_or_payload_secrets(
     async with sessions_fixture() as session:
         row = await session.scalar(select(OutboxEntry))
         assert row.delivered_at is None and row.attempt == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_claim_store_outage_is_retryable_and_redacted(
+    sessions_fixture, caplog,
+):
+    with patch(
+        "backend.workers.dispatcher.claim_intent",
+        new_callable=AsyncMock,
+        side_effect=ConnectionError("SECRET_DATABASE_URL=not-for-logs"),
+    ), caplog.at_level("WARNING", logger="backend.workers.dispatcher"):
+        assert not await dispatch_once(AsyncMock(), sessions_fixture)
+    assert "SECRET_DATABASE_URL" not in caplog.text
+    assert "not-for-logs" not in caplog.text
+    assert "ConnectionError" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_ack_outage_keeps_intent_for_stable_retry(
+    sessions_fixture, caplog,
+):
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "tenant", "ack-outage",
+            IncidentCreate(target_id="checkout"),
+        )
+    client = AsyncMock()
+    with patch(
+        "backend.workers.dispatcher.deliver_intent",
+        new_callable=AsyncMock,
+    ) as deliver, patch(
+        "backend.workers.dispatcher.acknowledge_claim",
+        new_callable=AsyncMock,
+        side_effect=ConnectionError("SECRET_PROVIDER_RESPONSE=not-for-logs"),
+    ), caplog.at_level("WARNING", logger="backend.workers.dispatcher"):
+        assert await dispatch_once(client, sessions_fixture)
+        deliver.assert_awaited_once()
+    assert "SECRET_PROVIDER_RESPONSE" not in caplog.text
+    assert "not-for-logs" not in caplog.text
+    assert "ConnectionError" in caplog.text
+    async with sessions_fixture() as session:
+        pending = await session.scalar(select(OutboxEntry).where(
+            OutboxEntry.incident_id == incident.id,
+        ))
+        assert pending.delivered_at is None and pending.attempt == 1

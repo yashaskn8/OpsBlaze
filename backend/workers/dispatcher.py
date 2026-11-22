@@ -74,7 +74,16 @@ async def dispatch_once(
     client: Client, sessions: async_sessionmaker[AsyncSession],
     *, tenant_filter: str | None = None,
 ) -> bool:
-    intent = await claim_intent(sessions, tenant_filter=tenant_filter)
+    try:
+        intent = await claim_intent(sessions, tenant_filter=tenant_filter)
+    except Exception as exc:
+        # PostgreSQL may be temporarily unreachable. A claim failure must
+        # not terminate the dispatcher or invent a successful delivery.
+        log.warning(
+            "Temporal outbox claim deferred: class=%s",
+            type(exc).__name__,
+        )
+        return False
     if intent is None:
         return False
     entry_id = intent[0]
@@ -93,7 +102,15 @@ async def dispatch_once(
         )
         # Preserve the leased intent for durable retry; no false ACK.
         return True
-    await acknowledge_claim(sessions, intent)
+    try:
+        await acknowledge_claim(sessions, intent)
+    except Exception as exc:
+        # Temporal may have committed while PostgreSQL was unavailable.
+        # Preserve the row for stable-ID retry; do not reissue an effect.
+        log.warning(
+            "Temporal outbox acknowledgment deferred: intent_id=%s class=%s",
+            entry_id, type(exc).__name__,
+        )
     return True
 
 
