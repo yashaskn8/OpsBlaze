@@ -102,6 +102,12 @@ async def set_state(
                 return
             if state not in allowed.get(receipt.state, set()):
                 raise EffectConflict(f"invalid receipt transition {receipt.state} -> {state}")
+            if state in {"SENT", "CONFIRMED", "VERIFIED"} and (
+                not isinstance(receipt.permit_digest, str)
+                or len(receipt.permit_digest) != 64
+                or any(c not in "0123456789abcdef" for c in receipt.permit_digest)
+            ):
+                raise EffectConflict("effect has no verifiable original permit binding")
             if state == "CONFIRMED" and (
                 type(observed_version) is not int
                 or observed_version != receipt.expected_version + 1
@@ -281,6 +287,45 @@ async def reconcile_effect(
             except EffectConflict:
                 return await reconcile_effect(sessions, adapter, effect_id)
         expected_observed = observed_version
+
+    if state == "CONFIRMED" and (
+        type(original_version) is not int
+        or type(expected_observed) is not int
+        or expected_observed != original_version + 1
+    ):
+        # An inconsistent local confirmation is itself unsafe, regardless
+        # of whether the remote status service is currently reachable.
+        try:
+            await set_state(sessions, effect_id, "NEEDS_REVIEW")
+        except EffectConflict:
+            return await reconcile_effect(sessions, adapter, effect_id)
+        return "NEEDS_REVIEW"
+
+    if state == "CONFIRMED":
+        # Initial apply may have committed before an independent witness was
+        # available. On later reconciliation, validate original effect
+        # identity again; target health alone must not manufacture success.
+        try:
+            persisted_version = await adapter.query_effect(effect_id)
+        except (TimeoutError, ConnectionError):
+            return "UNKNOWN"
+        except EffectIdentityConflict:
+            try:
+                await set_state(sessions, effect_id, "NEEDS_REVIEW")
+            except EffectConflict:
+                return await reconcile_effect(sessions, adapter, effect_id)
+            return "NEEDS_REVIEW"
+        if persisted_version is None:
+            return "UNKNOWN"
+        if (
+            type(persisted_version) is not int
+            or persisted_version != expected_observed
+        ):
+            try:
+                await set_state(sessions, effect_id, "NEEDS_REVIEW")
+            except EffectConflict:
+                return await reconcile_effect(sessions, adapter, effect_id)
+            return "NEEDS_REVIEW"
 
     if (
         expected_observed is None

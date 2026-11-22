@@ -562,3 +562,84 @@ async def test_adapter_permit_identity_failure_is_manual_review(lab):
         assert receipt.state == "NEEDS_REVIEW"
         assert receipt.attempt_count == 1
         assert (await session.scalars(select(SimulatorAppliedEffect))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_confirmed_effect_rechecks_permit_before_oracle_verification(lab):
+    sessions, incident_id, _adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "5" * 64,
+    )
+
+    class UnavailableWitness(SimulatorAdapter):
+        async def observe(self, tenant_id, target_id):
+            raise ConnectionError("independent oracle unavailable")
+
+    assert await execute_simulator_effect(
+        sessions, UnavailableWitness(sessions), permit,
+    ) == "UNKNOWN"
+    async with sessions() as session:
+        receipt = await session.scalar(select(EffectReceipt))
+        effect_id = receipt.id
+        assert receipt.state == "CONFIRMED" and receipt.attempt_count == 1
+
+    async with sessions() as session:
+        async with session.begin():
+            row = await session.get(SimulatorAppliedEffect, effect_id)
+            row.permit_digest = "0" * 64
+
+    assert await reconcile_effect(
+        sessions, SimulatorAdapter(sessions), effect_id,
+    ) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        assert (await session.get(EffectReceipt, effect_id)).state == "NEEDS_REVIEW"
+
+
+@pytest.mark.asyncio
+async def test_confirmed_effect_missing_status_remains_unverified(lab):
+    sessions, incident_id, _adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "6" * 64,
+    )
+
+    class UnavailableWitness(SimulatorAdapter):
+        async def observe(self, tenant_id, target_id):
+            raise TimeoutError("independent oracle unavailable")
+
+    assert await execute_simulator_effect(
+        sessions, UnavailableWitness(sessions), permit,
+    ) == "UNKNOWN"
+    async with sessions() as session:
+        effect_id = (await session.scalar(select(EffectReceipt))).id
+
+    class ForgottenStatus(SimulatorAdapter):
+        async def query_effect(self, effect_id):
+            return None
+
+    assert await reconcile_effect(
+        sessions, ForgottenStatus(sessions), effect_id,
+    ) == "UNKNOWN"
+    async with sessions() as session:
+        row = await session.get(EffectReceipt, effect_id)
+        assert row.state == "CONFIRMED" and row.attempt_count == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_dispatch_refuses_legacy_receipt_without_permit_binding(lab):
+    from backend.effects.gateway import set_state
+
+    sessions, incident_id, _adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "7" * 64,
+    )
+    effect_id = await prepare_receipt(sessions, permit)
+    async with sessions() as session:
+        async with session.begin():
+            row = await session.get(EffectReceipt, effect_id)
+            row.permit_digest = None
+
+    with pytest.raises(EffectConflict, match="permit binding"):
+        await set_state(sessions, effect_id, "SENT")
+    async with sessions() as session:
+        row = await session.get(EffectReceipt, effect_id)
+        assert row.state == "PREPARED" and row.attempt_count == 0

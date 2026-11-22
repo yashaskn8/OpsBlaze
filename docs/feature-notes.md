@@ -159,3 +159,9 @@ receipts have a NULL permit binding and cannot be newly dispatched or
 promoted to VERIFIED; they require manual review. The disposable adapter
 conformance suite can still inspect direct synthetic effects without a
 receipt. This is not an external adapter authorization.
+
+Reconciliation also rechecks the applied-effect identity when an existing
+receipt is CONFIRMED but its postcondition is not yet independently verified.
+A missing status lookup leaves the receipt unresolved; an inconsistent
+binding requires manual review. Internal state transitions refuse to dispatch
+or verify legacy receipts without a valid digest.
