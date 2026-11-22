@@ -78,8 +78,24 @@ async def test_postgres_temporal_simulator_recovery() -> None:
                         if observed == expected:
                             return body
                         await asyncio.sleep(0.1)
+                    # Include only workflow status/event types; no raw
+                    # activity payloads, incident evidence or secrets.
+                    from backend.workers.dispatcher import workflow_id
+                    from uuid import UUID
+
+                    handle = env.client.get_workflow_handle(
+                        workflow_id("demo", UUID(incident_id))
+                    )
+                    try:
+                        description = await handle.describe()
+                        workflow_state = getattr(
+                            description.status, "name", str(description.status)
+                        )
+                    except Exception:
+                        workflow_state = "HISTORY_UNAVAILABLE"
                     raise AssertionError(
-                        f"incident never reached {expected}; observed {observed}"
+                        f"incident never reached {expected}; observed {observed}; "
+                        f"Temporal workflow state: {workflow_state}"
                     )
 
                 await await_state("AWAITING_APPROVAL")
