@@ -94,3 +94,47 @@ async def test_api_rejects_cross_tenant_read_and_bad_token(sessions) -> None:
             assert denied.status_code == 401
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_status_changes_reset_active_phase_age(sessions):
+    """Manual transitions must not inherit the previous phase's queue age."""
+    from datetime import datetime, timedelta, timezone
+    from backend.adapters.simulator import utc
+    from backend.models import Incident
+    from backend.services import acknowledge_review, request_cancellation
+
+    old = datetime.now(timezone.utc) - timedelta(days=2)
+    async with sessions() as session:
+        cancelling = await admit_incident(
+            session, "tenant", "clock-cancel", IncidentCreate(target_id="checkout"),
+        )
+    async with sessions() as session:
+        reviewing = await admit_incident(
+            session, "tenant", "clock-review", IncidentCreate(target_id="payments"),
+        )
+    async with sessions() as session:
+        async with session.begin():
+            one = await session.get(Incident, cancelling.id)
+            one.phase_entered_at = old
+            two = await session.get(Incident, reviewing.id)
+            two.phase_entered_at = old
+            two.status_projection = "AWAITING_APPROVAL"
+            two.status_version = 2
+
+    checkpoint = datetime.now(timezone.utc) - timedelta(seconds=5)
+    async with sessions() as session:
+        cancelled = await request_cancellation(
+            session, "tenant", cancelling.id, 1,
+        )
+        assert cancelled.status_projection == "CANCEL_REQUESTED"
+        assert utc(cancelled.phase_entered_at) >= checkpoint
+    async with sessions() as session:
+        acknowledged = await acknowledge_review(
+            session, "tenant", reviewing.id, 2,
+        )
+        assert acknowledged.status_projection == "REVIEW_ACKNOWLEDGED"
+        assert utc(acknowledged.phase_entered_at) >= checkpoint
+    async with sessions() as session:
+        assert utc((await session.get(Incident, cancelling.id)).phase_entered_at) >= checkpoint
+        assert utc((await session.get(Incident, reviewing.id)).phase_entered_at) >= checkpoint

@@ -84,8 +84,13 @@ async def dispatch_once(
             event_id=entry_id,
         ):
             await deliver_intent(client, intent)
-    except Exception:
-        log.exception("Temporal outbox dispatch failed: intent_id=%s", entry_id)
+    except Exception as exc:
+        # Temporal exception text may include sensitive payloads. Persist a
+        # safe class label only; never log the exception or traceback.
+        log.warning(
+            "Temporal outbox delivery deferred: intent_id=%s class=%s",
+            entry_id, type(exc).__name__,
+        )
         # Preserve the leased intent for durable retry; no false ACK.
         return True
     await acknowledge_claim(sessions, intent)

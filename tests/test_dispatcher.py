@@ -200,3 +200,29 @@ async def test_redteam_older_dispatcher_cannot_ack_a_newer_delivery_claim(
         row = await session.get(OutboxEntry, followup_id)
         assert row.attempt == 2
         assert row.delivered_at is None
+
+
+@pytest.mark.asyncio
+async def test_delivery_errors_never_log_provider_or_payload_secrets(
+    sessions_fixture, caplog,
+):
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    async with sessions_fixture() as session:
+        await admit_incident(
+            session, "tenant", "log-redaction",
+            IncidentCreate(target_id="private-service"),
+        )
+    with patch(
+        "backend.workers.dispatcher.deliver_intent",
+        new_callable=AsyncMock,
+        side_effect=ConnectionError("PRIVATE_PROVIDER_TOKEN=do-not-log"),
+    ), caplog.at_level("WARNING", logger="backend.workers.dispatcher"):
+        assert await dispatch_once(AsyncMock(), sessions_fixture)
+    assert "do-not-log" not in caplog.text
+    assert "PRIVATE_PROVIDER_TOKEN" not in caplog.text
+    assert "ConnectionError" in caplog.text
+    async with sessions_fixture() as session:
+        row = await session.scalar(select(OutboxEntry))
+        assert row.delivered_at is None and row.attempt == 1

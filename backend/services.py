@@ -131,6 +131,7 @@ async def request_cancellation(
         }:
             raise VersionConflict("incident is past the cancellable checkpoint")
         incident.status_projection = "CANCEL_REQUESTED"
+        incident.phase_entered_at = datetime.now(timezone.utc)
         incident.status_version += 1
         session.add(OutboxEntry(incident_id=incident.id, kind="CANCEL_WORKFLOW"))
         session.add(UIEvent(tenant_id=tenant_id, incident_id=incident.id, kind="CANCEL_REQUESTED", projection_version=incident.status_version))
@@ -153,6 +154,7 @@ async def acknowledge_review(
         if incident.status_projection != "AWAITING_APPROVAL":
             raise VersionConflict("incident is not awaiting review")
         incident.status_projection = "REVIEW_ACKNOWLEDGED"
+        incident.phase_entered_at = datetime.now(timezone.utc)
         incident.status_version += 1
         session.add(OutboxEntry(incident_id=incident.id, kind="ACKNOWLEDGE_REVIEW"))
         session.add(UIEvent(tenant_id=tenant_id, incident_id=incident.id, kind="REVIEW_ACKNOWLEDGED", projection_version=incident.status_version))

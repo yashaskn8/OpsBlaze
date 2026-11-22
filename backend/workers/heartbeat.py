@@ -42,6 +42,9 @@ async def record_heartbeat(
             ).on_conflict_do_update(
                 index_elements=["role"],
                 set_={"last_seen": observed},
+                # A delayed heartbeat from another process must never
+                # regress a healthy role's last-seen timestamp.
+                where=WorkerHeartbeat.last_seen <= observed,
             )
             await session.execute(stmt)
 
@@ -80,5 +83,6 @@ async def heartbeat_loop(
             raise
         except Exception:
             # Never claim healthy if the store cannot accept heartbeat.
-            log.exception("worker heartbeat failed: role=%s", role)
+            # DB exceptions can embed connection strings or SQL values.
+            log.warning("worker heartbeat persistence failed: role=%s", role)
         await asyncio.sleep(max(1, get_settings().worker_heartbeat_seconds))

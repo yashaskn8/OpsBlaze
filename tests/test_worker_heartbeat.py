@@ -168,3 +168,18 @@ async def test_redteam_readiness_rejects_general_app_database_for_projector(
             )
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_delayed_heartbeat_cannot_overwrite_newer_presence(sessions_fixture):
+    from backend.models import WorkerHeartbeat
+
+    now = datetime.now(timezone.utc)
+    await record_heartbeat(sessions_fixture, "dispatcher", now)
+    await record_heartbeat(
+        sessions_fixture, "dispatcher", now - timedelta(hours=1),
+    )
+    async with sessions_fixture() as session:
+        row = await session.get(WorkerHeartbeat, "dispatcher")
+        assert row.last_seen.replace(tzinfo=timezone.utc) >= now
+        assert "dispatcher" in await present_workers(session, now, 30)
