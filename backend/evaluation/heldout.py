@@ -289,6 +289,7 @@ def main() -> None:
     parser.add_argument("--trials", required=True)
     parser.add_argument("--preregistration")
     parser.add_argument("--trusted-evaluator-key")
+    parser.add_argument("--recovery-measurements")
     args = parser.parse_args()
     try:
         if bool(args.preregistration) != bool(args.trusted_evaluator_key):
@@ -319,6 +320,17 @@ def main() -> None:
             }
         report = evaluate_heldout(manifest, oracle, runs)
         report["preregistration"] = proof
+        if args.recovery_measurements and report["state"] != "INVALID":
+            from backend.evaluation.recovery_cost import measured_recovery_cost
+
+            measured = measured_recovery_cost(
+                oracle, runs, read_json(args.recovery_measurements),
+            )
+            report["recovery_cost"] = measured
+            report["verified_recovery_per_cost"] = {
+                arm: measured["arms"][arm]["verified_per_million_microcredits"]
+                for arm in ("candidate", "incumbent")
+            }
     except (OSError, ValueError, TypeError):
         report = {
             "state": "INVALID",

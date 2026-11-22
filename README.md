@@ -206,8 +206,10 @@ The offline E5 verifier accepts optional externally pinned Ed25519 signed
 preregistration evidence, binding the fixed test count and exact oracle
 manifest before trial evaluation. See the
 [preregistration contract](docs/feature-notes.md#g4-frozen-offline-evaluation-preregistration-not-policy-approval).
-The verifier detects tampering but **cannot prove signer independence,
-trusted signing time, independent outcome measurement or authorize promotion**.
+The verifier detects tampering; an optional separate recovery measurement
+file calculates verified recovery per full cost including failed, unknown
+and disputed cases. **It cannot prove signer independence, trusted signing
+time, real measurement or authorize promotion.**
 
 ### Native Linux service topology (G3, deployment preparation only)
 

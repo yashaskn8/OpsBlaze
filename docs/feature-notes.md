@@ -206,3 +206,34 @@ result. Without both extra inputs the existing CLI remains explicitly
 independent evaluator, hidden labels, trusted timestamp, or real recovery.
 Current E5 paired correctness does **not** yet compute verified recovery
 per actual total cost. All reports retain `promotion_eligible=false`.
+
+
+### Measured offline recovery-cost input
+
+The same E5 offline CLI accepts `--recovery-measurements separate-outcomes.json`.
+This file is supplied by an independent measurement/witness owner, never
+by a candidate policy, and is bound to both `oracle_sha256` and
+`trials_sha256`. It uses schema `opsblaze-e5-recovery-cost-v1`, with an
+`arms` object containing exactly the candidate and incumbent records.
+Every case of each fixed arm must have the exact fields
+`case_id`, `outcome` (`VERIFIED`, `FAILED`, `UNKNOWN`, `DISPUTED`),
+`witness_sha256` (lowercase 64-hex for VERIFIED, null otherwise),
+`latency_ms`, and five integer nonnegative billing components:
+`probe_microcredits`, `model_microcredits`, `provider_microcredits`,
+`status_microcredits`, `compute_microcredits`.
+
+The primary offline calculation is the count of witness-referenced
+VERIFIED recoveries divided by the **sum of all five cost components
+across all trials**, including unknown, disputed and failed outcomes.
+A negative safety control is never counted as recovered. Outputs
+include counts and costs by arm/family, a case-free aggregate,
+and a ratio comparison using exact integer cross-products; duplicate,
+missing, unbounded and malformed entries fail closed. Zero total cost
+is invalid, not a free infinite improvement.
+
+This input does NOT authenticate external witness independence or whether
+the provided expense records correspond to real provider bills.
+The witness SHA is a reference for independent review, not a proof of
+correctness, and the verifier never outputs case-level oracle answers.
+An unsigned lab dataset remains `UNSIGNED_LAB_ONLY`.
+`promotion_eligible` is always false, irrespective of score.
