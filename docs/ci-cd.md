@@ -60,3 +60,11 @@ though earlier column-level grants may remain. The isolated restore rehearsal
 also verifies that revoked source records are hidden and that a forged
 capsule insert is refused after the database grants are reapplied. These
 checks do not certify production backup erasure or multi-host recovery.
+
+## Pinned GitHub Actions runtime refresh
+
+Checkout and artifact uploads use GitHub's official v5 action commits,
+pinned by full SHA, to remove Node.js 20 runtime deprecation warnings
+without granting broader token permissions. The rest of the existing
+SHA-pinned workflow, native PostgreSQL/Temporal testing and no-deploy
+release gates are unchanged.
