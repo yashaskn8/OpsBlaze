@@ -208,3 +208,19 @@ def test_small_holdout_family_does_not_expose_case_level_results():
     assert report["state"] == "INVALID"
     assert report["reason"] == "insufficient cases in a holdout family"
     assert "metrics" not in report
+
+
+@pytest.mark.parametrize("field,value", [
+    ("expected", "PROPOSE"),
+    ("negative_control", False),
+    ("oracle_label", "ABSTAIN"),
+    ("unregistered_note", "not part of the frozen trial schema"),
+])
+def test_unblinded_or_unregistered_trial_metadata_is_rejected(field, value):
+    manifest, oracle, runs = fixture()
+    runs["candidate"][0][field] = value
+    report = evaluate_heldout(manifest, oracle, runs)
+    assert report["state"] == "INVALID"
+    assert report["reason"] == "unblinded or unexpected trial field"
+    assert report["promotion_eligible"] is False
+    assert "metrics" not in report
