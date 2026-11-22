@@ -287,10 +287,45 @@ def main() -> None:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--oracle", required=True)
     parser.add_argument("--trials", required=True)
+    parser.add_argument("--preregistration")
+    parser.add_argument("--trusted-evaluator-key")
     args = parser.parse_args()
-    report = evaluate_heldout(
-        read_json(args.manifest), read_json(args.oracle), read_json(args.trials),
-    )
+    try:
+        if bool(args.preregistration) != bool(args.trusted_evaluator_key):
+            raise ValueError("signed preregistration requires an external key")
+        manifest = read_json(args.manifest)
+        oracle = read_json(args.oracle)
+        runs = read_json(args.trials)
+        if args.preregistration:
+            from backend.evaluation.preregistration import (
+                load_trusted_public_key, verify_preregistration,
+            )
+
+            registration = read_json(args.preregistration)
+            proof = verify_preregistration(
+                manifest, registration,
+                load_trusted_public_key(args.trusted_evaluator_key),
+            )
+            if (
+                not isinstance(oracle.get("cases"), list)
+                or len(oracle["cases"]) != proof["expected_pairs"]
+            ):
+                raise ValueError("oracle count differs from signed preregistration")
+        else:
+            proof = {
+                "status": "UNSIGNED_LAB_ONLY",
+                "independent_custody_certified": False,
+                "promotion_eligible": False,
+            }
+        report = evaluate_heldout(manifest, oracle, runs)
+        report["preregistration"] = proof
+    except (OSError, ValueError, TypeError):
+        report = {
+            "state": "INVALID",
+            "promotion_eligible": False,
+            "verified_recovery_per_cost": None,
+            "reason": "signed preregistration or evaluation input invalid",
+        }
     print(json.dumps(report, sort_keys=True, indent=2))
     if report["state"] == "INVALID":
         raise SystemExit(2)

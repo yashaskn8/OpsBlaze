@@ -200,6 +200,15 @@ python -m backend.benchmarks.local_capacity --output ci-artifacts/local-capacity
 These numbers are not PostgreSQL, Temporal, multi-host, or production SLO
 measurements. Real workload capacity and failover campaigns remain open.
 
+### Frozen evaluator preregistration (G4, integrity only)
+
+The offline E5 verifier accepts optional externally pinned Ed25519 signed
+preregistration evidence, binding the fixed test count and exact oracle
+manifest before trial evaluation. See the
+[preregistration contract](docs/feature-notes.md#g4-frozen-offline-evaluation-preregistration-not-policy-approval).
+The verifier detects tampering but **cannot prove signer independence,
+trusted signing time, independent outcome measurement or authorize promotion**.
+
 ### Native Linux service topology (G3, deployment preparation only)
 
 The repository now includes Docker-free systemd services for the API,

@@ -93,8 +93,14 @@ prove backup erasure, or establish multi-host HA.
 
 Implemented lab evidence: smoke evaluation and an offline evaluator accepting
 external protected oracle/trial files, with digest checks, negative controls,
-cost, latency and conservative intervals. The offline evaluator **always**
-reports `promotion_eligible=false` until independently certified.
+cost, latency and conservative intervals. A new optional G4 signed
+preregistration verifier checks an externally pinned Ed25519 evaluator key,
+the immutable manifest digest, declared arm versions and an exact fixed
+number of trial pairs. Valid signatures are integrity evidence only: an
+external review still must prove who controlled the signing key, that
+registration preceded oracle disclosure, true verified recovery per cost,
+separate reviewer authority and the real sample/negative-control campaigns.
+The offline evaluator **always** reports `promotion_eligible=false`.
 
 ## G5 — Signed human-controlled E6 release: BLOCKED
 

@@ -165,3 +165,44 @@ receipt is CONFIRMED but its postcondition is not yet independently verified.
 A missing status lookup leaves the receipt unresolved; an inconsistent
 binding requires manual review. Internal state transitions refuse to dispatch
 or verify legacy receipts without a valid digest.
+
+
+## G4 frozen offline evaluation preregistration (not policy approval)
+
+The protected E5 CLI accepts optional, **paired** inputs
+`--preregistration` and `--trusted-evaluator-key`. The signed JSON record
+must have exactly `schema=opsblaze-e5-prereg-v1`,
+`manifest_sha256`, `signer_public_key_sha256`, `signed_at_utc` (UTC Z),
+`expected_pairs`, `primary_metric=verified_recovery_per_total_cost`,
+`stopping_rule=fixed_preregistered_sample`,
+`arm_versions={candidate,incumbent}` and a canonical, unpadded
+base64url Ed25519 `signature`. The signature covers the entire record
+except the signature itself, using the explicit domain-separated bytes from
+`backend.evaluation.preregistration.registration_bytes`.
+
+The independent evaluator should supply and safeguard the private signing
+key outside this repository. A separate review authority should supply
+the trusted Ed25519 public key to the offline evaluator and authenticate its
+fingerprint independently; never accept a public key supplied solely
+inside a candidate's signed JSON. The signed date is **not** a trusted
+timestamp; preregistration before running or unblinding trials requires
+external time and custody evidence.
+
+Example **verification only** (never promotion):
+
+```bash
+python -m backend.evaluation.heldout \
+  --manifest frozen-manifest.json \
+  --oracle protected-oracle.json \
+  --trials blinded-trials.json \
+  --preregistration signed-preregistration.json \
+  --trusted-evaluator-key independent-owner-public.pem
+```
+
+A mismatched key/signature, altered manifest, malformed claims, or
+a case count different from the signed `expected_pairs` causes an INVALID
+result. Without both extra inputs the existing CLI remains explicitly
+`UNSIGNED_LAB_ONLY`. Even a valid signature is not proof of a genuinely
+independent evaluator, hidden labels, trusted timestamp, or real recovery.
+Current E5 paired correctness does **not** yet compute verified recovery
+per actual total cost. All reports retain `promotion_eligible=false`.
