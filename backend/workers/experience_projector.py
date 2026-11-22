@@ -155,9 +155,21 @@ async def main() -> None:
             login = await conn.scalar(text("SELECT current_user"))
             # A matching username alone is not a privilege boundary.
             role = (await conn.execute(text(
-                "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb "
+                "SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolreplication "
                 "FROM pg_catalog.pg_roles WHERE rolname = current_user"
             ))).one_or_none()
+            # Group membership can silently expand privileges after grants
+            # are applied. Dedicated projector accounts must have no parents.
+            inherited_roles = await conn.scalar(text(
+                "SELECT EXISTS ("
+                "SELECT 1 FROM pg_catalog.pg_auth_members membership "
+                "JOIN pg_catalog.pg_roles member "
+                "ON member.oid = membership.member "
+                "WHERE member.rolname = current_user)"
+            ))
+            schema_create = await conn.scalar(text(
+                "SELECT has_schema_privilege(current_user, 'public', 'CREATE')"
+            ))
             forbidden = await conn.scalar(text(
                 "SELECT "
                 "has_table_privilege(current_user, 'public.effect_receipt', 'SELECT') "
@@ -172,7 +184,8 @@ async def main() -> None:
             ))
         if login != make_url(database_url).username:
             raise RuntimeError("projector database identity mismatch")
-        if role is None or any(role) or forbidden is not False:
+        if (role is None or any(role) or inherited_roles is not False
+                or schema_create is not False or forbidden is not False):
             raise RuntimeError("projector database privileges exceed restricted scope")
         heartbeat = asyncio.create_task(
             heartbeat_loop("experience_projector", sessions),
