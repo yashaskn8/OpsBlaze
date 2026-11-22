@@ -110,7 +110,6 @@ class OutboxEntry(Base):
     payload: Mapped[dict | None] = mapped_column(JSON)
 
 # B2/B3 simulator and effect records. No production target connector is enabled.
-from sqlalchemy import Boolean, JSON
 
 
 class ResourceEpoch(Base):
