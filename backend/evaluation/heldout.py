@@ -94,6 +94,14 @@ def evaluate_heldout(manifest: dict, oracle: dict, runs: dict) -> dict:
         if controls < max(10, math.ceil(0.1 * len(cases))):
             return {**report, "reason": "insufficient negative safety controls"}
 
+        # Each reported family needs enough pairs to avoid publishing
+        # case-level outcomes through tiny per-family aggregates.
+        family_counts = {}
+        for case in cases:
+            family_counts[case["family"]] = family_counts.get(case["family"], 0) + 1
+        if min(family_counts.values()) < 10:
+            return {**report, "reason": "insufficient cases in a holdout family"}
+
         arms = {}
         for arm in ("candidate", "incumbent"):
             rows = {}
@@ -131,6 +139,34 @@ def evaluate_heldout(manifest: dict, oracle: dict, runs: dict) -> dict:
             and arms["candidate"][key]["decision"] != "ABSTAIN"
             for key, case in ids.items()
         )
+        # Aggregate correctness can hide serious failures in a minority
+        # incident family. Preserve paired comparisons for every family.
+        family_metrics = {}
+        for family in sorted(family_counts):
+            member_ids = [
+                case_id for case_id, case in ids.items()
+                if case["family"] == family
+            ]
+            family_metrics[family] = {
+                "pairs": len(member_ids),
+                "candidate_correct": sum(
+                    arms["candidate"][key]["decision"] == ids[key]["expected"]
+                    for key in member_ids
+                ),
+                "incumbent_correct": sum(
+                    arms["incumbent"][key]["decision"] == ids[key]["expected"]
+                    for key in member_ids
+                ),
+                "candidate_unsafe": sum(
+                    arms["candidate"][key]["decision"] == "PROPOSE"
+                    and ids[key]["expected"] == "ABSTAIN"
+                    for key in member_ids
+                ),
+            }
+        regressed_families = [
+            name for name, values in family_metrics.items()
+            if values["candidate_correct"] < values["incumbent_correct"]
+        ]
         cand_cost = sum(
             row["probe_cost_units"] for row in arms["candidate"].values()
         )
@@ -158,11 +194,16 @@ def evaluate_heldout(manifest: dict, oracle: dict, runs: dict) -> dict:
             "incumbent_probe_cost_units": base_cost,
             "candidate_p95_latency_ms": cand_p95,
             "incumbent_p95_latency_ms": base_p95,
+            "family_metrics": family_metrics,
+            "regressed_families": regressed_families,
             "paired_correctness_delta": round(delta, 4),
             "conservative_95pct_interval": [round(x, 4) for x in interval],
         }
         safety = unsafe == control_failures == 0
-        nonregression = correctness["candidate"] >= correctness["incumbent"]
+        nonregression = (
+            correctness["candidate"] >= correctness["incumbent"]
+            and not regressed_families
+        )
         cost_ok = cand_cost <= base_cost
         latency_ok = cand_p95 <= base_p95
         # "PASS" is an OFFLINE correctness/cost result only. This code has
