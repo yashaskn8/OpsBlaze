@@ -9,7 +9,9 @@
 -- boolean probe checks earlier signal completion without exposing those rows.
 -- Only required source columns are readable; source excerpts and outcome
 -- reasons remain inaccessible even if the projector process is compromised.
--- Row-level isolation of source metadata still needs a separate boundary.
+-- Source-row policies expose metadata only while a local projection intent
+-- is pending. A compromised role can still see other tenants with pending
+-- projection jobs; per-tenant credentials are a separate production gate.
 -- The role must be non-superuser, non-owner and must not have BYPASSRLS.
 
 DO $$
@@ -83,3 +85,71 @@ CREATE POLICY projector_outbox_update ON public.outbox
     FOR UPDATE TO opsblaze_projector
     USING (kind = 'PROJECT_EXPERIENCE')
     WITH CHECK (kind = 'PROJECT_EXPERIENCE');
+
+-- Each source row must belong to an incident with an outstanding local
+-- projection intent. Delivered and terminal intents confer no read rights.
+-- The SECURITY DEFINER predicates are migration-owned and bypass only source
+-- policy evaluation; they return no incident data or Temporal payload.
+GRANT EXECUTE ON FUNCTION public.projector_source_visible(uuid, varchar)
+    TO opsblaze_projector;
+GRANT EXECUTE ON FUNCTION public.projector_tenant_visible(varchar)
+    TO opsblaze_projector;
+
+ALTER TABLE public.incident ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.outcome_revision ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.evidence ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.experience_consent ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tenant_experience_consent ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.experience_capsule ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS projector_incident_read ON public.incident;
+CREATE POLICY projector_incident_read ON public.incident
+    FOR SELECT TO opsblaze_projector
+    USING (public.projector_source_visible(id, tenant_id));
+DROP POLICY IF EXISTS projector_incident_lock ON public.incident;
+CREATE POLICY projector_incident_lock ON public.incident
+    FOR UPDATE TO opsblaze_projector
+    USING (public.projector_source_visible(id, tenant_id))
+    WITH CHECK (public.projector_source_visible(id, tenant_id));
+
+DROP POLICY IF EXISTS projector_outcome_read ON public.outcome_revision;
+CREATE POLICY projector_outcome_read ON public.outcome_revision
+    FOR SELECT TO opsblaze_projector
+    USING (public.projector_source_visible(incident_id, tenant_id));
+
+DROP POLICY IF EXISTS projector_evidence_read ON public.evidence;
+CREATE POLICY projector_evidence_read ON public.evidence
+    FOR SELECT TO opsblaze_projector
+    USING (public.projector_source_visible(incident_id, tenant_id));
+
+DROP POLICY IF EXISTS projector_incident_consent_read ON public.experience_consent;
+CREATE POLICY projector_incident_consent_read ON public.experience_consent
+    FOR SELECT TO opsblaze_projector
+    USING (public.projector_source_visible(incident_id, tenant_id));
+DROP POLICY IF EXISTS projector_incident_consent_lock ON public.experience_consent;
+CREATE POLICY projector_incident_consent_lock ON public.experience_consent
+    FOR UPDATE TO opsblaze_projector
+    USING (public.projector_source_visible(incident_id, tenant_id))
+    WITH CHECK (public.projector_source_visible(incident_id, tenant_id));
+
+DROP POLICY IF EXISTS projector_tenant_consent_read ON public.tenant_experience_consent;
+CREATE POLICY projector_tenant_consent_read ON public.tenant_experience_consent
+    FOR SELECT TO opsblaze_projector
+    USING (public.projector_tenant_visible(tenant_id));
+DROP POLICY IF EXISTS projector_tenant_consent_lock ON public.tenant_experience_consent;
+CREATE POLICY projector_tenant_consent_lock ON public.tenant_experience_consent
+    FOR UPDATE TO opsblaze_projector
+    USING (public.projector_tenant_visible(tenant_id))
+    WITH CHECK (public.projector_tenant_visible(tenant_id));
+
+DROP POLICY IF EXISTS projector_capsule_read ON public.experience_capsule;
+CREATE POLICY projector_capsule_read ON public.experience_capsule
+    FOR SELECT TO opsblaze_projector
+    USING (public.projector_source_visible(incident_id, tenant_id));
+DROP POLICY IF EXISTS projector_capsule_insert ON public.experience_capsule;
+CREATE POLICY projector_capsule_insert ON public.experience_capsule
+    FOR INSERT TO opsblaze_projector
+    WITH CHECK (
+        status = 'VALID'
+        AND public.projector_source_visible(incident_id, tenant_id)
+    );

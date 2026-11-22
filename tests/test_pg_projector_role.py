@@ -8,8 +8,10 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from backend.experiences import set_consent
-from backend.models import ExperienceCapsule, OutboxEntry, OutcomeRevision
+from backend.experiences import set_consent, set_tenant_consent
+from backend.models import (
+    ExperienceCapsule, Evidence, OutboxEntry, OutcomeRevision,
+)
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 from backend.settings import get_settings
@@ -71,6 +73,42 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
             )
         async with main() as session:
             await set_consent(session, tenant, incident.id, 0, True)
+        # These rows have no pending projection, including a second incident
+        # of the SAME tenant: tenant filtering alone is insufficient.
+        foreign_tenant = "projector-hidden-" + uuid4().hex[:12]
+        async with main() as session:
+            unrelated = await admit_incident(
+                session, tenant, "unrelated",
+                IncidentCreate(target_id="unrelated-target"),
+            )
+        async with main() as session:
+            foreign = await admit_incident(
+                session, foreign_tenant, "foreign",
+                IncidentCreate(target_id="foreign-target"),
+            )
+        async with main() as session:
+            await set_consent(session, tenant, unrelated.id, 0, True)
+        async with main() as session:
+            await set_tenant_consent(session, foreign_tenant, 0, True)
+        foreign_outcome_id = uuid4()
+        foreign_evidence_id = uuid4()
+        async with main() as session:
+            async with session.begin():
+                session.add(OutcomeRevision(
+                    id=foreign_outcome_id, tenant_id=foreign_tenant,
+                    incident_id=foreign.id, revision=1, label="VERIFIED",
+                    effect_id=None, witness_source="SIMULATOR_WITNESS",
+                    observed_version=1, reason="unrelated confidential audit note",
+                ))
+                session.add(Evidence(
+                    id=foreign_evidence_id, tenant_id=foreign_tenant,
+                    incident_id=foreign.id, target_id="foreign-target",
+                    source="SIMULATOR", source_version="1",
+                    target_version=1, observed_at=datetime.now(timezone.utc),
+                    sha256="a" * 64, redacted_excerpt="unrelated private source",
+                    classification="INTERNAL", validity="VALID",
+                ))
+
         outcome_id = uuid4()
         async with main() as session:
             async with session.begin():
@@ -110,6 +148,30 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
                 "SELECT kind FROM public.outbox WHERE incident_id = :incident"
             ), {"incident": incident.id})).all()
             assert kinds == ["PROJECT_EXPERIENCE"]
+            # Only the incident with an outstanding projection is visible.
+            assert await conn.scalar(text(
+                "SELECT count(*) FROM public.incident"
+                " WHERE id IN (:active, :other, :foreign)"
+            ), {
+                "active": incident.id, "other": unrelated.id,
+                "foreign": foreign.id,
+            }) == 1
+            assert await conn.scalar(text(
+                "SELECT count(*) FROM public.experience_consent"
+                " WHERE incident_id = :other"
+            ), {"other": unrelated.id}) == 0
+            assert await conn.scalar(text(
+                "SELECT count(*) FROM public.outcome_revision"
+                " WHERE id = :id"
+            ), {"id": foreign_outcome_id}) == 0
+            assert await conn.scalar(text(
+                "SELECT count(*) FROM public.evidence"
+                " WHERE id = :id"
+            ), {"id": foreign_evidence_id}) == 0
+            assert await conn.scalar(text(
+                "SELECT count(*) FROM public.tenant_experience_consent"
+                " WHERE tenant_id = :tenant"
+            ), {"tenant": foreign_tenant}) == 0
             assert await conn.scalar(text(
                 "SELECT has_function_privilege(current_user,"
                 " 'public.projector_intent_ready(uuid,bigint)', 'EXECUTE')"
@@ -137,6 +199,21 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
             assert len(rows) == 3
             assert all(row.delivered_at is not None for row in rows)
 
+        # Acknowledgment retires the source visibility grant immediately,
+        # including the capsule just created by the restricted identity.
+        async with restricted_engine.connect() as conn:
+            for sql, param in (
+                ("SELECT count(*) FROM public.incident WHERE id = :id", incident.id),
+                ("SELECT count(*) FROM public.outcome_revision WHERE id = :id", outcome_id),
+                ("SELECT count(*) FROM public.experience_capsule WHERE incident_id = :id", incident.id),
+            ):
+                assert await conn.scalar(text(sql), {"id": param}) == 0
+            updated = await conn.execute(text(
+                "UPDATE public.incident SET projector_lock_marker = 1"
+                " WHERE id = :id RETURNING id"
+            ), {"id": unrelated.id})
+            assert updated.scalar_one_or_none() is None
+
         # The projector cannot fake a Temporal delivery: RLS blocks it even
         # though it has a narrow delivered_at UPDATE grant.
         async with restricted_engine.begin() as conn:
@@ -145,6 +222,23 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
                 " WHERE id = :id RETURNING id"
             ), {"id": start_id})
             assert result.scalar_one_or_none() is None
+
+        # The role must not insert a capsule for an unrelated tenant or
+        # incident even when it knows the exact identifiers.
+        async with restricted_engine.connect() as conn:
+            with pytest.raises(DBAPIError):
+                await conn.execute(text(
+                    "INSERT INTO public.experience_capsule "
+                    "(id, tenant_id, incident_id, outcome_revision_id,"
+                    " consent_epoch, tenant_consent_epoch, target_digest,"
+                    " evidence_ids, status, expires_at) "
+                    "VALUES (:id, :tenant, :incident, :outcome, 1, 0,"
+                    " :digest, '[]'::json, 'VALID', now() + interval '1 day')"
+                ), {
+                    "id": uuid4(), "tenant": foreign_tenant,
+                    "incident": foreign.id, "outcome": foreign_outcome_id,
+                    "digest": "0" * 64,
+                })
 
         for sql in (
             "UPDATE public.incident SET status_projection = 'VERIFIED'"

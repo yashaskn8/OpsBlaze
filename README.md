@@ -96,10 +96,11 @@ Production readiness requires the dedicated credentials and a fresh
 `experience_projector` heartbeat, in addition to the previous roles.
 
 **Permission boundary:** The projector cannot read Temporal signal payloads.
-A restricted boolean function checks preceding workflow delivery. Source
-metadata remains readable across tenants by this service role; stronger
-source-row isolation, cross-host scheduling, backup privacy and independent
-security review remain open. Do not treat CI role tests as production
+A restricted boolean function checks preceding workflow delivery. Source metadata is now read-limited to incidents with an outstanding
+`PROJECT_EXPERIENCE` intent; delivered or terminal jobs no longer authorize
+source-row reads. The shared service role can still read source metadata for
+other tenants with pending projection jobs. Per-tenant credentials, cross-host
+scheduling, backup privacy and independent security review remain open. Do not treat CI role tests as production
 certification.
 
 ### Durable queue health (B4)
