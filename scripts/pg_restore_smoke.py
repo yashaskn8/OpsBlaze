@@ -33,6 +33,36 @@ from backend.models import (
     TenantExperienceConsent,
 )
 from backend.settings import get_settings
+from backend.workers.dispatcher import workflow_id
+
+
+def validate_pending_restore(
+    found: tuple | None, expected: dict,
+) -> None:
+    """Fail closed if a crashed Temporal start intent changed during restore.
+
+    Validate the durable row before any worker replays it; this check does
+    not send a workflow, issue a signal, or mutate the source database.
+    """
+    if (
+        found is None
+        or len(found) != 9
+        or type(found[0]) is not int
+        or found[0] != expected["outbox_id"]
+        or found[1] != UUID(expected["incident_id"])
+        or found[2] != "START_WORKFLOW"
+        or type(found[3]) is not int
+        or found[3] != 2
+        or found[4] is not None  # Not silently delivered.
+        or found[5] is not None  # Not silently dead-lettered.
+        or found[6] is not None  # START has no arbitrary signal payload.
+        or found[7] is None
+        or found[7].tzinfo is None
+        or found[7].astimezone(timezone.utc).isoformat()
+            != expected["available_at"]
+        or found[8] != expected["workflow_id"]
+    ):
+        raise AssertionError("pending outbox replay state changed during restore")
 
 
 def require_ephemeral_ci(phase: str) -> str:
@@ -58,6 +88,7 @@ def require_ephemeral_ci(phase: str) -> str:
 async def seed(database_url: str, manifest_path: Path) -> None:
     case_id, outcome_id, capsule_id = uuid4(), uuid4(), uuid4()
     uncertain_id, receipt_id = uuid4(), uuid4()
+    pending_id = uuid4()
     tenant = "restore-ci-" + uuid4().hex[:12]
     revoked_actor = "ci-revoked-" + uuid4().hex[:12]
     event_digest = hashlib.sha256(
@@ -77,6 +108,20 @@ async def seed(database_url: str, manifest_path: Path) -> None:
                 request_sha256="1" * 64, target_id="synthetic-uncertain-only",
                 created_by="ci-sentinel", status_projection="NEEDS_REVIEW",
             ))
+            await conn.execute(insert(Incident).values(
+                id=pending_id, tenant_id=tenant, client_key="pending-replay",
+                request_sha256="2" * 64, target_id="synthetic-pending-only",
+                created_by="ci-sentinel",
+            ))
+            # A lost Temporal start ACK must survive a dump/restore as the
+            # same replayable intent, not become delivered or dead-lettered.
+            available_at = now - timedelta(minutes=5)
+            pending_outbox_id = await conn.scalar(
+                insert(OutboxEntry).values(
+                    incident_id=pending_id, kind="START_WORKFLOW", attempt=2,
+                    available_at=available_at, payload=None,
+                ).returning(OutboxEntry.id)
+            )
             # An unresolved receipt must never be upgraded to a successful
             # effect solely because a database has been restored.
             await conn.execute(insert(EffectReceipt).values(
@@ -130,6 +175,10 @@ async def seed(database_url: str, manifest_path: Path) -> None:
             "capsule_id": str(capsule_id),
             "uncertain_incident_id": str(uncertain_id),
             "uncertain_receipt_id": str(receipt_id),
+            "pending_incident_id": str(pending_id),
+            "pending_outbox_id": pending_outbox_id,
+            "pending_available_at": available_at.isoformat(),
+            "pending_workflow_id": workflow_id(tenant, pending_id),
             "revoked_actor": revoked_actor,
             "identity_event_digest": event_digest,
             "revision": revision,
@@ -146,6 +195,7 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
     capsule_id = UUID(record["capsule_id"])
     uncertain_id = UUID(record["uncertain_incident_id"])
     receipt_id = UUID(record["uncertain_receipt_id"])
+    pending_id = UUID(record["pending_incident_id"])
     revoked_actor = record["revoked_actor"]
     event_digest = record["identity_event_digest"]
     head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
@@ -182,6 +232,32 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
                 OutboxEntry.delivered_at.is_not(None),
             ))
             assert completed is not None, "delivered intent was not restored"
+            # Check the pending START row exactly, including its existing
+            # delivery and retry state. The workflow ID derives only from
+            # restored tenant and incident identity.
+            pending_row = (await conn.execute(select(
+                OutboxEntry.id, OutboxEntry.incident_id, OutboxEntry.kind,
+                OutboxEntry.attempt, OutboxEntry.delivered_at,
+                OutboxEntry.dead_lettered_at, OutboxEntry.payload,
+                OutboxEntry.available_at,
+            ).where(
+                OutboxEntry.id == record["pending_outbox_id"],
+            ))).one_or_none()
+            pending_found = (
+                (*pending_row, workflow_id(tenant, pending_id))
+                if pending_row is not None else None
+            )
+            validate_pending_restore(pending_found, {
+                "outbox_id": record["pending_outbox_id"],
+                "incident_id": record["pending_incident_id"],
+                "available_at": record["pending_available_at"],
+                "workflow_id": record["pending_workflow_id"],
+            })
+            pending_target = (await conn.execute(select(
+                Incident.tenant_id, Incident.target_id,
+            ).where(Incident.id == pending_id))).one_or_none()
+            if pending_target != (tenant, "synthetic-pending-only"):
+                raise AssertionError("pending workflow target changed during restore")
             # Persist the security decision and its IdP replay proof.
             revoked = (await conn.execute(select(
                 RevokedIdentity.revoked_by,
@@ -265,6 +341,13 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
                       AND kind = 'PROJECT_EXPERIENCE'
                 """), {"incident": incident_id})
                 assert count == 1, "restored projection is not visible to projector"
+                # Restricted projector must not see operational workflow
+                # starts, even if they are still eligible for dispatch.
+                hidden_start = await conn.scalar(text("""
+                    SELECT count(*) FROM public.outbox
+                    WHERE incident_id = :incident AND kind = 'START_WORKFLOW'
+                """), {"incident": pending_id})
+                assert hidden_start == 0, "projector can read pending Temporal start"
                 assert await conn.scalar(text("""
                     SELECT has_column_privilege(
                         current_user, 'public.evidence', 'redacted_excerpt', 'SELECT'
@@ -324,6 +407,11 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
             "unresolved_effect_attempt_count": 1,
             "capsule_status": "REVOKED",
             "completed_projection_preserved": True,
+            "pending_temporal_start_preserved": True,
+            "pending_attempt_count": 2,
+            "pending_still_undelivered": True,
+            "pending_workflow_identity_stable": True,
+            "pending_temporal_start_hidden_from_projector": True,
             "rls_tables_preserved": len(protected),
             "outbox_rls_policies_preserved": policy,
             "projector_denied_source_excerpts": True,

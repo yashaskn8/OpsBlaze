@@ -106,6 +106,11 @@ It proves revoked source rows stay hidden and a forged capsule insert is
 refused. Additional synthetic restore sentinels ensure security-actor
 revocation and IdP event replay metadata persist, while an UNKNOWN effect
 receipt remains unresolved with its attempt and fence unchanged.
+The rehearsal now verifies a pending Temporal START_WORKFLOW outbox
+record remains undelivered, eligible, not dead-lettered, and bound to
+its original retry count and stable tenant/incident workflow ID.
+The restricted projector must not see that pending operational intent.
+This tests PostgreSQL continuity only, not a Temporal snapshot restore.
 CI also checks that source-RLS rollback retains deny-by-default reads for
 the old projector role. It does NOT restore Temporal persistence,
 prove backup erasure, or establish multi-host HA.

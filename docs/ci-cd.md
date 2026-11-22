@@ -190,3 +190,21 @@ regenerate otherwise-valid reviewer signatures over a fabricated E5
 report and confirm the verifier still rejects the claimed result.
 The command only emits non-authorizing review evidence and never enables
 live policy promotion or external effects.
+
+
+## G3 undelivered Temporal start after PostgreSQL restore
+
+The native, isolated PostgreSQL dump/restore rehearsal now seeds an
+additional synthetic incident with a `START_WORKFLOW` outbox intent that
+has been attempted twice but remains undelivered and replayable.
+After restore the sentinel checks its original outbox and incident
+identity, exact retry count, unchanged eligibility timestamp, empty
+signal payload, absence of delivery/dead-letter markers, and stable
+tenant/incident-derived workflow ID. The restricted projector must not
+see the pending operational start.
+
+Dedicated red-team unit tests corrupt each field (including a boolean
+attempt, false delivery, altered timestamp, forged workflow identity)
+and require fail-closed validation. The rehearsal **does not dispatch**
+this row. PostgreSQL state continuity is not proof of restored Temporal
+histories, external effect reconciliation or actual cross-host RPO/RTO.

@@ -248,6 +248,10 @@ time, real measurement or authorize promotion.**
 
 ### Native Linux service topology (G3, deployment preparation only)
 
+The native PostgreSQL restore rehearsal also verifies an undelivered
+Temporal start outbox record retains its retry state and stable workflow ID,
+without issuing a remote call. This is not a Temporal persistence restore.
+
 The repository now includes Docker-free systemd services for the API,
 Temporal outbox dispatcher, Temporal incident worker, separate experience
 projector and aged-work monitor, plus the existing retention timer.
