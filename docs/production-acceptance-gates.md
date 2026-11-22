@@ -60,7 +60,8 @@ Implemented lab evidence: native Postgres/Temporal e2e, lost ACK tests,
 history replay, and a two-worker handoff with parallel dispatcher calls.
 A CI-only PostgreSQL dump/restore rehearsal now verifies a synthetic
 revocation/capsule sentinel, schema revision, completed outbox intent and
-source RLS policies in a temporary isolated database. It does NOT restore
+source RLS policies, re-applied projector role grants, restricted login and
+denied source excerpts in a temporary isolated database. It does NOT restore
 Temporal persistence, prove backup erasure, or establish multi-host HA.
 
 ## G4 — Protected independent held-out E5 evaluation: BLOCKED

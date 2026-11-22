@@ -17,6 +17,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.engine import make_url
 
 from backend.models import (
     ExperienceCapsule,
@@ -150,6 +151,47 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
                   AND c.relrowsecurity
             """))).scalars().all()
             assert len(protected) == 7, "RLS configuration missing in restored DB"
+            # A restored RLS-enabled table without its policy or grants can
+            # silently break the dedicated projector. Verify the policies.
+            policy = await conn.scalar(text("""
+                SELECT count(*) FROM pg_catalog.pg_policies
+                WHERE schemaname = 'public' AND tablename = 'outbox'
+                  AND policyname IN ('projector_outbox_read', 'projector_outbox_update')
+            """))
+            assert policy == 2, "restored outbox projector policies are incomplete"
+            for table, column in (
+                ("incident", "created_by"),
+                ("outcome_revision", "reason"),
+                ("evidence", "redacted_excerpt"),
+            ):
+                assert await conn.scalar(text("""
+                    SELECT has_column_privilege(
+                        'opsblaze_projector', :table_name, :column_name, 'SELECT'
+                    )
+                """), {
+                    "table_name": f"public.{table}", "column_name": column,
+                }) is False, f"restored projector can read forbidden {table}.{column}"
+        # Exercise the actual restricted login against the restored database:
+        # it must see the local projection but not a Temporal signal.
+        projector_url = make_url(get_settings().projector_database_url)
+        projector_url = projector_url.set(database=make_url(database_url).database)
+        restricted = create_async_engine(projector_url)
+        try:
+            async with restricted.connect() as conn:
+                assert await conn.scalar(text("SELECT current_user")) == "opsblaze_projector"
+                count = await conn.scalar(text("""
+                    SELECT count(*) FROM public.outbox
+                    WHERE incident_id = :incident
+                      AND kind = 'PROJECT_EXPERIENCE'
+                """), {"incident": incident_id})
+                assert count == 1, "restored projection is not visible to projector"
+                assert await conn.scalar(text("""
+                    SELECT has_column_privilege(
+                        current_user, 'public.evidence', 'redacted_excerpt', 'SELECT'
+                    )
+                """)) is False
+        finally:
+            await restricted.dispose()
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps({
             "result": "PASS",
@@ -160,6 +202,9 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
             "capsule_status": "REVOKED",
             "completed_projection_preserved": True,
             "rls_tables_preserved": len(protected),
+            "outbox_rls_policies_preserved": policy,
+            "projector_denied_source_excerpts": True,
+            "projector_restored_login_checked": True,
             "production_certified": False,
         }, indent=2), encoding="utf-8")
         print("Native PostgreSQL restore sentinel PASS (single-host simulator only)")

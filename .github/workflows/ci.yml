@@ -207,6 +207,9 @@ jobs:
           trap 'sudo -u postgres dropdb --if-exists "$restore_db"; rm -f "$RUNNER_TEMP/restore-sentinel.json" "$RUNNER_TEMP/opsblaze.dump"' EXIT
           PGPASSWORD=opsblaze pg_dump -h 127.0.0.1 -U opsblaze -d opsblaze -F c -f "$RUNNER_TEMP/opsblaze.dump"
           PGPASSWORD=opsblaze pg_restore -h 127.0.0.1 -U opsblaze --no-owner --no-acl --exit-on-error -d "$restore_db" "$RUNNER_TEMP/opsblaze.dump"
+          # pg_restore --no-acl intentionally omits role grants. Reapply the
+          # explicit scoped grants as a separate recovery step before verifying.
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$restore_db" -f scripts/projector_grants.sql
           export OPSBLAZE_DATABASE_URL="postgresql+asyncpg://opsblaze:opsblaze@127.0.0.1:5432/$restore_db"
           python scripts/pg_restore_smoke.py verify --manifest "$RUNNER_TEMP/restore-sentinel.json" --output ci-artifacts/pg-restore-evidence.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
