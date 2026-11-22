@@ -91,7 +91,7 @@ def projector_database_url(settings: Settings) -> str:
         or projected.database != primary.database
         or projected.host != primary.host
         or projected.port != primary.port
-        or projected.username.lower() in {"postgres", "root"}
+        or projected.username != "opsblaze_projector"
     ):
         raise ValueError("projector must use distinct scoped PostgreSQL credentials")
     return settings.projector_database_url
