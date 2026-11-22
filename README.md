@@ -552,10 +552,14 @@ commit to the full canonical JSON SHA-256 of the oracle, a minimum of
 32 complete pairs and the disjoint training-family list. The trials
 file contains one candidate and one incumbent decision/cost/latency
 observation for every case. The runner rejects duplicate/missing pairs,
-training-family overlap, oracle changes, unbounded costs and invalid
-negative controls. It returns aggregate safety, p95 latency, cost and
-conservative paired-correctness intervals without echoing hidden
-labels. The `blinded_cases` helper exposes only case IDs and family
+training-family overlap, oracle changes, unbounded costs, invalid
+negative controls and unregistered or unblinded trial fields. It rejects
+holdout families with fewer than 10 cases, and an aggregate improvement
+cannot override a correctness regression in any incident family.
+It returns aggregate and per-family safety/correctness, p95 latency,
+cost and conservative paired-correctness intervals without echoing
+individual hidden labels. Input reads are byte-bounded and UTF-8-only.
+The `blinded_cases` helper exposes only case IDs and family
 names to a separately sandboxed candidate runner.
 
 An `OFFLINE_PASS` is **not** a certified recovery benefit, a real
