@@ -5,6 +5,7 @@ import hashlib
 import json
 import sys
 from copy import deepcopy
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -22,7 +23,44 @@ def frozen_qualification(tmp_path):
     trace_dir.mkdir()
     rows = []
     for name, (state, applied, attempt_min) in SCENARIOS.items():
-        raw = f"synthetic-redacted-event={name}\n".encode()
+        identity_name = "status-outage" if name == "status-recovery" else name
+        effect_id = str(uuid5(NAMESPACE_URL, "g2-disposable/" + identity_name))
+        permit = hashlib.sha256(("permit/" + identity_name).encode()).hexdigest()
+
+        def event(number, kind, observation):
+            return {
+                "schema": "opsblaze-g2-trace-v1",
+                "scenario": name,
+                "sequence": number,
+                "effect_id": effect_id,
+                "permit_sha256": permit,
+                "event": kind,
+                "observed": observation,
+            }
+
+        if state == "VERIFIED":
+            status, oracle = "FOUND", "HEALTHY"
+        elif state == "REJECTED":
+            status, oracle = "MISSING", "UNHEALTHY"
+        elif name == "status-outage":
+            status, oracle = "UNAVAILABLE", "UNAVAILABLE"
+        elif name == "retention-gap":
+            status, oracle = "MISSING", "UNAVAILABLE"
+        elif name == "oracle-outage":
+            status, oracle = "FOUND", "UNAVAILABLE"
+        else:
+            status, oracle = "CONFLICT", "UNHEALTHY"
+
+        observations = (
+            [("DISPATCH", "SENT")] * attempt_min
+            + [("APPLIED", "COMMITTED")] * applied
+            + [("STATUS", status)]
+            + [("ORACLE", oracle)]
+        )
+        raw = b"".join(
+            (json.dumps(event(i, kind, obs), sort_keys=True) + "\n").encode()
+            for i, (kind, obs) in enumerate(observations, 1)
+        )
         (trace_dir / (name + ".jsonl")).write_bytes(raw)
         rows.append({
             "scenario": name,
@@ -246,3 +284,74 @@ def test_redteam_adapter_evidence_cannot_grant_external_capabilities(tmp_path):
     assert result["external_effects_enabled"] is False
     assert result["production_gate_passed"] is False
     assert "deployment_authorized" not in result
+
+
+@pytest.mark.parametrize("change", [
+    "forged_attempt_count", "false_verification", "mixed_effect_identity",
+    "mixed_permit_identity", "nonsequential_events", "extra_sensitive_fields",
+    "malformed_json", "duplicate_json_key", "forged_retention_observation",
+    "false_oracle_success", "empty_event", "bad_schema", "boolean_sequence",
+    "out_of_order", "recovery_uses_new_identity",
+])
+def test_redteam_even_rehashed_traces_must_support_signed_claims(tmp_path, change):
+    """A matching trace hash cannot validate contradictory provider events."""
+    manifest, traces, reviews, keys = frozen_qualification(tmp_path)
+    name = (
+        "retention-gap" if change == "forged_retention_observation"
+        else "status-recovery" if change == "recovery_uses_new_identity"
+        else "first-apply"
+    )
+    path = traces / (name + ".jsonl")
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    if change == "forged_attempt_count":
+        events = events[1:]
+    elif change == "false_verification":
+        events[-1]["observed"] = "UNAVAILABLE"
+    elif change == "mixed_effect_identity":
+        events[-1]["effect_id"] = str(uuid5(NAMESPACE_URL, "unrelated"))
+    elif change == "mixed_permit_identity":
+        events[1]["permit_sha256"] = "f" * 64
+    elif change == "nonsequential_events":
+        events[-1]["sequence"] = 1
+    elif change == "extra_sensitive_fields":
+        events[0]["provider_auth_token"] = "never-copy-secrets"
+    elif change == "bad_schema":
+        events[0]["schema"] = "unknown"
+    elif change == "boolean_sequence":
+        events[0]["sequence"] = True
+    elif change == "forged_retention_observation":
+        status = next(record for record in events if record["event"] == "STATUS")
+        status["observed"] = "FOUND"
+    elif change == "false_oracle_success":
+        events[-1]["observed"] = "UNHEALTHY"
+    elif change == "out_of_order":
+        # Preserve the event set and numbering but reverse causal order.
+        events[1], events[2] = events[2], events[1]
+        for index, record in enumerate(events, 1):
+            record["sequence"] = index
+    elif change == "recovery_uses_new_identity":
+        for record in events:
+            record["effect_id"] = str(uuid5(NAMESPACE_URL, "different-effect"))
+    raw = b"".join((json.dumps(record) + "\n").encode() for record in events)
+    if change == "malformed_json":
+        raw = b"{not-json}\n"
+    elif change == "duplicate_json_key":
+        raw = raw.replace(b'"schema":', b'"schema":"fake","schema":', 1)
+    elif change == "empty_event":
+        raw = b"\n" + raw
+    path.write_bytes(raw)
+    next(
+        row for row in manifest["scenarios"] if row["scenario"] == name
+    )["trace_sha256"] = hashlib.sha256(raw).hexdigest()
+    with pytest.raises(ValueError, match="qualification evidence invalid"):
+        verify_qualification(manifest, traces, reviews, keys)
+
+
+def test_trace_event_format_uses_no_raw_payloads(tmp_path):
+    manifest, traces, reviews, keys = frozen_qualification(tmp_path)
+    trace = (traces / "first-apply.jsonl").read_text()
+    assert "secret" not in trace.lower()
+    assert "Authorization" not in trace
+    assert verify_qualification(
+        manifest, traces, reviews, keys,
+    )["status"] == "EVIDENCE_INTEGRITY_VALID_ONLY"

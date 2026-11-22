@@ -303,7 +303,25 @@ retention gap and status recovery. Each scenario fixes its allowed
 conservative result, attempt count, applied-effect count and required
 status/oracle observations. An uncertain effect must never be sent again
 blindly. For every scenario `traces/<scenario>.jsonl` must exist and match
-its pinned SHA-256; input is bounded to 2 MB per file. The tool reports
+its pinned SHA-256; input is bounded to 2 MB per file.
+
+Each trace is also **semantically validated** as ordered, redacted JSONL
+with exactly these fields: `schema=opsblaze-g2-trace-v1`, `scenario`,
+`sequence` (consecutive integer from 1), `effect_id` (canonical UUID),
+`permit_sha256` (original permit binding), `event`
+(`DISPATCH`, `APPLIED`, `STATUS`, `ORACLE`), and `observed`.
+Allowed observations are `SENT` for dispatch, `COMMITTED` for applied,
+`FOUND/MISSING/UNAVAILABLE/CONFLICT` for status and
+`HEALTHY/UNHEALTHY/UNAVAILABLE` for oracle. Every event in a scenario
+must bind one effect ID and permit, and events must be in causal phase
+order. Trace-derived counts must match the frozen scenario counts;
+VERIFIED requires a found effect and healthy independent postcondition.
+REJECTED, UNKNOWN and NEEDS_REVIEW states must be consistent with the
+trace, and named outages must actually occur. Status-outage and
+status-recovery traces must reference the **same** original effect ID
+and permit. Unrecognized fields (especially raw provider payloads or
+credentials) are rejected. These checks expose contradictory evidence
+but cannot detect collusion or completely fabricated, self-consistent logs. The tool reports
 only aggregate proof metadata, not the private trace content.
 
 Reviewers sign `REVIEW_EVIDENCE_ONLY` records using domain-separated

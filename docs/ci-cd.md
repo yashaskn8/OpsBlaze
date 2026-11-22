@@ -134,3 +134,15 @@ than seven days. Negative tests cover future/stale rows, bounded pruning,
 timezone and batch-size validation, plus non-regression of current live
 host presence. This is native operational scaling work, not real host
 independence or failover proof.
+
+## G2 semantic evidence red-team regression
+
+The red-team suite now rehashes deliberately contradictory provider
+traces, including swapped effect IDs, mismatched permit hashes, spoofed
+VERIFIED oracle states, wrong dispatch counts, extra credential-like
+fields, malformed JSON, duplicate JSON keys, reordered phases, and a
+status-recovery record for a different effect. These fail even when the
+outer trace digest is recalculated. A matching SHA and signed manifest
+alone no longer suffice; the G2 verifier requires typed source events
+that agree with the claimed scenario. This still does not independently
+prove that the claimed external provider events happened.

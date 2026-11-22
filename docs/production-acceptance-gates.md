@@ -48,10 +48,12 @@ Implemented lab evidence: seventeen disposable simulator scenarios. A separate
 **offline G2 qualification-evidence verifier** now checks a frozen provider,
 adapter, target, action, code/config/contract digest and bounded retention
 window against 14 required external failure scenarios. It hashes each local
-raw trace (without publishing trace content), validates conservative failure
-states and single-send behavior, and verifies three distinct externally
-pinned Ed25519 review signatures for provider witness, security reviewer and
-release owner. This is source-and-signature integrity checking: a synthetic
+raw trace, rejects noncanonical or unstructured events, cross-checks event
+counts against the scenario's signed result, and requires status outage
+and recovery to bind the same original effect and permit. The output
+does not publish raw trace content. Three distinct externally pinned
+Ed25519 review signatures are required for provider witness, security
+reviewer and release owner. This is source-and-signature integrity checking: a synthetic
 file or a valid signature is **not** evidence of a real provider execution,
 independent signer custody, provider-side fencing, or true idempotency
 retention. No real adapter has been enabled; a green `LAB_PASS` or

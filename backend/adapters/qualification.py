@@ -12,6 +12,7 @@ import json
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
+from uuid import UUID
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -52,6 +53,23 @@ SCENARIO_FIELDS = frozenset({
     "scenario", "result", "dispatch_attempts", "applied_effect_count",
     "status_queries", "oracle_queries", "trace_sha256",
 })
+TRACE_SCHEMA = "opsblaze-g2-trace-v1"
+TRACE_FIELDS = frozenset({
+    "schema", "scenario", "sequence", "effect_id",
+    "permit_sha256", "event", "observed",
+})
+OBSERVATIONS = {
+    "DISPATCH": frozenset({"SENT"}),
+    "APPLIED": frozenset({"COMMITTED"}),
+    "STATUS": frozenset({"FOUND", "MISSING", "UNAVAILABLE", "CONFLICT"}),
+    "ORACLE": frozenset({"HEALTHY", "UNHEALTHY", "UNAVAILABLE"}),
+}
+EVENT_COUNT_FIELDS = {
+    "DISPATCH": "dispatch_attempts",
+    "APPLIED": "applied_effect_count",
+    "STATUS": "status_queries",
+    "ORACLE": "oracle_queries",
+}
 REVIEW_FIELDS = frozenset({
     "role", "manifest_sha256", "signer_key_sha256",
     "review_action", "signed_at_utc", "signature",
@@ -169,6 +187,7 @@ def _check_manifest(manifest: dict) -> None:
 def _check_traces(manifest: dict, traces_dir: Path) -> None:
     if not traces_dir.is_dir() or traces_dir.is_symlink():
         raise ValueError("isolated trace directory is required")
+    identities = {}
     for row in manifest["scenarios"]:
         # The input never controls a filename: fixed scenario keys prevent
         # traversal, symlink redirection and accidental credential discovery.
@@ -181,6 +200,125 @@ def _check_traces(manifest: dict, traces_dir: Path) -> None:
             raise ValueError("empty or oversized provider trace")
         if hashlib.sha256(raw).hexdigest() != row["trace_sha256"]:
             raise ValueError("provider trace does not match frozen digest")
+        identities[row["scenario"]] = _check_trace_events(row, raw)
+    # Recovery must track the SAME original effect and permit as the
+    # status outage. Two unrelated fabricated effects are not a replay.
+    if identities["status-outage"] != identities["status-recovery"]:
+        raise ValueError("recovery trace refers to a different effect or permit")
+
+
+def _no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("duplicate provider trace key")
+        result[name] = value
+    return result
+
+
+def _bad_constant(_text: str) -> None:
+    raise ValueError("non-finite provider trace number")
+
+
+def _check_trace_events(summary: dict, raw: bytes) -> tuple[str, str]:
+    """Check source events, not just a digest of an arbitrary text file.
+
+    The reviewed provider must export a redacted JSONL record for every
+    dispatch, committed effect, status lookup and independent witness read.
+    This checks internal consistency, not whether the provider is truthful.
+    """
+    lines = raw.splitlines()
+    expected_count = sum(summary[field] for field in EVENT_COUNT_FIELDS.values())
+    if not 1 <= len(lines) == expected_count <= 64:
+        raise ValueError("trace event count differs from scenario claims")
+    reference = None
+    counts = {kind: 0 for kind in OBSERVATIONS}
+    statuses: list[str] = []
+    oracle: list[str] = []
+    last_phase = -1
+    phase_order = {"DISPATCH": 0, "APPLIED": 1, "STATUS": 2, "ORACLE": 3}
+    for sequence, line in enumerate(lines, 1):
+        if not line or len(line) > 4096:
+            raise ValueError("provider event line empty or oversized")
+        try:
+            event = json.loads(
+                line, object_pairs_hook=_no_duplicate_keys,
+                parse_constant=_bad_constant,
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("provider event is not strict JSONL") from exc
+        if not isinstance(event, dict) or set(event) != TRACE_FIELDS:
+            raise ValueError("unrecognized or potentially sensitive trace fields")
+        kind = event["event"]
+        observed = event["observed"]
+        if (
+            event["schema"] != TRACE_SCHEMA
+            or event["scenario"] != summary["scenario"]
+            or type(event["sequence"]) is not int
+            or event["sequence"] != sequence
+            or not isinstance(kind, str)
+            or kind not in OBSERVATIONS
+            or not isinstance(observed, str)
+            or observed not in OBSERVATIONS[kind]
+            or not _hex(event["permit_sha256"], 64)
+            or not isinstance(event["effect_id"], str)
+        ):
+            raise ValueError("provider event does not match scenario contract")
+        try:
+            effect = UUID(event["effect_id"])
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("malformed provider effect identity") from exc
+        if str(effect) != event["effect_id"]:
+            raise ValueError("noncanonical provider effect ID")
+        phase = phase_order[kind]
+        if phase < last_phase:
+            raise ValueError("provider trace events are out of causal order")
+        last_phase = phase
+        identity = (event["effect_id"], event["permit_sha256"])
+        if reference is None:
+            reference = identity
+        elif identity != reference:
+            raise ValueError("changed effect identity or original permit")
+        counts[kind] += 1
+        if kind == "STATUS":
+            statuses.append(observed)
+        elif kind == "ORACLE":
+            oracle.append(observed)
+
+    if any(
+        counts[kind] != summary[field]
+        for kind, field in EVENT_COUNT_FIELDS.items()
+    ):
+        raise ValueError("provider trace contradicts recorded attempt counts")
+    result = summary["result"]
+    verified = (
+        bool(statuses and oracle)
+        and statuses[-1] == "FOUND"
+        and oracle[-1] == "HEALTHY"
+    )
+    if result == "VERIFIED" and not verified:
+        raise ValueError("verified effect lacks observed independent recovery")
+    if result == "REJECTED" and (
+        counts["APPLIED"] or "FOUND" in statuses or "HEALTHY" in oracle
+    ):
+        raise ValueError("rejected effect has contradictory commit evidence")
+    if result == "UNKNOWN" and verified:
+        raise ValueError("unknown effect incorrectly recorded as resolved")
+    if result == "NEEDS_REVIEW" and (
+        "CONFLICT" not in statuses and "UNHEALTHY" not in oracle
+    ):
+        raise ValueError("manual-review effect lacks anomaly evidence")
+    name = summary["scenario"]
+    if (
+        (name == "status-outage" and "UNAVAILABLE" not in statuses)
+        or (name == "retention-gap" and "MISSING" not in statuses)
+        or (name == "oracle-outage" and "UNAVAILABLE" not in oracle)
+        or (name == "partial-apply" and (
+            "CONFLICT" not in statuses and "UNHEALTHY" not in oracle
+        ))
+    ):
+        raise ValueError("failure scenario lacks its named fault observation")
+    return reference
 
 
 def _check_reviews(
