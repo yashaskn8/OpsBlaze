@@ -176,3 +176,17 @@ single-link files before hashing. This closes a pathname check/open race
 for symlink replacement, and rejects hard-link sharing. Unit tests
 simulate symlink-check bypass with byte-identical content and ensure the
 reviewer still fails closed. This workflow requires native Linux.
+
+
+## G5 forged-report red-team and source-chain verification
+
+The offline three-authority G5 CLI now requires the sealed E5 inputs and
+a separately pinned preregistration key. It recomputes the protected
+paired holdout, signed sample binding and witness/cost summary and checks
+the **entire** reviewed report, not just its supplied digest. A signed
+but unsupported OFFLINE_PASS, duplicate witness, cost regression, changed
+oracle, modified trial, or missing evidence fails closed. Synthetic tests
+regenerate otherwise-valid reviewer signatures over a fabricated E5
+report and confirm the verifier still rejects the claimed result.
+The command only emits non-authorizing review evidence and never enables
+live policy promotion or external effects.

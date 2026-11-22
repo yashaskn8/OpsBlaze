@@ -165,10 +165,16 @@ rollback and admission-time known-good pinning. An offline verifier now
 requires **three distinct externally pinned Ed25519 keys** (evaluation owner,
 security reviewer and release owner) to sign the same immutable policy
 content digest, frozen E5 report digest, tool-manifest digest and git SHA.
-It rejects altered or replayed content and same-key role impersonation, but
-these deliberately non-authorizing signatures DO NOT prove real human role
-custody, trusted time, host release checks, rollback readiness or a
-production-capable E5 result. No candidate policy is assigned live.
+It also now requires the sealed E5 manifest, oracle, paired trials,
+signed preregistration, externally pinned evaluator signing key and full
+recovery-cost observations. It recomputes the offline E5 report, checks
+that the source-derived report exactly matches the signed E5 digest, and
+fails closed on family-level verified-recovery/cost regressions.
+Valid signatures without verifiable underlying inputs are insufficient.
+These deliberately non-authorizing signatures and self-consistent source
+files DO NOT prove independent oracle custody, real human role authority,
+trusted time, actual recovery, host release checks, rollback readiness
+or a production-capable E5 result. No candidate policy is assigned live.
 `POST /v1/rollouts/{id}/approve` still rejects promotion.
 
 ## G6 — Cross-cutting production release: BLOCKED

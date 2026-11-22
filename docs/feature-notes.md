@@ -256,8 +256,13 @@ characters), and a frozen tool-manifest digest (64 lowercase hex).
 A role cannot reuse the same key as another role; wrong or missing
 signatures, mismatched frozen evidence and payload changes are INVALID.
 
-The command requires `--bundle`, `--evaluation`, `--reviews`, and
-`--evaluator-key`, `--security-key`, `--release-owner-key`.
+The command requires `--bundle`, `--evaluation`, `--reviews`,
+`--evaluator-key`, `--security-key`, `--release-owner-key`,
+**and** the sealed E5 source files: `--manifest`, `--oracle`,
+`--trials`, `--preregistration`, `--recovery-measurements`, and
+`--trusted-preregistration-key`. Run it under the independent evaluation
+owner's controlled environment rather than sending unblinded oracle labels
+to a release owner or placing the raw files into a repository.
 The bundle JSON must have exactly `policy_content`, `policy_digest`,
 `source_commit` and `tool_manifest_digest`. The reviews JSON must be
 an object containing one `reviews` array with precisely three objects.
@@ -265,10 +270,18 @@ Review signatures cover the entire review record except the signature
 field, using `backend.policy.release_evidence.review_bytes`. Their
 `signature` field uses canonical unpadded base64url encoding.
 
-The E5 report must contain an existing `OFFLINE_PASS` and
-non-promotable recovery measurements and a valid-signature
-preregistration result. Even then, this code returns only
-`REVIEW_SIGNATURES_VALID_ONLY` with
+The E5 report must not merely **claim** an `OFFLINE_PASS`. The verifier
+independently recomputes the blinded holdout verdict, checks a
+preregistration signature against the separately trusted evaluator key,
+confirms the signed fixed sample size, recalculates every outcome and
+billing component, and rejects zero/negative measured recovery improvement
+or any per-family recovery/cost regression. The recomputed report must
+match the reviewed E5 report **exactly** before the three reviewer
+signatures are accepted. This defends against an invented report even if
+its digest was signed by valid reviewer keys.
+
+Even a reproducible offline report only yields
+`REVIEW_SIGNATURES_VALID_ONLY` with `offline_e5_report_recomputed=true` and
 `external_role_custody_certified=false`, `promotion_eligible=false`,
 and `deployment_authorized=false`. The signed time is only a claim;
 a trusted independent authority must verify each human key's custody,

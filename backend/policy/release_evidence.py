@@ -16,8 +16,13 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from backend.evaluation.heldout import canonical_digest, read_json
-from backend.evaluation.preregistration import load_trusted_public_key
+from backend.evaluation.heldout import (
+    canonical_digest, evaluate_heldout, read_json,
+)
+from backend.evaluation.preregistration import (
+    load_trusted_public_key, verify_preregistration,
+)
+from backend.evaluation.recovery_cost import measured_recovery_cost
 
 ROLES = ("evaluator", "security_reviewer", "release_owner")
 ACTION = "ACKNOWLEDGE_EVIDENCE_ONLY"
@@ -62,9 +67,60 @@ def _trusted_key(pem: bytes) -> tuple[Ed25519PublicKey, str]:
     return key, hashlib.sha256(raw).hexdigest()
 
 
+def recompute_signed_e5(
+    frozen_inputs: dict, trusted_preregistration_key: bytes,
+) -> dict:
+    """Recalculate the *entire* offline E5 result from separately held files.
+
+    A signed or self-asserted OFFLINE_PASS is insufficient. Trusted key
+    custody and actual trial independence still require external review.
+    """
+    required = {
+        "manifest", "oracle", "trials", "preregistration", "measurements",
+    }
+    if not isinstance(frozen_inputs, dict) or set(frozen_inputs) != required:
+        raise ValueError("all five sealed E5 inputs are required")
+    manifest = frozen_inputs["manifest"]
+    oracle = frozen_inputs["oracle"]
+    trials = frozen_inputs["trials"]
+    registration = frozen_inputs["preregistration"]
+    measurements = frozen_inputs["measurements"]
+
+    proof = verify_preregistration(
+        manifest, registration, trusted_preregistration_key,
+    )
+    if (
+        not isinstance(oracle, dict)
+        or not isinstance(oracle.get("cases"), list)
+        or len(oracle["cases"]) != proof["expected_pairs"]
+    ):
+        raise ValueError("signed sample count does not match E5 oracle")
+    report = evaluate_heldout(manifest, oracle, trials)
+    if report["state"] != "OFFLINE_PASS":
+        raise ValueError("underlying blinded trial is not OFFLINE_PASS")
+    measured = measured_recovery_cost(oracle, trials, measurements)
+    if (
+        measured["pairs"] != proof["expected_pairs"]
+        or measured["candidate_ratio_higher"] is not True
+        or measured["regressed_families"]
+        or measured["cost_regressed_families"]
+    ):
+        raise ValueError("real recovery/cost measurements regress or do not improve")
+    report["preregistration"] = proof
+    report["recovery_cost"] = measured
+    report["verified_recovery_per_cost"] = {
+        arm: measured["arms"][arm]["verified_per_million_microcredits"]
+        for arm in ("candidate", "incumbent")
+    }
+    return report
+
+
 def verify_release_evidence(
     bundle: dict, evaluation: dict, reviews: list[dict],
     trusted_keys: dict[str, bytes],
+    *,
+    frozen_inputs: dict,
+    trusted_preregistration_key: bytes,
 ) -> dict:
     """Verify frozen content and three *distinct* externally trusted keys.
 
@@ -72,6 +128,16 @@ def verify_release_evidence(
     custody, true signing time or passed production release gates.
     """
     try:
+        recalculated = recompute_signed_e5(
+            frozen_inputs, trusted_preregistration_key,
+        )
+        if (
+            not isinstance(evaluation, dict)
+            or canonical_digest(evaluation) != canonical_digest(recalculated)
+        ):
+            # JSON bool/int and int/float can compare equal in Python.
+            # Compare typed canonical bytes, not Python dictionary equality.
+            raise ValueError("reviewed E5 result is not reproducible")
         if (
             not isinstance(bundle, dict) or set(bundle) != BUNDLE_FIELDS
             or not isinstance(bundle["policy_content"], dict)
@@ -154,6 +220,7 @@ def verify_release_evidence(
         "source_commit": bundle["source_commit"],
         "tool_manifest_digest": bundle["tool_manifest_digest"],
         "reviewer_key_fingerprints": fingerprints,
+        "offline_e5_report_recomputed": True,
         "external_role_custody_certified": False,
         "trusted_timestamp_certified": False,
         "production_gate_passed": False,
@@ -172,6 +239,12 @@ def main() -> None:
     parser.add_argument("--evaluator-key", required=True)
     parser.add_argument("--security-key", required=True)
     parser.add_argument("--release-owner-key", required=True)
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--oracle", required=True)
+    parser.add_argument("--trials", required=True)
+    parser.add_argument("--preregistration", required=True)
+    parser.add_argument("--recovery-measurements", required=True)
+    parser.add_argument("--trusted-preregistration-key", required=True)
     args = parser.parse_args()
     try:
         records = read_json(args.reviews)
@@ -185,6 +258,16 @@ def main() -> None:
                 "security_reviewer": load_trusted_public_key(args.security_key),
                 "release_owner": load_trusted_public_key(args.release_owner_key),
             },
+            frozen_inputs={
+                "manifest": read_json(args.manifest),
+                "oracle": read_json(args.oracle),
+                "trials": read_json(args.trials),
+                "preregistration": read_json(args.preregistration),
+                "measurements": read_json(args.recovery_measurements),
+            },
+            trusted_preregistration_key=load_trusted_public_key(
+                args.trusted_preregistration_key,
+            ),
         )
     except (OSError, ValueError, TypeError):
         proof = {

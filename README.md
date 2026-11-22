@@ -228,7 +228,10 @@ revocation events, human role separation or production acceptance.
 
 An offline verifier checks separate evaluator, security-reviewer and
 release-owner signatures against the same frozen policy/content, E5 result,
-tool manifest and git commit digests. It is review-only: valid signatures
+tool manifest and git commit digests. It now also **requires the sealed
+oracle, manifest, trials, signed preregistration and recovery-cost
+observations** to recompute the exact reviewed E5 report before accepting
+those signatures. It is review-only: valid signatures
 **cannot enable live rollout, override blocked production gates or authorize
 an infrastructure effect**. See [G5 evidence protocol](docs/feature-notes.md#g5-three-authority-frozen-evidence-review-offline-only).
 
