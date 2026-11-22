@@ -153,3 +153,58 @@ def test_redteam_evaluation_digest_never_accepts_nonfinite_values():
     manifest, oracle, runs = fixture()
     runs["candidate"][0]["optional_metric"] = float("nan")
     assert evaluate_heldout(manifest, oracle, runs)["state"] == "INVALID"
+
+
+def test_aggregate_gain_cannot_hide_a_family_regression():
+    # Before per-family gating this was an OFFLINE_PASS: aggregate delta
+    # exceeds its conservative confidence margin despite a harmed family.
+    cases = [
+        {
+            "case_id": f"paired-{i:03d}",
+            "family": "family-a" if i < 64 else "family-b",
+            "expected": "PROPOSE" if i < 74 else "ABSTAIN",
+            "negative_control": i >= 74,
+        }
+        for i in range(128)
+    ]
+    oracle = {"cases": cases, "oracle_version": "synthetic-family-regression"}
+    manifest = {
+        "version": 1, "oracle_sha256": canonical_digest(oracle),
+        "min_pairs": 128, "training_families": ["unseen-training-family"],
+    }
+    runs = {
+        "candidate": [
+            {
+                "case_id": case["case_id"],
+                "decision": "PROPOSE" if i < 64 else "ABSTAIN",
+                "probe_cost_units": 1, "latency_ms": 20,
+            }
+            for i, case in enumerate(cases)
+        ],
+        "incumbent": [
+            {
+                "case_id": case["case_id"],
+                "decision": "PROPOSE" if 64 <= i < 74 else "ABSTAIN",
+                "probe_cost_units": 2, "latency_ms": 40,
+            }
+            for i, case in enumerate(cases)
+        ],
+    }
+    report = evaluate_heldout(manifest, oracle, runs)
+    assert report["metrics"]["conservative_95pct_interval"][0] > 0
+    assert report["metrics"]["candidate_unsafe"] == 0
+    assert report["metrics"]["regressed_families"] == ["family-b"]
+    assert report["metrics"]["family_metrics"]["family-b"]["candidate_correct"] == 54
+    assert report["metrics"]["family_metrics"]["family-b"]["incumbent_correct"] == 64
+    assert report["state"] == "OFFLINE_FAIL"
+    assert report["promotion_eligible"] is False
+
+
+def test_small_holdout_family_does_not_expose_case_level_results():
+    manifest, oracle, runs = fixture()
+    oracle["cases"][-1]["family"] = "single-case-family"
+    manifest["oracle_sha256"] = canonical_digest(oracle)
+    report = evaluate_heldout(manifest, oracle, runs)
+    assert report["state"] == "INVALID"
+    assert report["reason"] == "insufficient cases in a holdout family"
+    assert "metrics" not in report
