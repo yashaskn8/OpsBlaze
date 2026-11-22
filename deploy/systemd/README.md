@@ -27,6 +27,19 @@ to hosts or certify production recovery. G1–G6 stay BLOCKED.
   **127.0.0.1:8000**. The API does not trust proxy headers by default.
   Configure OIDC/PKCE and production Temporal TLS independently.
 
+For each **dispatcher and incident-worker host**, configure a distinct,
+stable, non-sensitive `OPSBLAZE_WORKER_HOST_ID` in the main environment
+file (for example `worker-a` and `worker-b`). Do not reuse an ID between
+hosts or use an actual hostname containing sensitive inventory details.
+The production readiness check requires two recently reported distinct IDs
+for **both** the dispatcher and incident-worker roles. Its configurable
+`OPSBLAZE_MIN_DISTINCT_WORKER_HOSTS` can require more (2–16), but cannot
+be reduced to one. The host IDs are **self-reported by processes using
+the common application database account**; a green check is operational
+presence data only, never independent physical-host proof or a failover
+acceptance certificate. Verify independently through host inventory,
+network-level logs, separate machine credentials, and actual failure drills.
+
 The two environment files deliberately contain **different** database
 credentials. The main file supplies the application's own
 `OPSBLAZE_DATABASE_URL` and a **passwordless role reference** such as

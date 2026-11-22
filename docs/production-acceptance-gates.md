@@ -65,6 +65,14 @@ credential-file, remote API bind, capability and restart changes. The API
 can validate a passwordless projector role reference so only the projector
 service needs the actual restricted database password. No unit has been
 deployed, and these artifacts do not prove independent hosts.
+The new opt-in per-host heartbeat ledger preserves each role's separately
+reported host identifiers, rejects invalid identifiers and out-of-order
+updates, and makes production readiness fail when fewer than two distinct
+recently reported host IDs exist for either the dispatcher or incident-worker
+role. Host IDs are self-reported through shared application database rights,
+so two strings do **not** prove physically independent hosts or HA. G3
+remains BLOCKED until independently inventoried host identities, fault
+injection and raw recovery evidence are reviewed.
 A CI-only PostgreSQL dump/restore rehearsal now verifies a synthetic
 revocation/capsule sentinel, schema revision, completed outbox intent,
 source RLS policies and re-applied restricted grants in an isolated database.

@@ -83,3 +83,18 @@ holds the restricted database password; API readiness validates a
 passwordless reference and a fresh worker heartbeat. See
 `deploy/systemd/README.md` for native host prerequisites and the
 uncompleted multi-host acceptance campaign.
+
+## Self-reported host heartbeat regression checks (G3)
+
+The new `0039_worker_host_presence` migration adds a separate bounded
+`worker_host_heartbeat(role, host_id, last_seen)` record for dispatcher
+and incident-worker host presence. The existing role-only worker heartbeat
+remains for compatibility and projector least privilege. A host ID is an
+operator-configured stable identifier, not a cryptographic attestation.
+Production readiness requires at least two currently reported IDs for each
+role; delayed host updates cannot regress newer records. Unit tests cover
+two distinct IDs, out-of-order writes, expired/future times, invalid host
+identifiers, and readiness denial under missing topology. CI's native
+PostgreSQL migration/rollback tests include the new schema; the external
+G3 acceptance gate still requires real physical/virtual host failover,
+Temporal and PostgreSQL restores, and independently witnessed RPO/RTO.

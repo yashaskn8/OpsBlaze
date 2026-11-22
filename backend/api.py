@@ -179,7 +179,9 @@ async def readiness(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
     from sqlalchemy import text
-    from backend.workers.heartbeat import REQUIRED_ROLES, present_workers
+    from backend.workers.heartbeat import (
+        MULTIHOST_ROLES, REQUIRED_ROLES, present_worker_hosts, present_workers,
+    )
 
     from backend.workers.temporal_health import check_temporal_health
     from backend.temporal_connection import validate_temporal_transport
@@ -211,6 +213,18 @@ async def readiness(
             )
             if not REQUIRED_ROLES.issubset(present):
                 raise HTTPException(503, "required worker heartbeat missing or stale")
+            if settings.min_distinct_worker_hosts > 1:
+                hosts = await present_worker_hosts(
+                    session,
+                    max_age_seconds=settings.worker_stale_seconds,
+                )
+                if any(
+                    len(hosts[role]) < settings.min_distinct_worker_hosts
+                    for role in MULTIHOST_ROLES
+                ):
+                    raise HTTPException(
+                        503, "configured multi-host worker presence not observed",
+                    )
         # Never hold an active PostgreSQL read transaction over an RPC.
         await session.rollback()
     except HTTPException:

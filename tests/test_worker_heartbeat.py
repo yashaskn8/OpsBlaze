@@ -71,6 +71,18 @@ async def test_production_readiness_checks_both_worker_roles(sessions_fixture, m
             both = await client.get("/v1/health/ready")
             assert both.status_code == 503  # Dedicated projector not present.
             await record_heartbeat(sessions_fixture, "experience_projector")
+            only_roles = await client.get("/v1/health/ready")
+            assert only_roles.status_code == 503
+            assert only_roles.json()["detail"] == (
+                "configured multi-host worker presence not observed"
+            )
+            for host in ("native-a", "native-b"):
+                await record_heartbeat(
+                    sessions_fixture, "dispatcher", host_id=host,
+                )
+                await record_heartbeat(
+                    sessions_fixture, "incident_worker", host_id=host,
+                )
             all_workers = await client.get("/v1/health/ready")
             assert all_workers.status_code == 200
             assert all_workers.json() == {"status": "ready"}
@@ -103,8 +115,13 @@ async def test_readiness_fails_closed_if_temporal_unreachable(sessions_fixture, 
         ),
     )
     try:
-        await record_heartbeat(sessions_fixture, "dispatcher")
-        await record_heartbeat(sessions_fixture, "incident_worker")
+        for host in ("native-a", "native-b"):
+            await record_heartbeat(
+                sessions_fixture, "dispatcher", host_id=host,
+            )
+            await record_heartbeat(
+                sessions_fixture, "incident_worker", host_id=host,
+            )
         await record_heartbeat(sessions_fixture, "experience_projector")
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://api.test"

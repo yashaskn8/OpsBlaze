@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     stuck_after_seconds: int = 300
     worker_heartbeat_seconds: int = 10
     worker_stale_seconds: int = 30
+    # Set separately on each authorized worker host; never assume a UUID
+    # or hostname string proves physical isolation or actual failover.
+    worker_host_id: str = ""
+    # Opt-in G3 topology check for dispatcher + activity workers. A green
+    # heartbeat still needs independent host inventory and fault evidence.
+    min_distinct_worker_hosts: int = Field(default=2, ge=2, le=16)
     ui_event_retention_days: int = 7
     budget_counter_retention_days: int = 7
     max_probe_calls_per_incident: int = 3

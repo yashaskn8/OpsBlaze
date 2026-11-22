@@ -226,8 +226,11 @@ Temporal outbox dispatcher, Temporal incident worker, separate experience
 projector and aged-work monitor, plus the existing retention timer.
 The projector runs under a distinct Unix identity and is the **only**
 service that needs its restricted PostgreSQL password; API production
-readiness accepts a passwordless role/host reference and still requires a
-fresh projector heartbeat. The API binds to loopback and does not trust
+readiness accepts a passwordless role/host reference, requires a fresh
+projector heartbeat, and now refuses production readiness unless two
+distinct configured worker-host IDs have recently reported **both** dispatch
+and Temporal-worker presence. Such IDs are self-reported, not an attestation
+of independent machines. The API binds to loopback and does not trust
 forwarded proxy headers by default.
 
 Run `python scripts/check_native_services.py` to validate tracked

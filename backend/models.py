@@ -5,6 +5,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    CheckConstraint,
     ForeignKey,
     Index,
     Integer,
@@ -760,6 +761,25 @@ class WorkerHeartbeat(Base):
     __tablename__ = "worker_heartbeat"
 
     role: Mapped[str] = mapped_column(String(32), primary_key=True)
+    last_seen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class WorkerHostHeartbeat(Base):
+    """Self-reported host presence, never evidence of independent hardware."""
+
+    __tablename__ = "worker_host_heartbeat"
+
+    __table_args__ = (
+        CheckConstraint(
+            "length(host_id) BETWEEN 1 AND 64",
+            name="ck_worker_host_heartbeat_host_id",
+        ),
+    )
+
+    role: Mapped[str] = mapped_column(String(32), primary_key=True)
+    host_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     last_seen: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
