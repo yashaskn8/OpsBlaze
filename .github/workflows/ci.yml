@@ -1,68 +1,167 @@
-name: Backend checks
+name: OpsBlaze CI and release evidence
+
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: opsblaze-ci-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  workflow-policy:
+    name: Workflow and repository policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - run: python -m pip install -e ".[dev]"
-      - run: python -m compileall -q backend migrations tests
-      - run: ruff check backend tests --select F821,F822,F823
-      # Flag unused imports and assigned-but-never-used values in shipped code.
-      - run: ruff check backend tests --select F401,F841
-      - run: python -m pytest -q
-      # CI-only in-process profile, not a production throughput claim.
-      - run: python -m backend.benchmarks.local_capacity --output ci-artifacts/local-capacity.json
-      - uses: actions/upload-artifact@v4
+      - name: Validate workflow syntax
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.9 -color
+      - name: Verify migration graph and tracked secrets
+        run: |
+          python -m pip install "alembic>=1.14,<2" "sqlalchemy>=2,<3"
+          python scripts/check_migrations.py
+          python scripts/check_secrets.py
+
+  python-quality:
+    name: Python quality, unit tests and coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          name: synthetic-local-capacity
-          path: ci-artifacts/local-capacity.json
-          retention-days: 7
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install -e ".[dev]" "pytest-cov>=6,<8"
+      - name: Compile Python
+        run: python -m compileall -q backend migrations tests scripts
+      - name: Ruff correctness
+        run: ruff check backend tests scripts migrations --select F --output-format github
+      - name: Unit and API tests with coverage gate
+        run: |
+          mkdir -p ci-artifacts
+          python -m pytest -q --cov=backend --cov-branch --cov-report=term-missing --cov-report=xml:ci-artifacts/coverage.xml --cov-fail-under=75
+      - name: Synthetic local capacity report
+        run: python -m backend.benchmarks.local_capacity --output ci-artifacts/local-capacity.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: python-test-evidence
+          path: ci-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
 
   security-negative:
-    runs-on: ubuntu-latest
+    name: Security regression and adversarial tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - run: python -m pip install -e ".[dev]"
-      # The same cases are also run by the full backend suite. This separate
-      # result prevents the adversarial gates from being hidden in total counts.
-      - run: python -m pytest -q -o addopts= -m "not integration" -k redteam
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install -e ".[dev]" "bandit>=1.8,<2"
+      - name: Static Python security scan
+        run: bandit -r backend -ll -ii -q
+      - name: Adversarial regression tests
+        run: python -m pytest -q -o addopts= -m "not integration" -k redteam
+
+  dependency-audit:
+    name: Python and npm vulnerability gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Audit Python dependencies
+        run: |
+          python -m pip install "pip-audit>=2.9,<3"
+          python -m pip_audit --project-path . --strict
+      - name: Audit entire npm tree
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm audit --audit-level=high
 
   frontend:
-    runs-on: ubuntu-latest
+    name: React TypeScript production build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-audit --no-fund
-      - run: npm run build
+      - name: Strict TypeScript check and Vite build
+        run: npm run build
+      - name: Validate bundle output
+        run: |
+          test -s dist/index.html
+          test -n "$(find dist/assets -type f -name '*.js' -print -quit)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-build
+          path: frontend/dist/
+          retention-days: 14
 
   temporal-smoke:
-    runs-on: ubuntu-latest
+    name: Native Temporal workflow and replay tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install -e ".[dev]"
       - run: python -m pytest -q -o addopts= -m "integration and not pg_e2e"
 
   postgres-temporal-e2e:
-    runs-on: ubuntu-latest
+    name: PostgreSQL migrations, isolation and Temporal E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     env:
       OPSBLAZE_DATABASE_URL: postgresql+asyncpg://opsblaze:opsblaze@127.0.0.1:5432/opsblaze
       OPSBLAZE_LOCAL_TOKEN: ci-local-token
@@ -70,21 +169,114 @@ jobs:
       OPSBLAZE_ENVIRONMENT: development
       OPSBLAZE_PROJECTOR_DATABASE_URL: postgresql+asyncpg://opsblaze_projector:ci-only-projector@127.0.0.1:5432/opsblaze
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - run: |
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install native PostgreSQL
+        run: |
           sudo apt-get update
           sudo apt-get install -y postgresql
           sudo service postgresql start
-          sudo -u postgres psql -c "CREATE USER opsblaze WITH PASSWORD 'opsblaze';"
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE USER opsblaze WITH PASSWORD 'opsblaze';"
           sudo -u postgres createdb -O opsblaze opsblaze
       - run: python -m pip install -e ".[dev]"
-      - run: alembic upgrade head
-      - run: |
-          sudo -u postgres psql -c "CREATE ROLE opsblaze_projector LOGIN NOINHERIT PASSWORD 'ci-only-projector';"
+      - name: Validate migrations and detect schema drift
+        run: |
+          python scripts/check_migrations.py
+          alembic upgrade head
+          alembic check
+      - name: Apply restricted projector grants
+        run: |
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE ROLE opsblaze_projector LOGIN NOINHERIT PASSWORD 'ci-only-projector';"
           sudo -u postgres psql -v ON_ERROR_STOP=1 -d opsblaze -f scripts/projector_grants.sql
-      - run: python -m backend.adapters.conformance
-      - run: python -m pytest -q -o addopts= -m pg_e2e
-      - run: alembic downgrade base
+      - name: Disposable adapter conformance
+        run: python -m backend.adapters.conformance
+      - name: Native PG and Temporal integration
+        run: python -m pytest -q -o addopts= -m pg_e2e
+      - name: Verify migration downgrade
+        run: alembic downgrade base
+
+  codeql:
+    name: CodeQL ${{ matrix.language }} analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+      - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
+
+  release-candidate:
+    name: Attested release candidate (NO deployment)
+    if: github.ref == 'refs/heads/main' && github.event_name != 'schedule'
+    needs:
+      - workflow-policy
+      - python-quality
+      - security-negative
+      - dependency-audit
+      - frontend
+      - temporal-smoke
+      - postgres-temporal-e2e
+      - codeql
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build Python distribution and frontend
+        run: |
+          python -m pip install "build>=1.2,<2"
+          python -m build --sdist --wheel --outdir dist
+          (cd frontend && npm ci --no-audit --no-fund && npm run build)
+      - name: Package simulator release with digest manifest
+        run: |
+          mkdir -p release/staging/frontend release/staging/python
+          cp -a frontend/dist release/staging/frontend/
+          cp -a dist/. release/staging/python/
+          cp -a migrations deploy scripts alembic.ini release/staging/
+          cp docs/production-acceptance-gates.md release/staging/PRODUCTION_GATES_BLOCKED.md
+          printf '%s\n' "$GITHUB_SHA" > release/staging/SOURCE_COMMIT
+          tar -C release/staging -czf "release/opsblaze-${GITHUB_SHA}.tar.gz" .
+          (cd release && sha256sum "opsblaze-${GITHUB_SHA}.tar.gz" > SHA256SUMS)
+          rm -rf release/staging
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: release/opsblaze-*.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: opsblaze-verified-release-candidate
+          path: |
+            release/*.tar.gz
+            release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
