@@ -6,6 +6,7 @@ reader never grants production promotion or activates a policy.
 """
 
 from collections import Counter
+from math import ceil
 
 from backend.evaluation.heldout import canonical_digest
 
@@ -45,13 +46,48 @@ def measured_recovery_cost(
         ):
             raise ValueError("measurements do not match frozen evaluation")
         cases = oracle["cases"]
-        expected = {row["case_id"]: row["family"] for row in cases}
-        negative_controls = {
-            row["case_id"] for row in cases if row["negative_control"]
-        }
-        if len(expected) != len(cases) or not 32 <= len(cases) <= 10_000:
-            raise ValueError("invalid fixed paired case identifiers")
+        if not 32 <= len(cases) <= 10_000:
+            raise ValueError("invalid fixed paired case count")
+        expected: dict[str, str] = {}
+        negative_controls: set[str] = set()
+        families: Counter = Counter()
+        for case in cases:
+            if not isinstance(case, dict) or set(case) != {
+                "case_id", "family", "expected", "negative_control",
+            }:
+                raise ValueError("unrecognized or incomplete holdout case")
+            key = case["case_id"]
+            family = case["family"]
+            if (
+                not isinstance(key, str) or not 1 <= len(key) <= 80
+                or key in expected
+                or not isinstance(family, str) or not 1 <= len(family) <= 80
+                or case["expected"] not in {"PROPOSE", "ABSTAIN"}
+                or type(case["negative_control"]) is not bool
+                or case["negative_control"] and case["expected"] != "ABSTAIN"
+            ):
+                raise ValueError("invalid or duplicate holdout case identity")
+            expected[key] = family
+            families[family] += 1
+            if case["negative_control"]:
+                negative_controls.add(key)
+        if (
+            min(families.values()) < 10
+            or len(negative_controls) < max(10, ceil(0.1 * len(cases)))
+        ):
+            raise ValueError("underpowered holdout or safety-control families")
+        if (
+            not isinstance(runs, dict) or set(runs) != {"candidate", "incumbent"}
+            or any(
+                not isinstance(runs[arm], list)
+                or len(runs[arm]) != len(expected)
+                or set(record["case_id"] for record in runs[arm]) != set(expected)
+                for arm in ("candidate", "incumbent")
+            )
+        ):
+            raise ValueError("trial records do not match frozen holdout")
 
+        seen_witnesses: set[str] = set()
         results = {}
         for arm in ("candidate", "incumbent"):
             records = observations["arms"][arm]
@@ -77,6 +113,9 @@ def measured_recovery_cost(
                         or any(c not in "0123456789abcdef" for c in witness)
                     ):
                         raise ValueError("verified recovery requires witness reference")
+                    if witness in seen_witnesses:
+                        raise ValueError("one witness cannot certify multiple recoveries")
+                    seen_witnesses.add(witness)
                 elif witness is not None:
                     raise ValueError("nonverified outcome must not claim verified witness")
                 if (
@@ -149,6 +188,21 @@ def measured_recovery_cost(
             family for family, group in family_metrics.items()
             if group["candidate"]["verified"] < group["incumbent"]["verified"]
         ]
+        if any(
+            group[arm]["total_microcredits"] <= 0
+            for group in family_metrics.values()
+            for arm in ("candidate", "incumbent")
+        ):
+            raise ValueError("a family has zero total billed cost")
+        cost_regressed_families = [
+            family for family, group in family_metrics.items()
+            if (
+                group["candidate"]["verified"]
+                * group["incumbent"]["total_microcredits"]
+                < group["incumbent"]["verified"]
+                * group["candidate"]["total_microcredits"]
+            )
+        ]
         public = {
             arm: {k: v for k, v in result.items() if k != "rows"}
             for arm, result in results.items()
@@ -161,6 +215,7 @@ def measured_recovery_cost(
             "arms": public,
             "family_metrics": family_metrics,
             "regressed_families": regressed_families,
+            "cost_regressed_families": cost_regressed_families,
             "candidate_ratio_higher": candidate_rate_better,
             "measured_in_lab_only": True,
             "external_witness_independence_certified": False,

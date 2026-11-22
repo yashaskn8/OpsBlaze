@@ -134,7 +134,10 @@ number of trial pairs. Optional externally supplied recovery-cost
 observations are tied to the frozen oracle/trial digests and count all
 UNKNOWN/DISPUTED outcomes and cost categories; negative safety controls
 cannot count as recovered cases. Aggregate-only reports include the
-verified-recovery-per-total-cost ratio and family regressions. Valid
+verified-recovery-per-total-cost ratio and family count/cost regressions.
+New red-team checks reject reuse of one witness hash for multiple
+recoveries, underpowered families and insufficient safety controls even
+when the input digest is recomputed. Valid
 signatures and synthetic measurements are integrity evidence only: an
 external review still must prove who controlled the signing key, that
 registration preceded oracle disclosure, independently witnessed recovery, auditable real provider/model/compute/

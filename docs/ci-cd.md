@@ -156,3 +156,14 @@ The read-only IdP preflight uses the same HTTPS default-port normalization.
 Regression tests check that invalid configuration fails the API closed and
 never invokes a key fetch. They are not a substitute for real-provider OIDC
 login, key rotation, revocation and browser PKCE campaigns.
+
+## G4 independent witness-count inflation red team
+
+The offline recovery-cost validator now checks unique witness references
+**across both evaluated arms**, not just syntactically valid SHA-256 strings.
+It also enforces 10-case minimum families, adequate negative controls and
+complete frozen paired records when called directly rather than through
+the E5 CLI. Exact per-family recovery-per-cost ratios flag regressions
+that an aggregate success count could conceal. Synthetic regression cases
+recompute the oracle digest to ensure these failures are caught by the
+semantic checks and never mark a candidate promotion eligible.

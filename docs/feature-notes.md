@@ -225,10 +225,16 @@ Every case of each fixed arm must have the exact fields
 The primary offline calculation is the count of witness-referenced
 VERIFIED recoveries divided by the **sum of all five cost components
 across all trials**, including unknown, disputed and failed outcomes.
-A negative safety control is never counted as recovered. Outputs
-include counts and costs by arm/family, a case-free aggregate,
-and a ratio comparison using exact integer cross-products; duplicate,
-missing, unbounded and malformed entries fail closed. Zero total cost
+A negative safety control is never counted as recovered. Each
+VERIFIED recovery requires a **unique witness hash across both arms**:
+repeated references cannot inflate the recovery total. A direct
+measurement call also checks oracle case shapes, minimum 10-case families,
+the fixed 10%/10-case negative-control floor and complete paired runs;
+callers cannot bypass the holdout safety checks by skipping the CLI.
+Outputs include counts and costs by arm/family, a case-free aggregate,
+a per-family recovery-per-total-cost regression list and a ratio comparison
+using exact integer cross-products; duplicate, missing, unbounded and
+malformed entries fail closed. Zero total cost
 is invalid, not a free infinite improvement.
 
 This input does NOT authenticate external witness independence or whether

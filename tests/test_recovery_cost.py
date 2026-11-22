@@ -1,5 +1,6 @@
 """G4 paired recovery-cost evidence: no measured input authorizes promotion."""
 
+import hashlib
 import json
 import sys
 from copy import deepcopy
@@ -45,7 +46,10 @@ def recovery_fixture():
         return {
             "case_id": cases[i]["case_id"],
             "outcome": result,
-            "witness_sha256": "a" * 64 if result == "VERIFIED" else None,
+            "witness_sha256": (
+                hashlib.sha256(f"independent/{arm}/{i}".encode()).hexdigest()
+                if result == "VERIFIED" else None
+            ),
             "probe_microcredits": 3 if arm == "incumbent" else 2,
             "model_microcredits": 1,
             "provider_microcredits": 2,
@@ -81,6 +85,7 @@ def test_counts_unknown_disputed_and_every_cost_component():
         "DISPUTED": 10, "FAILED": 12, "UNKNOWN": 12, "VERIFIED": 30,
     }
     assert result["candidate_ratio_higher"] is True
+    assert result["cost_regressed_families"] == []
     assert result["promotion_eligible"] is False
     assert result["external_witness_independence_certified"] is False
     assert "rows" not in result["arms"]["candidate"]
@@ -144,7 +149,9 @@ def test_family_regression_cannot_hide_behind_aggregate_ratio():
     # Candidate wins on aggregate but recovers fewer of family-b's cases.
     for i in range(32, 42):
         observations["arms"]["incumbent"][i]["outcome"] = "VERIFIED"
-        observations["arms"]["incumbent"][i]["witness_sha256"] = "f" * 64
+        observations["arms"]["incumbent"][i]["witness_sha256"] = (
+            hashlib.sha256(f"independent/incumbent/{i}".encode()).hexdigest()
+        )
     report = measured_recovery_cost(oracle, runs, observations)
     assert report["candidate_ratio_higher"] is True
     assert report["regressed_families"] == ["family-b"]
@@ -194,3 +201,56 @@ def test_negative_control_cannot_count_as_verified_recovery():
     row["witness_sha256"] = "a" * 64
     with pytest.raises(ValueError, match="negative safety control"):
         measured_recovery_cost(oracle, runs, observations)
+
+
+@pytest.mark.parametrize("change", [
+    "reuse_within_candidate", "reuse_incumbent_witness",
+    "tiny_family", "no_negative_controls", "fake_negative_control",
+    "duplicate_case", "extra_oracle_field",
+])
+def test_redteam_repeated_witnesses_and_underpowered_oracle_are_rejected(change):
+    _manifest, oracle, runs, observations = recovery_fixture()
+    oracle = deepcopy(oracle)
+    observations = deepcopy(observations)
+    if change == "reuse_within_candidate":
+        observations["arms"]["candidate"][1]["witness_sha256"] = (
+            observations["arms"]["candidate"][0]["witness_sha256"]
+        )
+    elif change == "reuse_incumbent_witness":
+        observations["arms"]["incumbent"][0]["witness_sha256"] = (
+            observations["arms"]["candidate"][0]["witness_sha256"]
+        )
+    elif change == "tiny_family":
+        oracle["cases"][0]["family"] = "one-case-family"
+    elif change == "no_negative_controls":
+        for case in oracle["cases"]:
+            case["negative_control"] = False
+    elif change == "fake_negative_control":
+        oracle["cases"][0]["negative_control"] = True
+    elif change == "duplicate_case":
+        oracle["cases"][-1]["case_id"] = oracle["cases"][0]["case_id"]
+    else:
+        oracle["cases"][0]["private_answer"] = "should-not-be-embedded"
+    # Recompute the digest so these tests reach the semantic checks,
+    # rather than stopping at a trivial hash mismatch.
+    observations["oracle_sha256"] = canonical_digest(oracle)
+    with pytest.raises(ValueError):
+        measured_recovery_cost(oracle, runs, observations)
+
+
+def test_family_cost_regression_is_not_hidden_by_aggregate_count():
+    _manifest, oracle, runs, observations = recovery_fixture()
+    for row in observations["arms"]["candidate"][:32]:
+        row["provider_microcredits"] += 30
+    report = measured_recovery_cost(oracle, runs, observations)
+    assert report["regressed_families"] == []
+    assert report["cost_regressed_families"] == ["family-a"]
+    assert report["promotion_eligible"] is False
+
+
+def test_cost_metrics_never_expose_per_case_witness_hashes():
+    _manifest, oracle, runs, observations = recovery_fixture()
+    report = measured_recovery_cost(oracle, runs, observations)
+    sample_witness = observations["arms"]["candidate"][0]["witness_sha256"]
+    assert sample_witness not in str(report)
+    assert "case_id" not in str(report)
