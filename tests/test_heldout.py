@@ -224,3 +224,18 @@ def test_unblinded_or_unregistered_trial_metadata_is_rejected(field, value):
     assert report["reason"] == "unblinded or unexpected trial field"
     assert report["promotion_eligible"] is False
     assert "metrics" not in report
+
+
+def test_evaluation_file_read_is_bounded_by_actual_bytes(tmp_path):
+    from backend.evaluation.heldout import MAX_BYTES
+    oversized = tmp_path / "oversized.json"
+    oversized.write_bytes(b" " * (MAX_BYTES + 1))
+    with pytest.raises(ValueError, match="fixed size bound"):
+        read_json(str(oversized))
+
+
+def test_evaluation_file_rejects_invalid_utf8(tmp_path):
+    bad_encoding = tmp_path / "bad-encoding.json"
+    bad_encoding.write_bytes(b'{"manifest": "' + bytes([0xFF]) + b'"}')
+    with pytest.raises(ValueError, match="UTF-8"):
+        read_json(str(bad_encoding))
