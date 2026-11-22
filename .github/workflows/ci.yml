@@ -60,7 +60,7 @@ jobs:
           python -m pytest -q --cov=backend --cov-branch --cov-report=term-missing --cov-report=xml:ci-artifacts/coverage.xml --cov-fail-under=75
       - name: Synthetic local capacity report
         run: python -m backend.benchmarks.local_capacity --output ci-artifacts/local-capacity.json
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: python-test-evidence
@@ -136,7 +136,7 @@ jobs:
         run: |
           test -s dist/index.html
           test -n "$(find dist/assets -type f -name '*.js' -print -quit)"
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: frontend-build
           path: frontend/dist/
@@ -212,7 +212,7 @@ jobs:
           sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$restore_db" -f scripts/projector_grants.sql
           export OPSBLAZE_DATABASE_URL="postgresql+asyncpg://opsblaze:opsblaze@127.0.0.1:5432/$restore_db"
           python scripts/pg_restore_smoke.py verify --manifest "$RUNNER_TEMP/restore-sentinel.json" --output ci-artifacts/pg-restore-evidence.json
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: native-pg-restore-evidence
@@ -304,7 +304,7 @@ jobs:
       - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: release/opsblaze-*.tar.gz
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: opsblaze-verified-release-candidate
           path: |
