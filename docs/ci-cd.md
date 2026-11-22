@@ -167,3 +167,12 @@ the E5 CLI. Exact per-family recovery-per-cost ratios flag regressions
 that an aggregate success count could conceal. Synthetic regression cases
 recompute the oracle digest to ensure these failures are caught by the
 semantic checks and never mark a candidate promotion eligible.
+
+## G2 evidence-file descriptor red team
+
+The offline reviewer now opens a no-follow evidence directory once and
+uses directory-relative no-follow file descriptors, enforcing ordinary
+single-link files before hashing. This closes a pathname check/open race
+for symlink replacement, and rejects hard-link sharing. Unit tests
+simulate symlink-check bypass with byte-identical content and ensure the
+reviewer still fails closed. This workflow requires native Linux.

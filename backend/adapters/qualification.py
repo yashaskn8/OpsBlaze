@@ -9,7 +9,9 @@ import base64
 import binascii
 import hashlib
 import json
+import os
 import re
+import stat
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
@@ -185,26 +187,35 @@ def _check_manifest(manifest: dict) -> None:
 
 
 def _check_traces(manifest: dict, traces_dir: Path) -> None:
-    if not traces_dir.is_dir() or traces_dir.is_symlink():
-        raise ValueError("isolated trace directory is required")
-    identities = {}
-    for row in manifest["scenarios"]:
-        # The input never controls a filename: fixed scenario keys prevent
-        # traversal, symlink redirection and accidental credential discovery.
-        filename = traces_dir / (row["scenario"] + ".jsonl")
-        if not filename.is_file() or filename.is_symlink():
-            raise ValueError("missing or redirected raw provider trace")
-        with filename.open("rb") as handle:
-            raw = handle.read(MAX_TRACE_BYTES + 1)
-        if not raw or len(raw) > MAX_TRACE_BYTES:
-            raise ValueError("empty or oversized provider trace")
-        if hashlib.sha256(raw).hexdigest() != row["trace_sha256"]:
-            raise ValueError("provider trace does not match frozen digest")
-        identities[row["scenario"]] = _check_trace_events(row, raw)
-    # Recovery must track the SAME original effect and permit as the
-    # status outage. Two unrelated fabricated effects are not a replay.
-    if identities["status-outage"] != identities["status-recovery"]:
-        raise ValueError("recovery trace refers to a different effect or permit")
+    """Open trace files without symlink or hard-link check/open races.
+
+    The directory is opened once; all file descriptors resolve relative
+    to it rather than re-resolving a possibly replaced path.
+    """
+    if not all(hasattr(os, name) for name in ("O_NOFOLLOW", "O_DIRECTORY")):
+        raise ValueError("secure trace review requires native Linux")
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    directory_fd = os.open(traces_dir, flags | os.O_DIRECTORY)
+    try:
+        identities = {}
+        for row in manifest["scenarios"]:
+            # Scenario names are validated against a static allowlist.
+            name = row["scenario"] + ".jsonl"
+            file_fd = os.open(name, flags, dir_fd=directory_fd)
+            with os.fdopen(file_fd, "rb") as handle:
+                metadata = os.fstat(handle.fileno())
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                    raise ValueError("trace must be an unshared regular file")
+                raw = handle.read(MAX_TRACE_BYTES + 1)
+            if not raw or len(raw) > MAX_TRACE_BYTES:
+                raise ValueError("empty or oversized provider trace")
+            if hashlib.sha256(raw).hexdigest() != row["trace_sha256"]:
+                raise ValueError("provider trace does not match frozen digest")
+            identities[row["scenario"]] = _check_trace_events(row, raw)
+        if identities["status-outage"] != identities["status-recovery"]:
+            raise ValueError("recovery trace refers to a different effect or permit")
+    finally:
+        os.close(directory_fd)
 
 
 def _no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:

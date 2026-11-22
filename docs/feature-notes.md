@@ -326,8 +326,12 @@ REJECTED, UNKNOWN and NEEDS_REVIEW states must be consistent with the
 trace, and named outages must actually occur. Status-outage and
 status-recovery traces must reference the **same** original effect ID
 and permit. Unrecognized fields (especially raw provider payloads or
-credentials) are rejected. These checks expose contradictory evidence
-but cannot detect collusion or completely fabricated, self-consistent logs. The tool reports
+credentials) are rejected. On the native Linux verifier, both the
+evidence directory and each relative trace file are opened using
+`O_NOFOLLOW`; regular-file and single-link checks reject symlink and
+hard-link redirection even if a path changes after a prior check.
+These checks expose contradictory evidence but cannot detect collusion
+or completely fabricated, self-consistent logs. The tool reports
 only aggregate proof metadata, not the private trace content.
 
 Reviewers sign `REVIEW_EVIDENCE_ONLY` records using domain-separated

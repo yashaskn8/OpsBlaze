@@ -73,3 +73,19 @@ separate evaluator authority and postcondition attestation.
 
 The above documents implementation tests and residual risk; it does not
 certify the code against every possible bug.
+
+## Finding 4 — G2 trace file path could change after validation
+
+**Before:** The reader checked `is_symlink()` and then separately opened
+the file by pathname. A file substitution between the check and open
+could redirect a privileged reviewer to an unintended local file.
+
+**Fix:** Use Linux directory-relative `O_NOFOLLOW` opens and inspect the
+opened file descriptor. Reject non-regular files, hard-linked traces and
+redirected directories. Synthetic tests bypass the preliminary symlink
+check or substitute hard links while leaving the content digest unchanged;
+the new descriptor boundary still rejects them.
+
+**Residual:** The external reviewer must protect the local evidence
+directory and signing keys and obtain traces from a trusted provider
+observer. This file-reader hardening is not itself provider attestation.

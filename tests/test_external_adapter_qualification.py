@@ -3,8 +3,10 @@
 import base64
 import hashlib
 import json
+import os
 import sys
 from copy import deepcopy
+from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
@@ -355,3 +357,40 @@ def test_trace_event_format_uses_no_raw_payloads(tmp_path):
     assert verify_qualification(
         manifest, traces, reviews, keys,
     )["status"] == "EVIDENCE_INTEGRITY_VALID_ONLY"
+
+
+def test_redteam_symlink_race_bypass_cannot_redirect_evidence_read(
+    tmp_path, monkeypatch,
+):
+    """Even a bypassed preliminary symlink check cannot follow a file."""
+    manifest, traces, reviews, keys = frozen_qualification(tmp_path)
+    name = "first-apply.jsonl"
+    original = traces / name
+    external = tmp_path / "untrusted-but-byte-identical.jsonl"
+    external.write_bytes(original.read_bytes())
+    original.unlink()
+    original.symlink_to(external)
+    # A previous check could see a normal file, then a replacement
+    # symlink. The descriptor-based O_NOFOLLOW check still rejects it.
+    monkeypatch.setattr(Path, "is_symlink", lambda _self: False)
+    with pytest.raises(ValueError, match="qualification evidence invalid"):
+        verify_qualification(manifest, traces, reviews, keys)
+
+
+def test_redteam_hardlinked_trace_is_not_a_trusted_evidence_file(tmp_path):
+    manifest, traces, reviews, keys = frozen_qualification(tmp_path)
+    original = traces / "first-apply.jsonl"
+    external = tmp_path / "duplicate-file-reference.jsonl"
+    external.write_bytes(original.read_bytes())
+    original.unlink()
+    os.link(external, original)
+    with pytest.raises(ValueError, match="qualification evidence invalid"):
+        verify_qualification(manifest, traces, reviews, keys)
+
+
+def test_redteam_symlinked_trace_directory_is_not_read(tmp_path):
+    manifest, traces, reviews, keys = frozen_qualification(tmp_path)
+    shortcut = tmp_path / "alias"
+    shortcut.symlink_to(traces, target_is_directory=True)
+    with pytest.raises(ValueError, match="qualification evidence invalid"):
+        verify_qualification(manifest, shortcut, reviews, keys)
