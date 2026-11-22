@@ -9,7 +9,8 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.models import (
-    ResourceEpoch, ResourceReservation, SimulatorAppliedEffect, SimulatorTarget
+    EffectReceipt, ResourceEpoch, ResourceReservation, SimulatorAppliedEffect,
+    SimulatorTarget,
 )
 
 
@@ -131,7 +132,24 @@ class SimulatorAdapter:
     async def query_effect(self, effect_id: UUID) -> int | None:
         async with self.sessions() as session:
             row = await session.get(SimulatorAppliedEffect, effect_id)
-            return None if row is None else row.observed_version
+            if row is None:
+                return None
+            # Direct disposable conformance checks have no receipt. For
+            # gateway-managed effects the exact original permit digest is
+            # required; a matching version or effect ID is not sufficient.
+            receipt = await session.get(EffectReceipt, effect_id)
+            if receipt is not None and (
+                receipt.adapter_id != "simulator"
+                or receipt.tenant_id != row.tenant_id
+                or receipt.target_id != row.target_id
+                or receipt.permit_digest is None
+                or receipt.permit_digest != row.permit_digest
+                or row.observed_version != receipt.expected_version + 1
+            ):
+                raise EffectIdentityConflict(
+                    "stored effect does not match durable permit binding"
+                )
+            return row.observed_version
 
     async def observe(self, tenant_id: str, target_id: str) -> tuple[int, bool] | None:
         async with self.sessions() as session:

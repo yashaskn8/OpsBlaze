@@ -168,6 +168,8 @@ class EffectReceipt(Base):
     plan_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     target_id: Mapped[str] = mapped_column(String(256), nullable=False)
     adapter_id: Mapped[str] = mapped_column(String(32), nullable=False, default="simulator")
+    # Null means a legacy, unverifiable effect: never infer success from it.
+    permit_digest: Mapped[str | None] = mapped_column(String(64))
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     fence: Mapped[int] = mapped_column(BigInteger, nullable=False)
     expected_version: Mapped[int] = mapped_column(BigInteger, nullable=False)

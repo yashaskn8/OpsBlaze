@@ -468,3 +468,97 @@ async def test_redteam_terminal_receipt_integrity_checked_on_replay(lab, tamper)
     async with sessions() as session:
         receipt = await session.get(EffectReceipt, receipt_id)
         assert receipt.state == "VERIFIED"  # preserved historical record
+
+
+@pytest.mark.asyncio
+async def test_receipt_pins_exact_original_permit_digest(lab):
+    from backend.adapters.simulator import permit_digest
+
+    sessions, incident_id, _adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "1" * 64,
+    )
+    effect_id = await prepare_receipt(sessions, permit)
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        assert receipt.permit_digest == permit_digest(permit)
+        assert len(receipt.permit_digest) == 64
+
+
+@pytest.mark.asyncio
+async def test_poisoned_effect_status_cannot_be_upgraded_to_verified(lab):
+    """An applied effect for the wrong permit is not a valid recovery lookup."""
+    sessions, incident_id, _adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "2" * 64,
+    )
+
+    class LostAckAfterCommit(SimulatorAdapter):
+        async def apply(self, effect_id, permit):
+            await super().apply(effect_id, permit)
+            raise TimeoutError("simulated lost acknowledgment")
+
+    assert await execute_simulator_effect(
+        sessions, LostAckAfterCommit(sessions), permit,
+    ) == "UNKNOWN"
+    async with sessions() as session:
+        receipt = await session.scalar(select(EffectReceipt))
+        effect_id = receipt.id
+        assert receipt.attempt_count == 1
+        assert receipt.permit_digest is not None
+    async with sessions() as session:
+        async with session.begin():
+            applied = await session.get(SimulatorAppliedEffect, effect_id)
+            assert applied is not None
+            applied.permit_digest = "f" * 64
+
+    assert await reconcile_effect(
+        sessions, SimulatorAdapter(sessions), effect_id,
+    ) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert receipt.state == "NEEDS_REVIEW"
+        assert receipt.observed_version is None
+        assert target.healthy is True  # Applied once; not verified as our permit.
+
+
+@pytest.mark.asyncio
+async def test_legacy_effect_receipt_cannot_be_reused_for_dispatch(lab):
+    sessions, incident_id, adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "3" * 64,
+    )
+    effect_id = await prepare_receipt(sessions, permit)
+    async with sessions() as session:
+        async with session.begin():
+            receipt = await session.get(EffectReceipt, effect_id)
+            receipt.permit_digest = None
+    with pytest.raises(EffectConflict, match="effect identity reused"):
+        await execute_simulator_effect(sessions, adapter, permit)
+    async with sessions() as session:
+        receipt = await session.get(EffectReceipt, effect_id)
+        assert receipt.state == "PREPARED"
+        assert receipt.attempt_count == 0
+        assert (await session.scalars(select(SimulatorAppliedEffect))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_adapter_permit_identity_failure_is_manual_review(lab):
+    sessions, incident_id, _adapter = lab
+    permit = await reserve_simulator_target(
+        sessions, "a", "checkout", incident_id, "4" * 64,
+    )
+
+    class ForgedApply(SimulatorAdapter):
+        async def apply(self, effect_id, permit):
+            raise EffectIdentityConflict("effect identity mismatch")
+
+    assert await execute_simulator_effect(
+        sessions, ForgedApply(sessions), permit,
+    ) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        receipt = await session.scalar(select(EffectReceipt))
+        assert receipt.state == "NEEDS_REVIEW"
+        assert receipt.attempt_count == 1
+        assert (await session.scalars(select(SimulatorAppliedEffect))).all() == []

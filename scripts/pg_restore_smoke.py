@@ -83,6 +83,7 @@ async def seed(database_url: str, manifest_path: Path) -> None:
                 id=receipt_id, tenant_id=tenant, incident_id=uncertain_id,
                 plan_digest="a" * 64, target_id="synthetic-uncertain-only",
                 adapter_id="simulator", idempotency_key="restore-" + receipt_id.hex,
+                permit_digest="b" * 64,
                 fence=3, expected_version=7, state="UNKNOWN",
                 attempt_count=1, observed_version=None,
             ))
@@ -204,12 +205,13 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
             uncertain = (await conn.execute(select(
                 EffectReceipt.tenant_id, EffectReceipt.incident_id,
                 EffectReceipt.target_id, EffectReceipt.state,
+                EffectReceipt.permit_digest,
                 EffectReceipt.attempt_count, EffectReceipt.fence,
                 EffectReceipt.expected_version, EffectReceipt.observed_version,
             ).where(EffectReceipt.id == receipt_id))).one_or_none()
             assert uncertain == (
                 tenant, uncertain_id, "synthetic-uncertain-only",
-                "UNKNOWN", 1, 3, 7, None,
+                "UNKNOWN", "b" * 64, 1, 3, 7, None,
             ), "uncertain effect safety state was altered or lost"
             uncertain_incident = await conn.scalar(select(
                 Incident.status_projection,

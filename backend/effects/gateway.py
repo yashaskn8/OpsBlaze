@@ -6,8 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import (
-    Permit, SimulatorAdapter, StaleFence, TargetVersionConflict,
-    observed_healthy_at_version, utc,
+    EffectIdentityConflict, Permit, SimulatorAdapter, StaleFence, TargetVersionConflict,
+    observed_healthy_at_version, permit_digest, utc,
 )
 from backend.models import ApprovalGrant, EffectReceipt, IncidentPlan, RevokedIdentity
 
@@ -26,6 +26,7 @@ async def prepare_receipt(
         f"opsblaze/{permit.tenant_id}/{permit.incident_id}/{permit.action_digest}",
     )
     key = str(effect_id)
+    bound_permit_digest = permit_digest(permit)
     async with sessions() as session:
         async with session.begin():
             dialect = session.bind.dialect.name
@@ -47,6 +48,7 @@ async def prepare_receipt(
                     plan_digest=permit.action_digest,
                     target_id=permit.target_id,
                     adapter_id="simulator",
+                    permit_digest=bound_permit_digest,
                     idempotency_key=key,
                     fence=permit.fence,
                     expected_version=permit.expected_version,
@@ -67,6 +69,7 @@ async def prepare_receipt(
                 or receipt.incident_id != permit.incident_id
                 or receipt.target_id != permit.target_id
                 or receipt.plan_digest != permit.action_digest
+                or receipt.permit_digest != bound_permit_digest
                 or receipt.fence != permit.fence
                 or receipt.expected_version != permit.expected_version
             ):
@@ -183,6 +186,23 @@ async def reconcile_effect(
         original_version = receipt.expected_version
         attempts = receipt.attempt_count
         adapter_id = receipt.adapter_id
+        bound_permit_digest = receipt.permit_digest
+
+    # Pre-binding legacy rows are not evidence of a valid remote effect.
+    # Keep their recorded state for audit, but never affirm verification.
+    if (
+        not isinstance(bound_permit_digest, str)
+        or len(bound_permit_digest) != 64
+        or any(c not in "0123456789abcdef" for c in bound_permit_digest)
+    ):
+        if state == "VERIFIED":
+            return "NEEDS_REVIEW"
+        if state in {"SENT", "UNKNOWN", "CONFIRMED"}:
+            try:
+                await set_state(sessions, effect_id, "NEEDS_REVIEW")
+            except EffectConflict:
+                return await reconcile_effect(sessions, adapter, effect_id)
+            return "NEEDS_REVIEW"
 
     if state == "VERIFIED" and (
         adapter_id != "simulator"
@@ -208,6 +228,13 @@ async def reconcile_effect(
     if state in {"SENT", "UNKNOWN", "PREPARED"}:
         try:
             observed_version = await adapter.query_effect(effect_id)
+        except EffectIdentityConflict:
+            # A status tied to another permit is not evidence of application.
+            try:
+                await set_state(sessions, effect_id, "NEEDS_REVIEW")
+            except EffectConflict:
+                return await reconcile_effect(sessions, adapter, effect_id)
+            return "NEEDS_REVIEW"
         except (TimeoutError, ConnectionError):
             # A never-sent receipt has no uncertain outbound side effect.
             if state == "PREPARED":
@@ -323,6 +350,9 @@ async def execute_simulator_effect(
     except (TimeoutError, ConnectionError):
         await set_state(sessions, effect_id, "UNKNOWN")
         return "UNKNOWN"
+    except EffectIdentityConflict:
+        await set_state(sessions, effect_id, "NEEDS_REVIEW")
+        return "NEEDS_REVIEW"
     except (StaleFence, TargetVersionConflict):
         await set_state(sessions, effect_id, "FAILED")
         return "FAILED"

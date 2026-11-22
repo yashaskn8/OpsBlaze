@@ -147,3 +147,15 @@ their durable event cursor remains usable on reconnect. The
 preflight query releases its database transaction before the
 stream runs; each tick uses a short-lived read session. This
 per-process limit is not a multi-replica load test or global quota.
+
+
+## B3 durable effect permit binding
+
+New simulator effect receipts persist the SHA-256 digest of the entire
+original permit (tenant, incident, target, action, fence, expected version,
+and expiry). Recovery status checks reject any applied-effect record with
+a mismatched digest, tenant, target, or observed version. Pre-migration
+receipts have a NULL permit binding and cannot be newly dispatched or
+promoted to VERIFIED; they require manual review. The disposable adapter
+conformance suite can still inspect direct synthetic effects without a
+receipt. This is not an external adapter authorization.
