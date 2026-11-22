@@ -69,3 +69,17 @@ v5 still used Node.js 20 and produced a deprecation warning; the v7
 upgrade removes that known deprecated runtime without broader token permissions. The rest of the existing
 SHA-pinned workflow, native PostgreSQL/Temporal testing and no-deploy
 release gates are unchanged.
+
+## Native systemd service source audit (G3)
+
+The workflow-policy job runs `scripts/check_native_services.py`, and
+Python unit tests mutate copied service units to demonstrate rejection of
+root/shared projector credentials, public API binds, expanded capabilities,
+unsafe filesystem settings, missing restart policy and disabled retention
+timer catchup. The units cover API, Temporal dispatch, workflow worker,
+projector, aged-work monitor, and bounded hourly retention. No service is
+started or deployed in CI by this static audit. The independent projector
+holds the restricted database password; API readiness validates a
+passwordless reference and a fresh worker heartbeat. See
+`deploy/systemd/README.md` for native host prerequisites and the
+uncompleted multi-host acceptance campaign.

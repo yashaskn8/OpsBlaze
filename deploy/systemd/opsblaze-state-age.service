@@ -1,0 +1,39 @@
+[Unit]
+Description=OpsBlaze read-only aged-work monitor
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=opsblaze
+Group=opsblaze
+EnvironmentFile=/etc/opsblaze/opsblaze.env
+ExecStart=/srv/opsblaze/.venv/bin/python -m backend.workers.state_age
+WorkingDirectory=/srv/opsblaze
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=5s
+TimeoutStopSec=45s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

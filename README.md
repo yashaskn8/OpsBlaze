@@ -200,6 +200,24 @@ python -m backend.benchmarks.local_capacity --output ci-artifacts/local-capacity
 These numbers are not PostgreSQL, Temporal, multi-host, or production SLO
 measurements. Real workload capacity and failover campaigns remain open.
 
+### Native Linux service topology (G3, deployment preparation only)
+
+The repository now includes Docker-free systemd services for the API,
+Temporal outbox dispatcher, Temporal incident worker, separate experience
+projector and aged-work monitor, plus the existing retention timer.
+The projector runs under a distinct Unix identity and is the **only**
+service that needs its restricted PostgreSQL password; API production
+readiness accepts a passwordless role/host reference and still requires a
+fresh projector heartbeat. The API binds to loopback and does not trust
+forwarded proxy headers by default.
+
+Run `python scripts/check_native_services.py` to validate tracked
+unit permissions, startup commands and credential separation. Read the
+[full native deployment guide](deploy/systemd/README.md) before any host
+installation. CI validates unit source but does **not** deploy to
+production, restore Temporal history, certify multi-host failover or
+activate external effects.
+
 ## Setup (no Docker)
 
 Install Python 3.11+, native PostgreSQL and a native Temporal development server. Create a PostgreSQL database and credentials, then configure them in a local untracked `.env` copied from `.env.example`.

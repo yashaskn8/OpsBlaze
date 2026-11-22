@@ -76,26 +76,36 @@ async def project_experience_outbox(
     return "CAPTURED"
 
 
-def projector_database_url(settings: Settings) -> str:
-    """Refuse to start the standalone worker with general application rights."""
+def validate_projector_identity_reference(settings: Settings) -> None:
+    """Validate role and host without requiring the worker's database password.
+
+    The API uses a passwordless role reference and the independently recorded
+    restricted worker heartbeat. Only the worker itself needs its secret.
+    """
     if not settings.projector_database_url:
-        raise ValueError("dedicated projector database URL required")
+        raise ValueError("dedicated projector database reference required")
     primary = make_url(settings.database_url)
     projected = make_url(settings.projector_database_url)
     if (
         projected.drivername != "postgresql+asyncpg"
         or primary.drivername != "postgresql+asyncpg"
+        or not primary.username
         or not projected.username
-        or not projected.password
         or projected.username == primary.username
         or projected.database != primary.database
         or projected.host != primary.host
         or projected.port != primary.port
         or projected.username != "opsblaze_projector"
     ):
-        raise ValueError("projector must use distinct scoped PostgreSQL credentials")
-    return settings.projector_database_url
+        raise ValueError("projector must use a distinct scoped PostgreSQL identity")
 
+
+def projector_database_url(settings: Settings) -> str:
+    """Refuse to start the restricted worker with only a public role reference."""
+    validate_projector_identity_reference(settings)
+    if not make_url(settings.projector_database_url).password:
+        raise ValueError("projector worker requires its separate database password")
+    return settings.projector_database_url
 
 async def run_projector_once(
     sessions: async_sessionmaker[AsyncSession],

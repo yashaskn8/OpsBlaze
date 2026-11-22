@@ -35,6 +35,8 @@ jobs:
           python -m pip install "alembic>=1.14,<2" "sqlalchemy>=2,<3"
           python scripts/check_migrations.py
           python scripts/check_secrets.py
+      - name: Enforce native Linux service role isolation and hardening
+        run: python scripts/check_native_services.py
 
   python-quality:
     name: Python quality, unit tests and coverage

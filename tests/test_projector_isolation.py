@@ -115,3 +115,26 @@ def test_redteam_projector_credentials_must_be_separate_and_postgresql():
     with pytest.raises(ValueError, match="domain"):
         import asyncio
         asyncio.run(claim_intent(None, domain="unknown"))
+
+
+def test_api_reference_has_no_secret_but_worker_requires_own_password():
+    from backend.workers.experience_projector import (
+        validate_projector_identity_reference,
+    )
+
+    public = "postgresql+asyncpg://opsblaze_projector@localhost:5432/opsblaze"
+    primary = "postgresql+asyncpg://opsblaze@localhost:5432/opsblaze"
+    settings = Settings(database_url=primary, projector_database_url=public)
+    validate_projector_identity_reference(settings)
+    with pytest.raises(ValueError, match="password"):
+        projector_database_url(settings)
+
+    for invalid in (
+        "", primary,
+        "postgresql+asyncpg://opsblaze_projector@remote:5432/opsblaze",
+        "sqlite+aiosqlite:///test.db",
+    ):
+        with pytest.raises(ValueError, match="projector"):
+            validate_projector_identity_reference(Settings(
+                database_url=primary, projector_database_url=invalid,
+            ))

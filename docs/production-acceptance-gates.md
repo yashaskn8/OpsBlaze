@@ -58,6 +58,13 @@ adapter has been enabled; a green `LAB_PASS` is not provider certification.
 
 Implemented lab evidence: native Postgres/Temporal e2e, lost ACK tests,
 history replay, and a two-worker handoff with parallel dispatcher calls.
+Docker-free systemd service units now cover the API, outbox dispatcher,
+Temporal incident worker, restricted projector, read-only aged-work monitor
+and bounded retention timer. A CI source audit rejects unsafe service user,
+credential-file, remote API bind, capability and restart changes. The API
+can validate a passwordless projector role reference so only the projector
+service needs the actual restricted database password. No unit has been
+deployed, and these artifacts do not prove independent hosts.
 A CI-only PostgreSQL dump/restore rehearsal now verifies a synthetic
 revocation/capsule sentinel, schema revision, completed outbox intent,
 source RLS policies and re-applied restricted grants in an isolated database.

@@ -188,10 +188,15 @@ async def readiness(
     if settings.environment == "production":
         if not configured_identity(settings):
             raise HTTPException(503, "production identity provider is not configured")
-        from backend.workers.experience_projector import projector_database_url
+        from backend.workers.experience_projector import (
+            validate_projector_identity_reference,
+        )
 
         try:
-            projector_database_url(settings)
+            # The API must not hold the projector database password. A
+            # separate worker validates its scoped login and privileges.
+            # Readiness also requires that worker's fresh heartbeat.
+            validate_projector_identity_reference(settings)
         except ValueError as exc:
             raise HTTPException(
                 503, "dedicated experience projector credentials not configured",
