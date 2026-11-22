@@ -40,8 +40,10 @@ certification. Those remain explicit production blockers.
 The PostgreSQL CI job uses native `pg_dump`/`pg_restore` to recover a
 temporary, isolated database on the same runner. A synthetic sentinel
 covers the incident, verified outcome, incident/tenant consent revocations,
-revoked capsule, completed projection intent, migration revision and RLS
-settings. It fails closed on any mismatch and uploads metadata-only evidence.
+revoked capsule, completed projection intent, security-actor revocation,
+IdP event replay ledger, and a separate synthetic UNKNOWN effect receipt
+with its original fencing/version/attempt information. It also checks the
+migration revision and RLS settings. It fails closed on any mismatch and uploads metadata-only evidence.
 The restored database and dump are removed after the check.
 
 This verifies **local schema/data continuity only**. It is neither a

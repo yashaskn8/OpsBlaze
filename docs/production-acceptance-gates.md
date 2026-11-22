@@ -62,8 +62,11 @@ A CI-only PostgreSQL dump/restore rehearsal now verifies a synthetic
 revocation/capsule sentinel, schema revision, completed outbox intent,
 source RLS policies and re-applied restricted grants in an isolated database.
 It proves revoked source rows stay hidden and a forged capsule insert is
-refused. CI also checks that source-RLS rollback retains deny-by-default
-reads for the old projector role. It does NOT restore Temporal persistence,
+refused. Additional synthetic restore sentinels ensure security-actor
+revocation and IdP event replay metadata persist, while an UNKNOWN effect
+receipt remains unresolved with its attempt and fence unchanged.
+CI also checks that source-RLS rollback retains deny-by-default reads for
+the old projector role. It does NOT restore Temporal persistence,
 prove backup erasure, or establish multi-host HA.
 
 ## G4 — Protected independent held-out E5 evaluation: BLOCKED

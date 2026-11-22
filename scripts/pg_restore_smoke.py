@@ -7,6 +7,7 @@ It does not test Temporal persistence, multi-host failover, RPO or RTO.
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -21,11 +22,14 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.engine import make_url
 
 from backend.models import (
+    EffectReceipt,
     ExperienceCapsule,
     ExperienceConsent,
+    IdentityProviderEvent,
     Incident,
     OutboxEntry,
     OutcomeRevision,
+    RevokedIdentity,
     TenantExperienceConsent,
 )
 from backend.settings import get_settings
@@ -53,7 +57,12 @@ def require_ephemeral_ci(phase: str) -> str:
 
 async def seed(database_url: str, manifest_path: Path) -> None:
     case_id, outcome_id, capsule_id = uuid4(), uuid4(), uuid4()
+    uncertain_id, receipt_id = uuid4(), uuid4()
     tenant = "restore-ci-" + uuid4().hex[:12]
+    revoked_actor = "ci-revoked-" + uuid4().hex[:12]
+    event_digest = hashlib.sha256(
+        f"{tenant}:{revoked_actor}:synthetic-revocation".encode("utf-8")
+    ).hexdigest()
     now = datetime.now(timezone.utc)
     engine = create_async_engine(database_url)
     try:
@@ -62,6 +71,30 @@ async def seed(database_url: str, manifest_path: Path) -> None:
                 id=case_id, tenant_id=tenant, client_key="sentinel",
                 request_sha256="0" * 64, target_id="synthetic-restore-only",
                 created_by="ci-sentinel",
+            ))
+            await conn.execute(insert(Incident).values(
+                id=uncertain_id, tenant_id=tenant, client_key="uncertain-effect",
+                request_sha256="1" * 64, target_id="synthetic-uncertain-only",
+                created_by="ci-sentinel", status_projection="NEEDS_REVIEW",
+            ))
+            # An unresolved receipt must never be upgraded to a successful
+            # effect solely because a database has been restored.
+            await conn.execute(insert(EffectReceipt).values(
+                id=receipt_id, tenant_id=tenant, incident_id=uncertain_id,
+                plan_digest="a" * 64, target_id="synthetic-uncertain-only",
+                adapter_id="simulator", idempotency_key="restore-" + receipt_id.hex,
+                fence=3, expected_version=7, state="UNKNOWN",
+                attempt_count=1, observed_version=None,
+            ))
+            # A restored instance must preserve both the explicit security
+            # revocation and the replay-resistant IdP event ledger.
+            await conn.execute(insert(RevokedIdentity).values(
+                tenant_id=tenant, actor_id=revoked_actor,
+                revoked_at=now, revoked_by="ci-security", reason="synthetic-revocation",
+            ))
+            await conn.execute(insert(IdentityProviderEvent).values(
+                event_digest=event_digest, tenant_id=tenant,
+                actor_id=revoked_actor, received_at=now,
             ))
             await conn.execute(insert(TenantExperienceConsent).values(
                 tenant_id=tenant, epoch=3, allowed=False,
@@ -94,6 +127,10 @@ async def seed(database_url: str, manifest_path: Path) -> None:
             "incident_id": str(case_id),
             "outcome_id": str(outcome_id),
             "capsule_id": str(capsule_id),
+            "uncertain_incident_id": str(uncertain_id),
+            "uncertain_receipt_id": str(receipt_id),
+            "revoked_actor": revoked_actor,
+            "identity_event_digest": event_digest,
             "revision": revision,
         }), encoding="utf-8")
     finally:
@@ -106,6 +143,10 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
     incident_id = UUID(record["incident_id"])
     outcome_id = UUID(record["outcome_id"])
     capsule_id = UUID(record["capsule_id"])
+    uncertain_id = UUID(record["uncertain_incident_id"])
+    receipt_id = UUID(record["uncertain_receipt_id"])
+    revoked_actor = record["revoked_actor"]
+    event_digest = record["identity_event_digest"]
     head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
     assert record["revision"] == head, "source schema is not at migration head"
     engine = create_async_engine(database_url)
@@ -140,6 +181,42 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
                 OutboxEntry.delivered_at.is_not(None),
             ))
             assert completed is not None, "delivered intent was not restored"
+            # Persist the security decision and its IdP replay proof.
+            revoked = (await conn.execute(select(
+                RevokedIdentity.revoked_by,
+                RevokedIdentity.reason,
+            ).where(
+                RevokedIdentity.tenant_id == tenant,
+                RevokedIdentity.actor_id == revoked_actor,
+            ))).one_or_none()
+            assert revoked == (
+                "ci-security", "synthetic-revocation",
+            ), "identity revocation was lost during restore"
+            event = (await conn.execute(select(
+                IdentityProviderEvent.tenant_id, IdentityProviderEvent.actor_id,
+            ).where(
+                IdentityProviderEvent.event_digest == event_digest,
+            ))).one_or_none()
+            assert event == (
+                tenant, revoked_actor,
+            ), "IdP replay ledger was lost during restore"
+            # A restored UNKNOWN receipt is not proof of a remote effect.
+            uncertain = (await conn.execute(select(
+                EffectReceipt.tenant_id, EffectReceipt.incident_id,
+                EffectReceipt.target_id, EffectReceipt.state,
+                EffectReceipt.attempt_count, EffectReceipt.fence,
+                EffectReceipt.expected_version, EffectReceipt.observed_version,
+            ).where(EffectReceipt.id == receipt_id))).one_or_none()
+            assert uncertain == (
+                tenant, uncertain_id, "synthetic-uncertain-only",
+                "UNKNOWN", 1, 3, 7, None,
+            ), "uncertain effect safety state was altered or lost"
+            uncertain_incident = await conn.scalar(select(
+                Incident.status_projection,
+            ).where(Incident.id == uncertain_id))
+            assert uncertain_incident == "NEEDS_REVIEW", (
+                "uncertain incident was accidentally promoted on restore"
+            )
             protected = (await conn.execute(text("""
                 SELECT c.relname FROM pg_catalog.pg_class c
                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -239,6 +316,10 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
             "source_commit": os.environ.get("GITHUB_SHA", ""),
             "migration_revision": head,
             "revocation_rows": 2,
+            "identity_revocation_preserved": True,
+            "idp_event_replay_fence_preserved": True,
+            "unresolved_effect_state_preserved": "UNKNOWN",
+            "unresolved_effect_attempt_count": 1,
             "capsule_status": "REVOKED",
             "completed_projection_preserved": True,
             "rls_tables_preserved": len(protected),
