@@ -61,5 +61,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Policies installed by the post-migration grants script depend on these
+    # functions. Drop only known projector policies before dropping functions.
+    policies = (
+        ("incident", "projector_incident_read"),
+        ("incident", "projector_incident_lock"),
+        ("outcome_revision", "projector_outcome_read"),
+        ("evidence", "projector_evidence_read"),
+        ("experience_consent", "projector_incident_consent_read"),
+        ("experience_consent", "projector_incident_consent_lock"),
+        ("tenant_experience_consent", "projector_tenant_consent_read"),
+        ("tenant_experience_consent", "projector_tenant_consent_lock"),
+        ("experience_capsule", "projector_capsule_read"),
+        ("experience_capsule", "projector_capsule_insert"),
+    )
+    for table, policy in policies:
+        op.execute(f"DROP POLICY IF EXISTS {policy} ON public.{table}")
     op.execute("DROP FUNCTION public.projector_tenant_visible(varchar)")
     op.execute("DROP FUNCTION public.projector_source_visible(uuid, varchar)")
