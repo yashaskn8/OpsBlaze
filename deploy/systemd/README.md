@@ -37,7 +37,10 @@ for **both** the dispatcher and incident-worker roles. Its configurable
 be reduced to one. The host IDs are **self-reported by processes using
 the common application database account**; a green check is operational
 presence data only, never independent physical-host proof or a failover
-acceptance certificate. Verify independently through host inventory,
+acceptance certificate. Fresh-host totals are counted in the database
+using a bounded indexed time query. The one-host retention service also
+removes host-presence rows older than seven days in small batches; it
+does not remove incident or effect audit records. Verify independently through host inventory,
 network-level logs, separate machine credentials, and actual failure drills.
 
 The two environment files deliberately contain **different** database

@@ -180,7 +180,7 @@ async def readiness(
 ) -> dict[str, str]:
     from sqlalchemy import text
     from backend.workers.heartbeat import (
-        MULTIHOST_ROLES, REQUIRED_ROLES, present_worker_hosts, present_workers,
+        MULTIHOST_ROLES, REQUIRED_ROLES, present_worker_host_counts, present_workers,
     )
 
     from backend.workers.temporal_health import check_temporal_health
@@ -214,12 +214,12 @@ async def readiness(
             if not REQUIRED_ROLES.issubset(present):
                 raise HTTPException(503, "required worker heartbeat missing or stale")
             if settings.min_distinct_worker_hosts > 1:
-                hosts = await present_worker_hosts(
+                host_counts = await present_worker_host_counts(
                     session,
                     max_age_seconds=settings.worker_stale_seconds,
                 )
                 if any(
-                    len(hosts[role]) < settings.min_distinct_worker_hosts
+                    host_counts[role] < settings.min_distinct_worker_hosts
                     for role in MULTIHOST_ROLES
                 ):
                     raise HTTPException(

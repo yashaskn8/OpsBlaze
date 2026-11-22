@@ -16,6 +16,7 @@ from backend.telemetry import initialize_tracing
 from backend.workers.budget_retention import prune_budget_windows
 from backend.workers.event_retention import purge_ui_events
 from backend.workers.retention import expire_capsules, scrub_revoked_tenant_capsules
+from backend.workers.heartbeat import prune_worker_host_presence
 
 
 async def run_maintenance(
@@ -42,6 +43,7 @@ async def run_maintenance(
         "ui_events_deleted": 0,
         "admission_windows_deleted": 0,
         "ai_windows_deleted": 0,
+        "worker_hosts_pruned": 0,
     }
     for _ in range(max_batches):
         result = await expire_capsules(sessions, now=today)
@@ -70,6 +72,14 @@ async def run_maintenance(
         totals["admission_windows_deleted"] += rows["admission_usage"]
         totals["ai_windows_deleted"] += rows["model_token_window"]
         if max(rows.values()) < 500:
+            break
+
+    # Host presence is ephemeral operational state, not incident audit.
+    host_cutoff = today - timedelta(days=7)
+    for _ in range(max_batches):
+        removed = await prune_worker_host_presence(sessions, host_cutoff)
+        totals["worker_hosts_pruned"] += removed
+        if removed < 500:
             break
     return totals
 

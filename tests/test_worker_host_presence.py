@@ -9,7 +9,8 @@ from backend.api import app
 from backend.database import get_session
 from backend.settings import Settings, get_settings
 from backend.workers.heartbeat import (
-    present_worker_hosts, present_workers, record_heartbeat,
+    present_worker_host_counts, present_worker_hosts, present_workers,
+    prune_worker_host_presence, record_heartbeat,
 )
 
 
@@ -25,6 +26,9 @@ async def test_worker_host_presence_tracks_two_hosts_without_collapsing_roles(
         assert await present_worker_hosts(session, now, 30) == {
             "dispatcher": frozenset({"site-a", "site-b"}),
             "incident_worker": frozenset({"site-a", "site-b"}),
+        }
+        assert await present_worker_host_counts(session, now, 30) == {
+            "dispatcher": 2, "incident_worker": 2,
         }
         assert await present_workers(session, now, 30) == frozenset({
             "dispatcher", "incident_worker",
@@ -140,3 +144,53 @@ def test_required_worker_hosts_parameter_is_bounded():
     for invalid in (0, 1, 17):
         with pytest.raises(ValidationError):
             Settings(min_distinct_worker_hosts=invalid)
+
+
+@pytest.mark.asyncio
+async def test_bounded_stale_host_pruning_keeps_current_topology(sessions_fixture):
+    now = datetime.now(timezone.utc)
+    for role in ("dispatcher", "incident_worker"):
+        for number in range(3):
+            await record_heartbeat(
+                sessions_fixture, role, now - timedelta(days=9),
+                host_id=f"retired-{number}",
+            )
+        await record_heartbeat(
+            sessions_fixture, role, now, host_id="active",
+        )
+    cutoff = now - timedelta(days=7)
+    assert await prune_worker_host_presence(
+        sessions_fixture, cutoff, batch_size=2,
+    ) == 2
+    async with sessions_fixture() as session:
+        assert await present_worker_host_counts(session, now, 30) == {
+            "dispatcher": 1, "incident_worker": 1,
+        }
+    assert await prune_worker_host_presence(
+        sessions_fixture, cutoff, batch_size=4,
+    ) == 4
+    assert await prune_worker_host_presence(sessions_fixture, cutoff) == 0
+    async with sessions_fixture() as session:
+        assert await present_worker_hosts(session, now, 30) == {
+            "dispatcher": frozenset({"active"}),
+            "incident_worker": frozenset({"active"}),
+        }
+
+
+@pytest.mark.asyncio
+async def test_host_pruning_rejects_unbounded_and_naive_inputs(sessions_fixture):
+    with pytest.raises(ValueError, match="timezone"):
+        await prune_worker_host_presence(
+            sessions_fixture, datetime(2026, 11, 22),
+        )
+    with pytest.raises(ValueError, match="batch size"):
+        await prune_worker_host_presence(
+            sessions_fixture, datetime.now(timezone.utc), batch_size=1001,
+        )
+    async with sessions_fixture() as session:
+        with pytest.raises(ValueError, match="timezone"):
+            await present_worker_host_counts(session, datetime(2026, 11, 22))
+        with pytest.raises(ValueError, match="positive"):
+            await present_worker_host_counts(
+                session, datetime.now(timezone.utc), max_age_seconds=0,
+            )

@@ -88,7 +88,11 @@ recently reported host IDs exist for either the dispatcher or incident-worker
 role. Host IDs are self-reported through shared application database rights,
 so two strings do **not** prove physically independent hosts or HA. G3
 remains BLOCKED until independently inventoried host identities, fault
-injection and raw recovery evidence are reviewed.
+injection and raw recovery evidence are reviewed. Readiness now uses
+indexed database-side fresh-host counts instead of scanning unbounded
+retired host records in API memory. The bounded retention worker prunes
+self-reported host rows older than seven days while preserving incident,
+effect and approval records. Neither optimization certifies HA.
 A CI-only PostgreSQL dump/restore rehearsal now verifies a synthetic
 revocation/capsule sentinel, schema revision, completed outbox intent,
 source RLS policies and re-applied restricted grants in an isolated database.

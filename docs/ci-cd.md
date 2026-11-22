@@ -122,3 +122,15 @@ fences, mismatched provider digests, duplicate scenarios and signatures,
 and same-key role impersonation. CI does not invoke an external provider,
 create real provider credentials or enable any real effect adapter.
 The `EVIDENCE_INTEGRITY_VALID_ONLY` result does not certify G2.
+
+
+## Long-lived multi-host readiness capacity (G3)
+
+Migration `0040_worker_host_age_index` indexes host role/time for the
+readiness cutoff. Readiness computes fresh host counts inside PostgreSQL
+instead of fetching and materializing all historical host rows; a separate
+bounded maintenance batch removes stale self-reported host presence older
+than seven days. Negative tests cover future/stale rows, bounded pruning,
+timezone and batch-size validation, plus non-regression of current live
+host presence. This is native operational scaling work, not real host
+independence or failover proof.

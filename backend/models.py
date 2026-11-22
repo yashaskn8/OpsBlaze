@@ -776,6 +776,7 @@ class WorkerHostHeartbeat(Base):
             "length(host_id) BETWEEN 1 AND 64",
             name="ck_worker_host_heartbeat_host_id",
         ),
+        Index("ix_worker_host_role_seen", "role", "last_seen"),
     )
 
     role: Mapped[str] = mapped_column(String(32), primary_key=True)

@@ -44,6 +44,7 @@ async def test_one_shot_maintenance_keeps_durable_incident_records(sessions_fixt
         "ui_events_deleted": 1,
         "admission_windows_deleted": 1,
         "ai_windows_deleted": 1,
+        "worker_hosts_pruned": 0,
     }
     assert all(v == 0 for v in (
         await run_maintenance(sessions_fixture, Settings(), now=now)
@@ -69,3 +70,27 @@ async def test_maintenance_rejects_unbounded_schedule_settings(sessions_fixture)
         await run_maintenance(
             sessions_fixture, Settings(ui_event_retention_days=0)
         )
+
+
+@pytest.mark.asyncio
+async def test_maintenance_prunes_only_retired_host_presence(sessions_fixture):
+    from backend.workers.heartbeat import (
+        present_worker_host_counts, record_heartbeat,
+    )
+
+    now = datetime.now(timezone.utc)
+    await record_heartbeat(
+        sessions_fixture, "dispatcher", now - timedelta(days=8),
+        host_id="retired",
+    )
+    await record_heartbeat(
+        sessions_fixture, "dispatcher", now, host_id="current",
+    )
+    totals = await run_maintenance(sessions_fixture, Settings(), now=now)
+    assert totals["worker_hosts_pruned"] == 1
+    async with sessions_fixture() as session:
+        assert await present_worker_host_counts(session, now, 30) == {
+            "dispatcher": 1, "incident_worker": 0,
+        }
+    again = await run_maintenance(sessions_fixture, Settings(), now=now)
+    assert again["worker_hosts_pruned"] == 0
