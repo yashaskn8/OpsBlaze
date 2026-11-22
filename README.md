@@ -200,6 +200,14 @@ python -m backend.benchmarks.local_capacity --output ci-artifacts/local-capacity
 These numbers are not PostgreSQL, Temporal, multi-host, or production SLO
 measurements. Real workload capacity and failover campaigns remain open.
 
+### Three-authority policy evidence verification (G5, non-authorizing)
+
+An offline verifier checks separate evaluator, security-reviewer and
+release-owner signatures against the same frozen policy/content, E5 result,
+tool manifest and git commit digests. It is review-only: valid signatures
+**cannot enable live rollout, override blocked production gates or authorize
+an infrastructure effect**. See [G5 evidence protocol](docs/feature-notes.md#g5-three-authority-frozen-evidence-review-offline-only).
+
 ### Frozen evaluator preregistration (G4, integrity only)
 
 The offline E5 verifier accepts optional externally pinned Ed25519 signed

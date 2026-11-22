@@ -237,3 +237,35 @@ The witness SHA is a reference for independent review, not a proof of
 correctness, and the verifier never outputs case-level oracle answers.
 An unsigned lab dataset remains `UNSIGNED_LAB_ONLY`.
 `promotion_eligible` is always false, irrespective of score.
+
+
+## G5 three-authority frozen evidence review (OFFLINE ONLY)
+
+`python -m backend.policy.release_evidence` validates three signed
+`ACKNOWLEDGE_EVIDENCE_ONLY` records from separate pinned Ed25519
+`evaluator`, `security_reviewer`, and `release_owner` public keys.
+Each signed record binds the immutable policy content digest, the full
+E5 report digest, the repository source commit (40 lowercase hex
+characters), and a frozen tool-manifest digest (64 lowercase hex).
+A role cannot reuse the same key as another role; wrong or missing
+signatures, mismatched frozen evidence and payload changes are INVALID.
+
+The command requires `--bundle`, `--evaluation`, `--reviews`, and
+`--evaluator-key`, `--security-key`, `--release-owner-key`.
+The bundle JSON must have exactly `policy_content`, `policy_digest`,
+`source_commit` and `tool_manifest_digest`. The reviews JSON must be
+an object containing one `reviews` array with precisely three objects.
+Review signatures cover the entire review record except the signature
+field, using `backend.policy.release_evidence.review_bytes`. Their
+`signature` field uses canonical unpadded base64url encoding.
+
+The E5 report must contain an existing `OFFLINE_PASS` and
+non-promotable recovery measurements and a valid-signature
+preregistration result. Even then, this code returns only
+`REVIEW_SIGNATURES_VALID_ONLY` with
+`external_role_custody_certified=false`, `promotion_eligible=false`,
+and `deployment_authorized=false`. The signed time is only a claim;
+a trusted independent authority must verify each human key's custody,
+role, independence and timing before a future production release gate.
+This script writes no registry or production state, and is never called
+by the live admission, rollout or effect boundaries.

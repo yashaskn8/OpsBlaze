@@ -124,8 +124,15 @@ The offline evaluator **always** reports `promotion_eligible=false`.
 
 Implemented lab evidence: immutable draft digests, deterministic bounded
 cohort preview, persistent **shadow-only** observations, reviewer pause/
-rollback and admission-time known-good pinning. No candidate policy is
-assigned live. `POST /v1/rollouts/{id}/approve` still rejects promotion.
+rollback and admission-time known-good pinning. An offline verifier now
+requires **three distinct externally pinned Ed25519 keys** (evaluation owner,
+security reviewer and release owner) to sign the same immutable policy
+content digest, frozen E5 report digest, tool-manifest digest and git SHA.
+It rejects altered or replayed content and same-key role impersonation, but
+these deliberately non-authorizing signatures DO NOT prove real human role
+custody, trusted time, host release checks, rollback readiness or a
+production-capable E5 result. No candidate policy is assigned live.
+`POST /v1/rollouts/{id}/approve` still rejects promotion.
 
 ## G6 — Cross-cutting production release: BLOCKED
 
