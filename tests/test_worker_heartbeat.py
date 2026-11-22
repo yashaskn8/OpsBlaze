@@ -55,7 +55,7 @@ async def test_production_readiness_checks_both_worker_roles(sessions_fixture, m
         oidc_audience="opsblaze-api",
         oidc_jwks_url="https://idp.example.test/jwks",
         projector_database_url=(
-            "postgresql+asyncpg://projector:restricted@localhost:5432/opsblaze"
+            "postgresql+asyncpg://opsblaze_projector:restricted@localhost:5432/opsblaze"
         ),
     )
     try:
@@ -99,7 +99,7 @@ async def test_readiness_fails_closed_if_temporal_unreachable(sessions_fixture, 
         oidc_audience="opsblaze-api",
         oidc_jwks_url="https://idp.example.test/jwks",
         projector_database_url=(
-            "postgresql+asyncpg://projector:restricted@localhost:5432/opsblaze"
+            "postgresql+asyncpg://opsblaze_projector:restricted@localhost:5432/opsblaze"
         ),
     )
     try:

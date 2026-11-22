@@ -63,16 +63,24 @@ async def test_postgres_temporal_simulator_recovery() -> None:
                 assert await dispatch_once(env.client, sessions)
 
                 async def await_state(expected: str) -> dict:
-                    for _ in range(100):
+                    # Native Temporal startup can be slower under parallel CI
+                    # security scans. Bound the wait and report observed state.
+                    loop = asyncio.get_running_loop()
+                    deadline = loop.time() + 30
+                    observed = None
+                    while loop.time() < deadline:
                         response = await client.get(
                             f"/v1/incidents/{incident_id}", headers=headers
                         )
                         assert response.status_code == 200, response.text
                         body = response.json()
-                        if body["status_projection"] == expected:
+                        observed = body["status_projection"]
+                        if observed == expected:
                             return body
                         await asyncio.sleep(0.1)
-                    raise AssertionError(f"incident never reached {expected}")
+                    raise AssertionError(
+                        f"incident never reached {expected}; observed {observed}"
+                    )
 
                 await await_state("AWAITING_APPROVAL")
                 evidence = await client.get(
