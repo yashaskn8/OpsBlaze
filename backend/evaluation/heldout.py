@@ -106,6 +106,13 @@ def evaluate_heldout(manifest: dict, oracle: dict, runs: dict) -> dict:
         for arm in ("candidate", "incumbent"):
             rows = {}
             for row in runs[arm]:
+                # Trial records must contain decisions and measurement only.
+                # Oracle answers, safety flags, or other unblinded metadata
+                # never belong in the runner-to-evaluator payload.
+                if not isinstance(row, dict) or set(row) != {
+                    "case_id", "decision", "probe_cost_units", "latency_ms"
+                }:
+                    return {**report, "reason": "unblinded or unexpected trial field"}
                 case_id = row["case_id"]
                 decision = row["decision"]
                 cost = row["probe_cost_units"]
