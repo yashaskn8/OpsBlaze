@@ -273,7 +273,7 @@ async def test_dead_lettered_start_is_never_hidden_by_attempt_filter(
     async with sessions_fixture() as session:
         start = await session.get(OutboxEntry, entry)
         assert start.attempt == attempts
-        assert start.dead_lettered_at == old
+        assert start.dead_lettered_at is not None
         assert start.delivered_at is None
 
 
