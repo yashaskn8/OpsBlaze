@@ -231,6 +231,15 @@ async def audit_recovery_consistency(
     }
 
 
+def audit_exit_code(report: dict) -> int:
+    """Signal incomplete scans and findings to unattended audit callers."""
+    if report["scan_truncated"] or report["receipt_scan_truncated"]:
+        return 2
+    if any(finding["reasons"] for finding in report["findings"]):
+        return 1
+    return 0
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(
         description="Read-only PostgreSQL/Temporal recovery consistency audit"
@@ -245,8 +254,7 @@ async def main() -> None:
         stale_seconds=args.stale_seconds, limit=args.limit,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
-    if report["scan_truncated"] or report["receipt_scan_truncated"]:
-        raise SystemExit(2)
+    raise SystemExit(audit_exit_code(report))
 
 
 if __name__ == "__main__":
