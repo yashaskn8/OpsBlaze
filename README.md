@@ -686,7 +686,9 @@ The CLI prints its JSON report before exiting: `0` means the bounded scan
 found no inconsistencies, `1` means at least one audited record has a
 finding, and `2` means the scan or receipt sample was truncated.
 If `scan_truncated` is true, re-run with `--after-id` set to the report's
-`next_after_id`, keeping the same stale cutoff strategy and scan limit.
+`next_after_id` and `--observed-at` set to the first report's `observed_at`
+ISO-8601 timestamp, keeping the same `--stale-seconds` and scan limit.
+This pins the age cutoff so newly aged records do not shift later pages.
 `after_id` and `next_after_id` are outbox row IDs, not incident IDs;
 `next_after_id` is null on the final page. Each page re-checks duplicate
 START_WORKFLOW intents for the selected incidents across the whole table,
