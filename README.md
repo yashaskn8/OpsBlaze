@@ -682,3 +682,7 @@ reported workflow identity and conservatively classifies unresolved
 simulator receipts. It is bounded and non-mutating; audit findings require
 human review. Unknown history never authorizes a retry, and a green scan
 is not proof of multi-host recovery or a production certification.
+The CLI prints its JSON report before exiting: `0` means the bounded scan
+found no inconsistencies, `1` means at least one audited record has a
+finding, and `2` means the scan or receipt sample was truncated. None of
+these exit statuses authorizes an automatic retry or a production release.
