@@ -460,6 +460,80 @@ async def test_receipt_scan_overflow_fails_closed_without_unbounded_fetch(
     assert not result["recovery_certified"]
 
 
+@pytest.mark.asyncio
+async def test_receipt_overflow_identifies_only_incidents_with_missing_evidence(
+    sessions_fixture,
+):
+    crowded, _ = await incident_start(sessions_fixture, "crowded")
+    clean, _ = await incident_start(sessions_fixture, "clean")
+    base = datetime.now(timezone.utc) - timedelta(hours=3)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            for index in range(17):
+                session.add(EffectReceipt(
+                    id=uuid4(), tenant_id="audit-tenant", incident_id=crowded,
+                    plan_digest="a" * 64, target_id="synthetic-audit-target",
+                    adapter_id="simulator", permit_digest="b" * 64,
+                    idempotency_key=f"crowded-{index}", fence=index + 1,
+                    expected_version=0, state="VERIFIED", attempt_count=1,
+                    observed_version=1,
+                    created_at=base + timedelta(seconds=index),
+                ))
+            session.add(EffectReceipt(
+                id=uuid4(), tenant_id="audit-tenant", incident_id=clean,
+                plan_digest="a" * 64, target_id="synthetic-audit-target",
+                adapter_id="simulator", permit_digest="b" * 64,
+                idempotency_key="clean", fence=1, expected_version=0,
+                state="VERIFIED", attempt_count=1, observed_version=1,
+                created_at=base + timedelta(minutes=1),
+            ))
+    report = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal(), limit=2,
+    )
+    assert report["receipt_scan_truncated"]
+    by_id = {row["incident_id"]: row for row in report["findings"]}
+    assert "RECEIPT_SCAN_TRUNCATED" in by_id[str(crowded)]["reasons"]
+    assert "RECEIPT_SCAN_TRUNCATED" in by_id[str(clean)]["reasons"]
+    assert audit_exit_code(report) == 2
+
+
+@pytest.mark.asyncio
+async def test_receipt_overflow_does_not_flag_fully_inspected_incident(
+    sessions_fixture,
+):
+    clean, _ = await incident_start(sessions_fixture, "clean-first")
+    crowded, _ = await incident_start(sessions_fixture, "crowded-second")
+    base = datetime.now(timezone.utc) - timedelta(hours=3)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(EffectReceipt(
+                id=uuid4(), tenant_id="audit-tenant", incident_id=clean,
+                plan_digest="a" * 64, target_id="synthetic-audit-target",
+                adapter_id="simulator", permit_digest="b" * 64,
+                idempotency_key="clean-first", fence=1, expected_version=0,
+                state="VERIFIED", attempt_count=1, observed_version=1,
+                created_at=base,
+            ))
+            for index in range(17):
+                session.add(EffectReceipt(
+                    id=uuid4(), tenant_id="audit-tenant", incident_id=crowded,
+                    plan_digest="a" * 64, target_id="synthetic-audit-target",
+                    adapter_id="simulator", permit_digest="b" * 64,
+                    idempotency_key=f"crowded-second-{index}", fence=index + 1,
+                    expected_version=0, state="VERIFIED", attempt_count=1,
+                    observed_version=1,
+                    created_at=base + timedelta(seconds=index + 1),
+                ))
+    report = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal(), limit=2,
+    )
+    assert report["receipt_scan_truncated"]
+    by_id = {row["incident_id"]: row for row in report["findings"]}
+    assert "RECEIPT_SCAN_TRUNCATED" not in by_id[str(clean)]["reasons"]
+    assert "RECEIPT_SCAN_TRUNCATED" in by_id[str(crowded)]["reasons"]
+    assert audit_exit_code(report) == 2
+
+
 @pytest.mark.parametrize(("reasons", "start_overflow", "receipt_overflow", "expected"), [
     ([], False, False, 0),
     (["TEMPORAL_HISTORY_UNAVAILABLE_OR_UNKNOWN"], False, False, 1),
