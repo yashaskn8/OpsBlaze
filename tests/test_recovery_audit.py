@@ -422,6 +422,42 @@ async def test_recovery_audit_cursor_pages_all_old_starts_once(sessions_fixture)
 
 
 @pytest.mark.asyncio
+async def test_pinned_high_water_excludes_later_duplicate_from_next_page(
+    sessions_fixture,
+):
+    await incident_start(sessions_fixture, "first-window")
+    iid, _ = await incident_start(sessions_fixture, "second-window")
+    observed = datetime.now(timezone.utc)
+    first = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal(), limit=1, now=observed,
+    )
+    assert first["scan_truncated"]
+    # Insert a duplicate for the next-page incident after the first page.
+    # Its creation time may be backdated, but its ID is above the pin.
+    old = observed - timedelta(hours=2)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutboxEntry(
+                incident_id=iid, kind="START_WORKFLOW",
+                created_at=old, available_at=old, attempt=1,
+            ))
+    second = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal(), limit=1, now=observed,
+        after_id=first["next_after_id"], through_id=first["through_id"],
+    )
+    assert second["scanned"] == 1
+    assert second["next_after_id"] is None
+    assert "DUPLICATE_START_INTENT" not in second["findings"][0]["reasons"]
+    assert second["findings"][0]["safe_action"] == "INSPECT_ONLY"
+    # A new scan is allowed to detect the duplicate.
+    fresh = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal(), now=observed,
+    )
+    assert any("DUPLICATE_START_INTENT" in finding["reasons"]
+               for finding in fresh["findings"])
+
+
+@pytest.mark.asyncio
 async def test_high_water_mark_excludes_new_starts_between_pages(sessions_fixture):
     await incident_start(sessions_fixture, "initial-a")
     await incident_start(sessions_fixture, "initial-b")
