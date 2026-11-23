@@ -201,6 +201,7 @@ async def audit_recovery_consistency(
                     EffectReceipt.state, EffectReceipt.adapter_id,
                     EffectReceipt.permit_digest, EffectReceipt.attempt_count,
                     EffectReceipt.expected_version, EffectReceipt.observed_version,
+                    EffectReceipt.plan_digest, EffectReceipt.fence,
                 ).where(EffectReceipt.incident_id.in_(incident_ids))
                 .order_by(EffectReceipt.created_at, EffectReceipt.id)
                 .limit(limit * 8 + 1)
@@ -247,10 +248,17 @@ async def audit_recovery_consistency(
         if receipt_counts.get(incident_id, 0) > len(by_incident[incident_id]):
             reasons.add("RECEIPT_SCAN_TRUNCATED")
         for receipt in by_incident[incident_id]:
-            _, receipt_tenant, state, adapter, digest, count, version, observed_v = receipt
+            (_, receipt_tenant, state, adapter, digest, count, version,
+             observed_v, plan_digest, fence) = receipt
             if receipt_tenant != tenant:
                 reasons.add("CROSS_TENANT_RECEIPT")
                 continue
+            if (
+                not isinstance(plan_digest, str) or len(plan_digest) != 64
+                or any(char not in "0123456789abcdef" for char in plan_digest)
+                or type(fence) is not int or fence < 1
+            ):
+                reasons.add("RECEIPT_INVARIANT_VIOLATION")
             finding = check_receipt(
                 state, adapter, digest, count, version, observed_v,
             )
