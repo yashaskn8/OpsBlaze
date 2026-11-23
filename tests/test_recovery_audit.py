@@ -279,7 +279,36 @@ async def test_recovery_audit_cursor_pages_all_old_starts_once(sessions_fixture)
 
 
 @pytest.mark.asyncio
-async def test_duplicate_start_across_pages_is_detected_on_each_page(sessions_fixture):
+async def test_fixed_observation_time_keeps_age_cutoff_stable_across_pages(
+    sessions_fixture,
+):
+    old_id, _ = await incident_start(sessions_fixture, "old")
+    future_id, future_start = await incident_start(sessions_fixture, "future")
+    fixed = datetime.now(timezone.utc)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            row = await session.get(OutboxEntry, future_start)
+            row.created_at = fixed - timedelta(seconds=10)
+    first = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal(), now=fixed, stale_seconds=300, limit=1,
+    )
+    assert first["observed_at"] == fixed.isoformat()
+    assert first["scanned"] == 1
+    assert first["findings"][0]["incident_id"] == str(old_id)
+    assert first["next_after_id"] is None
+
+    # A later audit can include the second record, but only if the
+    # observation time is intentionally advanced.
+    later = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal(),
+        now=fixed + timedelta(seconds=400), stale_seconds=300,
+    )
+    assert {row["incident_id"] for row in later["findings"]} == {
+        str(old_id), str(future_id),
+    }
+
+
+(sessions_fixture):
     iid, first_id = await incident_start(sessions_fixture)
     old = datetime.now(timezone.utc) - timedelta(hours=2)
     async with sessions_fixture() as session:
@@ -323,6 +352,7 @@ async def test_unattempted_starts_do_not_generate_false_temporal_loss(sessions_f
     {"limit": 0}, {"limit": 51},
     {"now": datetime(2026, 11, 22)},
     {"after_id": True}, {"after_id": -1}, {"after_id": 1.5},
+    {"now": "2026-11-22T00:00:00Z"},
 ])
 @pytest.mark.asyncio
 async def test_recovery_audit_rejects_invalid_bounds(sessions_fixture, args):
