@@ -12,7 +12,7 @@ from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 from backend.workers.dispatcher import workflow_id
 from backend.workers.recovery_audit import (
-    audit_recovery_consistency, check_receipt,
+    audit_exit_code, audit_recovery_consistency, check_receipt,
 )
 
 
@@ -346,3 +346,20 @@ async def test_receipt_scan_overflow_fails_closed_without_unbounded_fetch(
     assert result["receipt_scan_truncated"] is True
     assert "RECEIPT_SCAN_TRUNCATED" in result["findings"][0]["reasons"]
     assert not result["recovery_certified"]
+
+
+@pytest.mark.parametrize(("reasons", "start_overflow", "receipt_overflow", "expected"), [
+    ([], False, False, 0),
+    (["TEMPORAL_HISTORY_UNAVAILABLE_OR_UNKNOWN"], False, False, 1),
+    ([], True, False, 2),
+    (["RECEIPT_INVARIANT_VIOLATION"], False, True, 2),
+])
+def test_recovery_audit_process_exit_code(
+    reasons, start_overflow, receipt_overflow, expected,
+):
+    report = {
+        "findings": [{"reasons": reasons}],
+        "scan_truncated": start_overflow,
+        "receipt_scan_truncated": receipt_overflow,
+    }
+    assert audit_exit_code(report) == expected
