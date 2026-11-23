@@ -173,6 +173,9 @@ async def audit_recovery_consistency(
                 .where(
                     OutboxEntry.kind == "START_WORKFLOW",
                     OutboxEntry.incident_id.in_(incident_ids),
+                    # Match the pinned scan window: later inserts must not
+                    # retroactively change findings on subsequent pages.
+                    OutboxEntry.id <= through_id,
                 )
                 .group_by(OutboxEntry.incident_id)
             )).all()
