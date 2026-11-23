@@ -247,6 +247,37 @@ async def test_needs_review_effect_is_reported_without_reconciliation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("attempts", [0, 2])
+async def test_dead_lettered_start_is_never_hidden_by_attempt_filter(
+    sessions_fixture, attempts,
+):
+    iid, entry = await incident_start(sessions_fixture)
+    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            start = await session.get(OutboxEntry, entry)
+            start.attempt = attempts
+            start.dead_lettered_at = old
+            start.delivered_at = None
+    wid = workflow_id("audit-tenant", iid)
+    report = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal({wid: description(wid)}),
+    )
+    assert report["scanned"] == 1
+    assert report["findings"][0]["outbox_id"] == entry
+    assert "DEAD_LETTERED_START_REQUIRES_OPERATOR_REVIEW" in (
+        report["findings"][0]["reasons"]
+    )
+    assert report["findings"][0]["safe_action"] == "INSPECT_ONLY"
+    assert audit_exit_code(report) == 1
+    async with sessions_fixture() as session:
+        start = await session.get(OutboxEntry, entry)
+        assert start.attempt == attempts
+        assert start.dead_lettered_at == old
+        assert start.delivered_at is None
+
+
+@pytest.mark.asyncio
 async def test_duplicate_start_intents_and_conflicting_terminal_flags(sessions_fixture):
     iid, entry = await incident_start(sessions_fixture)
     old = datetime.now(timezone.utc) - timedelta(hours=2)
