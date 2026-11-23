@@ -216,6 +216,37 @@ async def test_effect_receipt_uncertainty_and_invalid_success_are_reported(
 
 
 @pytest.mark.asyncio
+async def test_needs_review_effect_is_reported_without_reconciliation(
+    sessions_fixture,
+):
+    iid, _ = await incident_start(sessions_fixture)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(EffectReceipt(
+                id=uuid4(), tenant_id="audit-tenant", incident_id=iid,
+                plan_digest="c" * 64, target_id="synthetic-audit-target",
+                adapter_id="simulator", permit_digest="a" * 64,
+                idempotency_key="human-review-required", fence=1,
+                expected_version=0, attempt_count=1,
+                observed_version=None, state="NEEDS_REVIEW",
+            ))
+    wid = workflow_id("audit-tenant", iid)
+    report = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal({wid: description(wid)}),
+    )
+    assert "EFFECT_REQUIRES_HUMAN_REVIEW" in report["findings"][0]["reasons"]
+    assert report["findings"][0]["safe_action"] == "INSPECT_ONLY"
+    assert audit_exit_code(report) == 1
+    async with sessions_fixture() as session:
+        receipt = (await session.execute(
+            select(EffectReceipt).where(
+                EffectReceipt.idempotency_key == "human-review-required"
+            )
+        )).scalar_one()
+        assert receipt.state == "NEEDS_REVIEW"
+
+
+@pytest.mark.asyncio
 async def test_duplicate_start_intents_and_conflicting_terminal_flags(sessions_fixture):
     iid, entry = await incident_start(sessions_fixture)
     old = datetime.now(timezone.utc) - timedelta(hours=2)
@@ -400,6 +431,8 @@ async def test_recovery_audit_rejects_invalid_bounds(sessions_fixture, args):
      "RECEIPT_INVARIANT_VIOLATION"),
     (("CONFIRMED", "simulator", "a" * 64, 1, 0, 3),
      "RECEIPT_INVARIANT_VIOLATION"),
+    (("NEEDS_REVIEW", "simulator", "a" * 64, 1, 0, None),
+     "EFFECT_REQUIRES_HUMAN_REVIEW"),
     (("VERIFIED", "simulator", "a" * 64, 1, 0, 1), None),
     (("VERIFIED", "live-provider", "a" * 64, 1, 0, 1),
      "RECEIPT_INVARIANT_VIOLATION"),
