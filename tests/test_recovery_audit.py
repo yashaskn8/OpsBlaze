@@ -279,6 +279,32 @@ async def test_recovery_audit_cursor_pages_all_old_starts_once(sessions_fixture)
 
 
 @pytest.mark.asyncio
+async def test_high_water_mark_excludes_new_starts_between_pages(sessions_fixture):
+    await incident_start(sessions_fixture, "initial-a")
+    await incident_start(sessions_fixture, "initial-b")
+    observed = datetime.now(timezone.utc)
+    first = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal(), limit=1, now=observed,
+    )
+    assert first["scan_truncated"]
+    assert first["through_id"] >= first["next_after_id"]
+    new_id, _ = await incident_start(sessions_fixture, "inserted-later")
+    second = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal(), limit=1, now=observed,
+        after_id=first["next_after_id"], through_id=first["through_id"],
+    )
+    assert second["scanned"] == 1
+    assert second["through_id"] == first["through_id"]
+    assert second["next_after_id"] is None
+    assert str(new_id) not in [f["incident_id"] for f in second["findings"]]
+    # A fresh independent scan is permitted to see the new durable intent.
+    fresh = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal(), now=observed,
+    )
+    assert fresh["scanned"] == 3
+
+
+@pytest.mark.asyncio
 async def test_fixed_observation_time_keeps_age_cutoff_stable_across_pages(
     sessions_fixture,
 ):
@@ -353,6 +379,7 @@ async def test_unattempted_starts_do_not_generate_false_temporal_loss(sessions_f
     {"limit": 0}, {"limit": 51},
     {"now": datetime(2026, 11, 22)},
     {"after_id": True}, {"after_id": -1}, {"after_id": 1.5},
+    {"through_id": True}, {"through_id": -1}, {"through_id": 1.5},
     {"now": "2026-11-22T00:00:00Z"},
 ])
 @pytest.mark.asyncio
