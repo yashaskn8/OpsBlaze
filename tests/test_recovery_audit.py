@@ -380,6 +380,7 @@ async def test_unattempted_starts_do_not_generate_false_temporal_loss(sessions_f
     {"now": datetime(2026, 11, 22)},
     {"after_id": True}, {"after_id": -1}, {"after_id": 1.5},
     {"through_id": True}, {"through_id": -1}, {"through_id": 1.5},
+    {"after_id": 2, "through_id": 1},
     {"now": "2026-11-22T00:00:00Z"},
 ])
 @pytest.mark.asyncio
