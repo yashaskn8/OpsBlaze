@@ -137,7 +137,10 @@ async def audit_recovery_consistency(
     observed = datetime.now(timezone.utc) if now is None else now
     if not isinstance(observed, datetime) or observed.tzinfo is None or observed.utcoffset() is None:
         raise ValueError("audit observation time must include timezone")
-    cutoff = observed.astimezone(timezone.utc) - timedelta(seconds=stale_seconds)
+    try:
+        cutoff = observed.astimezone(timezone.utc) - timedelta(seconds=stale_seconds)
+    except OverflowError as exc:
+        raise ValueError("audit observation time outside supported range") from exc
 
     async with sessions() as session:
         # Pin a high-water mark on the first page. Subsequent pages must
