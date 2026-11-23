@@ -73,6 +73,10 @@ def check_receipt(
         return "UNRESOLVED_EFFECT_REQUIRES_RECONCILIATION" if (
             state in UNRESOLVED_RECEIPTS
         ) else None
+    if state == "FAILED" and observed_version is not None and (
+        type(observed_version) is not int or observed_version < 0
+    ):
+        return "RECEIPT_INVARIANT_VIOLATION"
     if state == "NEEDS_REVIEW":
         return "EFFECT_REQUIRES_HUMAN_REVIEW"
     return None
