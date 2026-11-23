@@ -308,7 +308,8 @@ async def test_fixed_observation_time_keeps_age_cutoff_stable_across_pages(
     }
 
 
-(sessions_fixture):
+@pytest.mark.asyncio
+async def test_duplicate_start_across_pages_is_detected_on_each_page(sessions_fixture):
     iid, first_id = await incident_start(sessions_fixture)
     old = datetime.now(timezone.utc) - timedelta(hours=2)
     async with sessions_fixture() as session:
