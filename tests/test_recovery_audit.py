@@ -191,6 +191,31 @@ async def test_delivered_start_with_terminal_history_cannot_self_repair_projecti
 
 
 @pytest.mark.asyncio
+async def test_acknowledged_start_without_recorded_attempt_requires_review(
+    sessions_fixture,
+):
+    iid, entry = await incident_start(sessions_fixture)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            start = await session.get(OutboxEntry, entry)
+            start.attempt = 0
+            start.delivered_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    wid = workflow_id("audit-tenant", iid)
+    report = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal({wid: description(wid)}),
+    )
+    assert report["scanned"] == 1
+    finding = report["findings"][0]
+    assert "ACKNOWLEDGED_START_WITHOUT_ATTEMPT" in finding["reasons"]
+    assert finding["safe_action"] == "INSPECT_ONLY"
+    assert audit_exit_code(report) == 1
+    async with sessions_fixture() as session:
+        start = await session.get(OutboxEntry, entry)
+        assert start.attempt == 0
+        assert start.delivered_at is not None
+
+
+@pytest.mark.asyncio
 async def test_running_history_with_terminal_db_projection_is_reported(
     sessions_fixture,
 ):
