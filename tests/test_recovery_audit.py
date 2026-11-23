@@ -557,6 +557,7 @@ async def test_unattempted_starts_do_not_generate_false_temporal_loss(sessions_f
     {"stale_seconds": 86401}, {"limit": False},
     {"limit": 0}, {"limit": 51},
     {"now": datetime(2026, 11, 22)},
+    {"now": datetime.min.replace(tzinfo=timezone.utc)},
     {"after_id": True}, {"after_id": -1}, {"after_id": 1.5},
     {"through_id": True}, {"through_id": -1}, {"through_id": 1.5},
     {"after_id": 2, "through_id": 1},
