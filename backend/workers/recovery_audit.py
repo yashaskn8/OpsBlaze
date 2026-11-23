@@ -121,8 +121,8 @@ async def audit_recovery_consistency(
         or type(after_id) is not int or after_id < 0
     ):
         raise ValueError("audit scan bounds out of range")
-    observed = now or datetime.now(timezone.utc)
-    if observed.tzinfo is None:
+    observed = datetime.now(timezone.utc) if now is None else now
+    if not isinstance(observed, datetime) or observed.tzinfo is None or observed.utcoffset() is None:
         raise ValueError("audit observation time must include timezone")
     cutoff = observed.astimezone(timezone.utc) - timedelta(seconds=stale_seconds)
 
@@ -232,6 +232,7 @@ async def audit_recovery_consistency(
         results = list(await asyncio.gather(*(inspect(row) for row in selected)))
     return {
         "status": "AUDIT_ONLY",
+        "observed_at": observed.astimezone(timezone.utc).isoformat(),
         "scanned": len(selected),
         "scan_truncated": len(starts) > limit,
         "after_id": after_id,
@@ -259,13 +260,26 @@ async def main() -> None:
     parser.add_argument("--stale-seconds", type=int, default=300)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--after-id", type=int, default=0)
+    parser.add_argument(
+        "--observed-at", type=str,
+        help="Fixed timezone-aware ISO-8601 audit observation time; reuse across pages",
+    )
     args = parser.parse_args()
+    observed_at = None
+    if args.observed_at is not None:
+        try:
+            observed_at = datetime.fromisoformat(args.observed_at)
+        except ValueError as exc:
+            parser.error(f"invalid --observed-at ISO-8601 timestamp: {exc}")
+        if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+            parser.error("--observed-at requires a timezone offset")
     settings = get_settings()
     client = await connect_temporal(settings)
     report = await audit_recovery_consistency(
         get_session_maker(), client,
         stale_seconds=args.stale_seconds, limit=args.limit,
         after_id=args.after_id,
+        now=observed_at,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     raise SystemExit(audit_exit_code(report))
