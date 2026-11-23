@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio.client import Client
 
@@ -107,6 +107,7 @@ async def audit_recovery_consistency(
     *,
     stale_seconds: int = 300,
     limit: int = 20,
+    after_id: int = 0,
     now: datetime | None = None,
 ) -> dict:
     """Bounded scan with no remote mutations and no database write sessions.
@@ -117,6 +118,7 @@ async def audit_recovery_consistency(
     if (
         type(stale_seconds) is not int or not 1 <= stale_seconds <= 86400
         or type(limit) is not int or not 1 <= limit <= 50
+        or type(after_id) is not int or after_id < 0
     ):
         raise ValueError("audit scan bounds out of range")
     observed = now or datetime.now(timezone.utc)
@@ -133,6 +135,7 @@ async def audit_recovery_consistency(
             ).join(OutboxEntry, OutboxEntry.incident_id == Incident.id)
             .where(
                 OutboxEntry.kind == "START_WORKFLOW",
+                OutboxEntry.id > after_id,
                 OutboxEntry.created_at <= cutoff,
                 or_(
                     OutboxEntry.attempt > 0,
@@ -144,6 +147,17 @@ async def audit_recovery_consistency(
 
         selected = starts[:limit]
         incident_ids = list({row[1] for row in selected})
+        start_counts = {}
+        if incident_ids:
+            counts = (await session.execute(
+                select(OutboxEntry.incident_id, func.count(OutboxEntry.id))
+                .where(
+                    OutboxEntry.kind == "START_WORKFLOW",
+                    OutboxEntry.incident_id.in_(incident_ids),
+                )
+                .group_by(OutboxEntry.incident_id)
+            )).all()
+            start_counts = dict(counts)
         receipts = []
         if incident_ids:
             receipts = (await session.execute(
@@ -161,10 +175,6 @@ async def audit_recovery_consistency(
     by_incident: dict[UUID, list] = defaultdict(list)
     for receipt in receipts[:limit * 8]:
         by_incident[receipt[0]].append(receipt)
-    start_counts: dict[UUID, int] = defaultdict(int)
-    for row in selected:
-        start_counts[row[1]] += 1
-
     results = []
     # Bound concurrent Temporal reads, and never hold a DB transaction
     # across a network RPC.
@@ -176,7 +186,7 @@ async def audit_recovery_consistency(
         async with semaphore:
             status, identity_ok = await _temporal_description(client, wid)
         reasons = set()
-        if start_counts[incident_id] > 1:
+        if start_counts.get(incident_id, 0) > 1:
             reasons.add("DUPLICATE_START_INTENT")
         if type(attempts) is not int or attempts < 0:
             reasons.add("INVALID_START_ATTEMPT")
@@ -224,6 +234,8 @@ async def audit_recovery_consistency(
         "status": "AUDIT_ONLY",
         "scanned": len(selected),
         "scan_truncated": len(starts) > limit,
+        "after_id": after_id,
+        "next_after_id": selected[-1][3] if len(starts) > limit else None,
         "receipt_scan_truncated": receipt_overflow,
         "findings": results,
         "external_effects_enabled": False,
@@ -246,12 +258,14 @@ async def main() -> None:
     )
     parser.add_argument("--stale-seconds", type=int, default=300)
     parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--after-id", type=int, default=0)
     args = parser.parse_args()
     settings = get_settings()
     client = await connect_temporal(settings)
     report = await audit_recovery_consistency(
         get_session_maker(), client,
         stale_seconds=args.stale_seconds, limit=args.limit,
+        after_id=args.after_id,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     raise SystemExit(audit_exit_code(report))
