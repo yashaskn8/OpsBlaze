@@ -737,3 +737,39 @@ def test_recovery_audit_process_exit_code(
         "receipt_scan_truncated": receipt_overflow,
     }
     assert audit_exit_code(report) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("plan_digest", "fence"), [
+    ("not-a-digest", 1),
+    ("A" * 64, 1),
+    ("a" * 64, 0),
+    ("a" * 64, -1),
+])
+async def test_recovery_audit_flags_invalid_receipt_identity_without_writes(
+    sessions_fixture, plan_digest, fence,
+):
+    iid, _ = await incident_start(sessions_fixture)
+    receipt_id = uuid4()
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(EffectReceipt(
+                id=receipt_id, tenant_id="audit-tenant", incident_id=iid,
+                plan_digest=plan_digest, target_id="synthetic-audit-target",
+                adapter_id="simulator", permit_digest="b" * 64,
+                idempotency_key=f"invalid-identity-{receipt_id}",
+                fence=fence, expected_version=0, state="VERIFIED",
+                attempt_count=1, observed_version=1,
+            ))
+    wid = workflow_id("audit-tenant", iid)
+    report = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal({wid: description(wid)}),
+    )
+    assert "RECEIPT_INVARIANT_VIOLATION" in report["findings"][0]["reasons"]
+    assert report["findings"][0]["safe_action"] == "INSPECT_ONLY"
+    assert audit_exit_code(report) == 1
+    async with sessions_fixture() as session:
+        receipt = await session.get(EffectReceipt, receipt_id)
+        assert receipt.plan_digest == plan_digest
+        assert receipt.fence == fence
+        assert receipt.state == "VERIFIED"
