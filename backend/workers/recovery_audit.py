@@ -121,7 +121,7 @@ async def audit_recovery_consistency(
 ) -> dict:
     """Bounded scan with no remote mutations and no database write sessions.
 
-    Only durable starts attempted, ACKed or dead-lettered are considered;
+    Only durable starts attempted, malformed, ACKed or dead-lettered are considered;
     a fresh never-attempted START is not a Temporal failure.
     """
     if (
@@ -156,7 +156,7 @@ async def audit_recovery_consistency(
                 OutboxEntry.id <= through_id,
                 OutboxEntry.created_at <= cutoff,
                 or_(
-                    OutboxEntry.attempt > 0,
+                    OutboxEntry.attempt != 0,
                     OutboxEntry.delivered_at.is_not(None),
                     OutboxEntry.dead_lettered_at.is_not(None),
                 ),
