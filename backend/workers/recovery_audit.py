@@ -91,16 +91,22 @@ async def _temporal_description(
         # proof the start was not committed.
         return "UNKNOWN", False
 
-    status = getattr(desc.status, "name", desc.status)
-    if not isinstance(status, str) or status not in KNOWN_WORKFLOWS:
-        return "UNKNOWN", False
+    # A transport may return an incomplete or malformed description. Never
+    # let an unexpected response turn a bounded audit into an uncaught error.
+    try:
+        raw_status = getattr(desc, "status", None)
+        status = getattr(raw_status, "name", raw_status)
+        if not isinstance(status, str) or status not in KNOWN_WORKFLOWS:
+            return "UNKNOWN", False
 
-    # The SDK normally includes ID/type; absence is not a positive match.
-    observed_id = getattr(desc, "id", None)
-    observed_type = getattr(desc, "workflow_type", None)
-    if observed_id != wid or observed_type != "IncidentWorkflow":
-        return status, False
-    return status, True
+        # The SDK normally includes ID/type; absence is not a positive match.
+        observed_id = getattr(desc, "id", None)
+        observed_type = getattr(desc, "workflow_type", None)
+        if observed_id != wid or observed_type != "IncidentWorkflow":
+            return status, False
+        return status, True
+    except Exception:
+        return "UNKNOWN", False
 
 
 async def audit_recovery_consistency(
