@@ -22,8 +22,12 @@ tokens, and identity-provider subject values out of public tickets and logs.
 
   A recovery audit exit status of 1 means findings; 2 means the sample was
   incomplete. With a `next_after_id`, inspect subsequent pages using
-  `--after-id <outbox-row-id>`. Do not interpret a single clean page as a
-  complete audit. A Temporal timeout or missing history is **UNKNOWN**, never
+  `--after-id <outbox-row-id>`, also preserving the first page's
+  `--through-id <outbox-row-id>` and `--observed-at <timestamp>` values.
+  The first page supplies `through_id` and `observed_at` in JSON. The
+  high-water ID excludes newly inserted outbox rows from later pages;
+  it does not freeze updates or deletions to existing rows. Do not
+  interpret a single clean page as a complete audit. A Temporal timeout or missing history is **UNKNOWN**, never
   proof that the workflow was not started.
 - **Safe action:** preserve the original durable outbox intent and immutable
   workflow ID. Investigate service health and restart only the approved
