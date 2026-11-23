@@ -115,8 +115,8 @@ async def audit_recovery_consistency(
 ) -> dict:
     """Bounded scan with no remote mutations and no database write sessions.
 
-    Only durable starts attempted at least once or already ACKed are
-    considered; a fresh never-attempted START is not a Temporal failure.
+    Only durable starts attempted, ACKed or dead-lettered are considered;
+    a fresh never-attempted START is not a Temporal failure.
     """
     if (
         type(stale_seconds) is not int or not 1 <= stale_seconds <= 86400
@@ -152,6 +152,7 @@ async def audit_recovery_consistency(
                 or_(
                     OutboxEntry.attempt > 0,
                     OutboxEntry.delivered_at.is_not(None),
+                    OutboxEntry.dead_lettered_at.is_not(None),
                 ),
             )
             .order_by(OutboxEntry.id).limit(limit + 1)
@@ -210,6 +211,8 @@ async def audit_recovery_consistency(
             reasons.add("INVALID_START_ATTEMPT")
         if delivered is not None and dead is not None:
             reasons.add("CONFLICTING_OUTBOX_TERMINAL_MARKERS")
+        if dead is not None and delivered is None:
+            reasons.add("DEAD_LETTERED_START_REQUIRES_OPERATOR_REVIEW")
         if status == "UNKNOWN":
             reasons.add("TEMPORAL_HISTORY_UNAVAILABLE_OR_UNKNOWN")
         elif not identity_ok:
