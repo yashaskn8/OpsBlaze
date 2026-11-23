@@ -122,6 +122,7 @@ async def audit_recovery_consistency(
         or type(after_id) is not int or after_id < 0
         or (through_id is not None and (
             type(through_id) is not int or through_id < 0
+            or after_id > through_id
         ))
     ):
         raise ValueError("audit scan bounds out of range")
