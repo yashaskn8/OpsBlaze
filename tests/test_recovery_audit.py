@@ -141,6 +141,36 @@ async def test_untrusted_temporal_description_never_proves_remote_start(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("malformed", [
+    None,
+    object(),
+    SimpleNamespace(id="anything", workflow_type="IncidentWorkflow"),
+    SimpleNamespace(status=None, id="anything", workflow_type="IncidentWorkflow"),
+    SimpleNamespace(status=SimpleNamespace(name=object()),
+                    id="anything", workflow_type="IncidentWorkflow"),
+])
+async def test_malformed_temporal_descriptions_fail_closed_without_writes(
+    sessions_fixture, malformed,
+):
+    iid, entry = await incident_start(sessions_fixture)
+    wid = workflow_id("audit-tenant", iid)
+    report = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal({wid: malformed}),
+    )
+    assert report["scanned"] == 1
+    finding = report["findings"][0]
+    assert finding["temporal_status"] == "UNKNOWN"
+    assert finding["temporal_identity_verified"] is False
+    assert "TEMPORAL_HISTORY_UNAVAILABLE_OR_UNKNOWN" in finding["reasons"]
+    assert "UNACKNOWLEDGED_START_CANNOT_BE_SAFELY_REPLAYED_FROM_AUDIT" in finding["reasons"]
+    assert finding["safe_action"] == "INSPECT_ONLY"
+    assert audit_exit_code(report) == 1
+    async with sessions_fixture() as session:
+        start = await session.get(OutboxEntry, entry)
+        assert start.attempt == 2 and start.delivered_at is None
+
+
+@pytest.mark.asyncio
 async def test_delivered_start_with_terminal_history_cannot_self_repair_projection(
     sessions_fixture,
 ):
