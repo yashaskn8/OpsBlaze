@@ -167,8 +167,14 @@ async def audit_recovery_consistency(
                 .group_by(OutboxEntry.incident_id)
             )).all()
             start_counts = dict(counts)
+        receipt_counts = {}
         receipts = []
         if incident_ids:
+            receipt_counts = dict((await session.execute(
+                select(EffectReceipt.incident_id, func.count(EffectReceipt.id))
+                .where(EffectReceipt.incident_id.in_(incident_ids))
+                .group_by(EffectReceipt.incident_id)
+            )).all())
             receipts = (await session.execute(
                 select(
                     EffectReceipt.incident_id, EffectReceipt.tenant_id,
@@ -214,7 +220,7 @@ async def audit_recovery_consistency(
 
         if delivered is None and status == "UNKNOWN":
             reasons.add("UNACKNOWLEDGED_START_CANNOT_BE_SAFELY_REPLAYED_FROM_AUDIT")
-        if receipt_overflow:
+        if receipt_counts.get(incident_id, 0) > len(by_incident[incident_id]):
             reasons.add("RECEIPT_SCAN_TRUNCATED")
         for receipt in by_incident[incident_id]:
             _, receipt_tenant, state, adapter, digest, count, version, observed_v = receipt
