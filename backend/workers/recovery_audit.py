@@ -215,6 +215,8 @@ async def audit_recovery_consistency(
             reasons.add("DUPLICATE_START_INTENT")
         if type(attempts) is not int or attempts < 0:
             reasons.add("INVALID_START_ATTEMPT")
+        elif delivered is not None and attempts == 0:
+            reasons.add("ACKNOWLEDGED_START_WITHOUT_ATTEMPT")
         if delivered is not None and dead is not None:
             reasons.add("CONFLICTING_OUTBOX_TERMINAL_MARKERS")
         if dead is not None and delivered is None:
