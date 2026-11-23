@@ -108,6 +108,7 @@ async def audit_recovery_consistency(
     stale_seconds: int = 300,
     limit: int = 20,
     after_id: int = 0,
+    through_id: int | None = None,
     now: datetime | None = None,
 ) -> dict:
     """Bounded scan with no remote mutations and no database write sessions.
@@ -119,6 +120,9 @@ async def audit_recovery_consistency(
         type(stale_seconds) is not int or not 1 <= stale_seconds <= 86400
         or type(limit) is not int or not 1 <= limit <= 50
         or type(after_id) is not int or after_id < 0
+        or (through_id is not None and (
+            type(through_id) is not int or through_id < 0
+        ))
     ):
         raise ValueError("audit scan bounds out of range")
     observed = datetime.now(timezone.utc) if now is None else now
@@ -127,6 +131,10 @@ async def audit_recovery_consistency(
     cutoff = observed.astimezone(timezone.utc) - timedelta(seconds=stale_seconds)
 
     async with sessions() as session:
+        # Pin a high-water mark on the first page. Subsequent pages must
+        # supply this returned value to avoid chasing newly inserted starts.
+        if through_id is None:
+            through_id = await session.scalar(select(func.max(OutboxEntry.id))) or 0
         starts = (await session.execute(
             select(
                 Incident.tenant_id, Incident.id, Incident.status_projection,
@@ -136,6 +144,7 @@ async def audit_recovery_consistency(
             .where(
                 OutboxEntry.kind == "START_WORKFLOW",
                 OutboxEntry.id > after_id,
+                OutboxEntry.id <= through_id,
                 OutboxEntry.created_at <= cutoff,
                 or_(
                     OutboxEntry.attempt > 0,
@@ -236,6 +245,7 @@ async def audit_recovery_consistency(
         "scanned": len(selected),
         "scan_truncated": len(starts) > limit,
         "after_id": after_id,
+        "through_id": through_id,
         "next_after_id": selected[-1][3] if len(starts) > limit else None,
         "receipt_scan_truncated": receipt_overflow,
         "findings": results,
@@ -260,6 +270,7 @@ async def main() -> None:
     parser.add_argument("--stale-seconds", type=int, default=300)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--after-id", type=int, default=0)
+    parser.add_argument("--through-id", type=int, default=None)
     parser.add_argument(
         "--observed-at", type=str,
         help="Fixed timezone-aware ISO-8601 audit observation time; reuse across pages",
@@ -278,7 +289,7 @@ async def main() -> None:
     report = await audit_recovery_consistency(
         get_session_maker(), client,
         stale_seconds=args.stale_seconds, limit=args.limit,
-        after_id=args.after_id,
+        after_id=args.after_id, through_id=args.through_id,
         now=observed_at,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
