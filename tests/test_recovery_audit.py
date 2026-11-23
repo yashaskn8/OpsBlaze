@@ -250,6 +250,59 @@ async def test_scan_is_bounded_and_reports_incomplete_view(sessions_fixture):
     assert len(ids) == 3
 
 
+
+@pytest.mark.asyncio
+async def test_recovery_audit_cursor_pages_all_old_starts_once(sessions_fixture):
+    await incident_start(sessions_fixture, "first")
+    await incident_start(sessions_fixture, "second")
+    await incident_start(sessions_fixture, "third")
+    client = FakeTemporal()
+    cursor = 0
+    scanned = []
+    for expected_count in (1, 1, 1):
+        page = await audit_recovery_consistency(
+            sessions_fixture, client, limit=1, after_id=cursor,
+        )
+        assert page["after_id"] == cursor
+        assert page["scanned"] == expected_count
+        scanned.append(page["findings"][0]["outbox_id"])
+        if page["scan_truncated"]:
+            assert page["next_after_id"] == scanned[-1]
+            assert page["next_after_id"] > cursor
+            assert audit_exit_code(page) == 2
+            cursor = page["next_after_id"]
+        else:
+            assert page["next_after_id"] is None
+    assert len(set(scanned)) == 3
+    assert scanned == sorted(scanned)
+    assert len(client.lookups) == 3
+
+
+@pytest.mark.asyncio
+async def test_duplicate_start_across_pages_is_detected_on_each_page(sessions_fixture):
+    iid, first_id = await incident_start(sessions_fixture)
+    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutboxEntry(
+                incident_id=iid, kind="START_WORKFLOW",
+                created_at=old, available_at=old, attempt=1,
+            ))
+    wid = workflow_id("audit-tenant", iid)
+    client = FakeTemporal({wid: description(wid)})
+    first = await audit_recovery_consistency(
+        sessions_fixture, client, limit=1,
+    )
+    assert first["findings"][0]["outbox_id"] == first_id
+    assert "DUPLICATE_START_INTENT" in first["findings"][0]["reasons"]
+    assert first["scan_truncated"]
+    second = await audit_recovery_consistency(
+        sessions_fixture, client, limit=1, after_id=first["next_after_id"],
+    )
+    assert "DUPLICATE_START_INTENT" in second["findings"][0]["reasons"]
+    assert not second["scan_truncated"]
+
+
 @pytest.mark.asyncio
 async def test_unattempted_starts_do_not_generate_false_temporal_loss(sessions_fixture):
     async with sessions_fixture() as session:
@@ -269,6 +322,7 @@ async def test_unattempted_starts_do_not_generate_false_temporal_loss(sessions_f
     {"stale_seconds": 86401}, {"limit": False},
     {"limit": 0}, {"limit": 51},
     {"now": datetime(2026, 11, 22)},
+    {"after_id": True}, {"after_id": -1}, {"after_id": 1.5},
 ])
 @pytest.mark.asyncio
 async def test_recovery_audit_rejects_invalid_bounds(sessions_fixture, args):
