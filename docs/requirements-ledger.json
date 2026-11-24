@@ -1,0 +1,541 @@
+{
+  "schema_version": 1,
+  "scope": "Initial feature-level inventory of all 20 blueprint capabilities; not an exhaustive atomic requirement ledger or a production certification.",
+  "source": {
+    "document": "TITAN20_MASTER_PRODUCTION_ARCHITECTURE_AGENTIC_AI_BLUEPRINT_2027.pdf",
+    "sections": [
+      "2.1–2.20",
+      "5.2–5.5",
+      "6.6"
+    ],
+    "source_snapshot": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+    "dependency_note": "Engineering prerequisite mapping for implementation sequencing, not a claim that every dependency is verified."
+  },
+  "production_acceptance": "BLOCKED",
+  "gate_source": "docs/production-acceptance-gates.md",
+  "requirements": [
+    {
+      "id": "B1",
+      "blueprint_section": "2.1",
+      "title": "Durable incident workflow",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [],
+      "production_gates": [
+        "G3",
+        "G6"
+      ],
+      "acceptance_criteria": "Atomic tenant-key admission; stable workflow ID; bounded retries; cancellation and old-history replay; independently measured crash recovery.",
+      "remaining_validation": "Multi-host failover/replay campaigns, old-history compatibility, multi-host HA and failover campaigns",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "B2",
+      "blueprint_section": "2.2",
+      "title": "Resource reservation",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "B1"
+      ],
+      "production_gates": [
+        "G2",
+        "G3"
+      ],
+      "acceptance_criteria": "Monotonic reservation fence and atomic target-version refusal under races and failover.",
+      "remaining_validation": "Real adapter-enforced fencing and failover/clock tests",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "B3",
+      "blueprint_section": "2.3",
+      "title": "Effect receipt gateway",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "B1",
+        "B2",
+        "P2"
+      ],
+      "production_gates": [
+        "G2",
+        "G3"
+      ],
+      "acceptance_criteria": "Durable effect identity and original-key reconciliation; independent postcondition; no blind duplicate.",
+      "remaining_validation": "External effect acknowledgment/retention guarantees",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "B4",
+      "blueprint_section": "2.4",
+      "title": "Budgets and backpressure",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "B1"
+      ],
+      "production_gates": [
+        "G3",
+        "G6"
+      ],
+      "acceptance_criteria": "Bound admission, queues and cost; measure overload and latency under a declared workload.",
+      "remaining_validation": "Preregistered production-like stepped/burst/blackout load campaigns, external model budgets, actual Temporal schedule-to-start p95/p99, multi-host SLO and failover evidence",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "A1",
+      "blueprint_section": "2.5",
+      "title": "Adaptive investigation",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "A2",
+        "A3",
+        "B4"
+      ],
+      "production_gates": [
+        "G4"
+      ],
+      "acceptance_criteria": "Bounded investigation and runbook fallback; independently compare recovery and cost.",
+      "remaining_validation": "Evaluated multi-probe model policy, empirical quality and token metrics",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "A2",
+      "blueprint_section": "2.6",
+      "title": "Tool policy gateway",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "B4"
+      ],
+      "production_gates": [
+        "G1",
+        "G2",
+        "G6"
+      ],
+      "acceptance_criteria": "Read-only scoped tools, schema validation, denied capability and injection tests.",
+      "remaining_validation": "Production capability grants, external connector permissions and adversarial load testing",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "A3",
+      "blueprint_section": "2.7",
+      "title": "Evidence provenance",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "A2"
+      ],
+      "production_gates": [
+        "G2",
+        "G6"
+      ],
+      "acceptance_criteria": "Versioned evidence provenance and freshness; independently attest sources and validate privacy.",
+      "remaining_validation": "Signed external telemetry attestation, robust retention/redaction review",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "A4",
+      "blueprint_section": "2.8",
+      "title": "Safe abstention",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "A1",
+        "A3"
+      ],
+      "production_gates": [
+        "G4"
+      ],
+      "acceptance_criteria": "Abstain on invalid evidence; calibrate false confidence and refusal using held-out outcomes.",
+      "remaining_validation": "Empirical calibration with independent held-out families; current 0/100 is **not a probability**",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "P1",
+      "blueprint_section": "2.9",
+      "title": "Operator workbench",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "B1",
+        "P2"
+      ],
+      "production_gates": [
+        "G1",
+        "G3",
+        "G6"
+      ],
+      "acceptance_criteria": "Accurate reconnecting UI, load and accessibility tests with real sessions.",
+      "remaining_validation": "Real-provider browser sessions, multi-replica stream limits, reconnect/load campaigns and accessibility audit",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "blueprint_section": "2.10",
+      "title": "Approval boundary",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "B1",
+        "A3"
+      ],
+      "production_gates": [
+        "G1",
+        "G5"
+      ],
+      "acceptance_criteria": "Exact-version human approval, expiry/revocation and separation of authority.",
+      "remaining_validation": "Real-IdP event delivery/browser callback testing, independent release authority and two-person release policy",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "P3",
+      "blueprint_section": "2.11",
+      "title": "Forensic graph",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "A3",
+        "B3",
+        "P2"
+      ],
+      "production_gates": [
+        "G6"
+      ],
+      "acceptance_criteria": "Tenant-scoped complete causal lineage, cross-process traces and privacy review.",
+      "remaining_validation": "True W3C/Temporal cross-process trace context and durable span links, deployed collector/retention verification, realistic large-history latency and accessibility proof",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "S1",
+      "blueprint_section": "2.12",
+      "title": "Paired replay",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "B1",
+        "A1",
+        "E2"
+      ],
+      "production_gates": [
+        "G4"
+      ],
+      "acceptance_criteria": "Time-sealed paired trials with equal budgets, hidden labels and independent oracle.",
+      "remaining_validation": "Actual paired model-vs-runbook controlled trial, statistical inference",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "E1",
+      "blueprint_section": "2.13",
+      "title": "Experience capture",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "B1",
+        "A3",
+        "E2"
+      ],
+      "production_gates": [
+        "G1",
+        "G3",
+        "G6"
+      ],
+      "acceptance_criteria": "Consent-epoch capsule capture, safe replay, retrieval denial and independently tested purge.",
+      "remaining_validation": "Separate native experience projector with its own restricted PostgreSQL role, verified real DB column grants and outbox RLS, independent worker heartbeat/readiness, disjoint Temporal-vs-projection claims and crash-safe delivery, tests for denied effect/consent writes and nonblocking signals; **now uses** PostgreSQL RLS to hide Temporal outbox rows from the projector, a SECURITY DEFINER boolean ordering check, and column-limited source reads that deny evidence excerpts, origin identities and outcome reasons; **now also uses** intent-scoped PostgreSQL source-row RLS that hides unrelated and completed incidents; **still needs** per-tenant service compartmentalization and external security review, privacy/backups erasure evidence, source-versioned manifest, real-provider role and multi-host operations",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "E2",
+      "blueprint_section": "2.14",
+      "title": "Outcome adjudication",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "B3"
+      ],
+      "production_gates": [
+        "G2",
+        "G4"
+      ],
+      "acceptance_criteria": "Independent outcome revision, disagreement and delayed recovery adjudication.",
+      "remaining_validation": "Independent real-world recovery oracle and delayed outcome reconciliation",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "E3",
+      "blueprint_section": "2.15",
+      "title": "Failure learning",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "E1",
+        "E2"
+      ],
+      "production_gates": [
+        "G4"
+      ],
+      "acceptance_criteria": "Fact-linked failure taxonomy and human-reviewed improvement proposals.",
+      "remaining_validation": "Independent reviewers, causal attribution beyond typed simulator facts",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "E4",
+      "blueprint_section": "2.16",
+      "title": "Validated memory",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "E1",
+        "E2",
+        "E3"
+      ],
+      "production_gates": [
+        "G4",
+        "G5",
+        "G6"
+      ],
+      "acceptance_criteria": "Versioned source-bound lessons with expiry, invalidation, consent and measured retrieval benefit.",
+      "remaining_validation": "Release gate for activation, measured retrieval effect and revocation propagation",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "E5",
+      "blueprint_section": "2.17",
+      "title": "Evaluation",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "S1",
+        "E2",
+        "E3",
+        "E4"
+      ],
+      "production_gates": [
+        "G4"
+      ],
+      "acceptance_criteria": "Frozen paired candidate and incumbent evaluation, cost/safety controls and independent signatures.",
+      "remaining_validation": "Independent hidden-label custody, real measured recovery-cost outcomes, preregistration and separate evaluator authority",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "E6",
+      "blueprint_section": "2.18",
+      "title": "Policy rollout",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "E5",
+        "P2"
+      ],
+      "production_gates": [
+        "G5",
+        "G6"
+      ],
+      "acceptance_criteria": "Independently signed bundle, pinned exposure, authorized canary, pause and rollback; no promotion without gates.",
+      "remaining_validation": "**Live rollout disabled** pending independent real E5 PASS, signed bundle, separate release authority and rollback certification",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "E7",
+      "blueprint_section": "2.19",
+      "title": "Strategy routing",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "A1",
+        "B4",
+        "E4",
+        "E6"
+      ],
+      "production_gates": [
+        "G4",
+        "G5"
+      ],
+      "acceptance_criteria": "Approved bounded route choice, no-memory fallback and measured comparative benefit.",
+      "remaining_validation": "Evaluated contextual policies, measured route accuracy, memory/agent variants",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    },
+    {
+      "id": "E8",
+      "blueprint_section": "2.20",
+      "title": "Adapter conformance",
+      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "production_status": "BLOCKED",
+      "dependencies": [
+        "B2",
+        "B3"
+      ],
+      "production_gates": [
+        "G2"
+      ],
+      "acceptance_criteria": "Real authorized provider conformance, crash/fencing/retention evidence and independent review.",
+      "remaining_validation": "Real named provider/target conformance and fault-injection/retention campaign, independent traces and verified security/release authority",
+      "evidence": [
+        {
+          "kind": "implementation_status_reference",
+          "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+          "path": "docs/implementation-status.md",
+          "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        }
+      ]
+    }
+  ],
+  "checkpoint": {
+    "base_commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+    "implemented_changes": [
+      {
+        "commit": "9310682c08fa6605b09b412347d290163b5c2ae7",
+        "requirement": "P2",
+        "change": "Flat operations registration and fail-closed authorization route inventory",
+        "workflow_run": 45454851622,
+        "verification": "CI_RESULT_NOT_YET_RECORDED"
+      },
+      {
+        "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
+        "requirement": "B1",
+        "change": "Detect and mask invalid persisted incident projections in read-only audit",
+        "workflow_run": 45455086908,
+        "verification": "CI_RESULT_NOT_YET_RECORDED"
+      }
+    ],
+    "next_actions": [
+      "Verify Python quality jobs for both exact commits; fix failures before accepting changes.",
+      "Expand feature ledger into atomic requirements and prioritize old-history replay/worker upgrade validation from B1.",
+      "Preserve all G1–G6 production blocks until authorized external evidence exists."
+    ]
+  }
+}
