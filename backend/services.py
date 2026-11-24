@@ -11,7 +11,7 @@ from backend.lifecycle import ACTIVE_STATES as ACTIVE_STATES
 from backend.models import AdmissionUsage, Incident, OutboxEntry, PolicyAssignment, UIEvent
 from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.schemas import IncidentCreate
-from backend.settings import get_settings
+from backend.settings import Settings, get_settings
 from backend.telemetry import trace_operation
 
 
@@ -33,8 +33,10 @@ def request_fingerprint(payload: IncidentCreate) -> str:
 async def admit_incident(
     session: AsyncSession, tenant_id: str, client_key: str, payload: IncidentCreate,
     created_by: str | None = None,
+    *, settings: Settings | None = None,
 ) -> Incident:
     """Atomically persist the incident and a pending workflow-start intent."""
+    settings = get_settings() if settings is None else settings
     fingerprint = request_fingerprint(payload)
     incident = Incident(
         id=uuid4(),
@@ -63,8 +65,10 @@ async def admit_incident(
                     if existing.request_sha256 != fingerprint:
                         raise IdempotencyConflict("idempotency key reused for different payload")
                     return existing
-                await enforce_active_capacity(session, tenant_id)
-                await reserve_admission_slot(session, tenant_id)
+                await enforce_active_capacity(session, tenant_id, settings=settings)
+                await reserve_admission_slot(
+                    session, tenant_id, limit=settings.admission_limit_per_minute,
+                )
                 session.add(incident)
                 session.add(
                     PolicyAssignment(
@@ -195,9 +199,10 @@ async def reserve_admission_slot(
 async def enforce_active_capacity(
     session: AsyncSession,
     tenant_id: str,
+    *, settings: Settings | None = None,
 ) -> None:
     """Recount durable active work; a crash cannot strand capacity counters."""
-    settings = get_settings()
+    settings = get_settings() if settings is None else settings
     tenant_limit = settings.max_active_incidents_per_tenant
     global_limit = settings.max_active_incidents_global
     if tenant_limit < 1 or global_limit < 1:

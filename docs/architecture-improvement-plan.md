@@ -32,4 +32,4 @@ This source-level review uses the TITAN-20 feature matrix and existing module bo
 3. Domain-specific refactors in small commits; do not introduce abstractions for unrelated semantics or change Temporal workflow history without replay checks.
 4. Recheck CI after each coherent change. All G1–G6 remain blocked until independently witnessed acceptance evidence exists.
 
-Implemented first slice: shared durable-state classifications used by admission, queue health, age monitoring and recovery audit. This does not alter state transitions, approval, release or dispatch behavior.
+Implemented first slices: shared durable-state classifications used by admission, queue health, age monitoring and recovery audit; explicit request-scoped admission configuration passed from the API into capacity and rate-limit checks, eliminating the benchmark's process-global monkeypatch. This does not alter state transitions, approval, release or dispatch behavior.

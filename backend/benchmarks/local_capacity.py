@@ -11,7 +11,6 @@ import math
 import tempfile
 from pathlib import Path
 from time import perf_counter
-from unittest.mock import patch
 from collections.abc import Awaitable, Callable
 
 from httpx import ASGITransport, AsyncClient
@@ -86,119 +85,117 @@ async def run_local_profile() -> dict:
         ids = []
         read_steps = []
         try:
-            # Admission services read settings directly, not via FastAPI DI.
-            with patch("backend.services.get_settings", return_value=settings):
-                async with AsyncClient(
-                    transport=ASGITransport(app=app),
-                    base_url="http://isolated-in-process.invalid",
-                ) as client:
-                    for i in range(12):
-                        headers = {**token_headers, "Idempotency-Key": f"synthetic-{i}"}
-                        start = perf_counter()
-                        response = await client.post(
-                            "/v1/incidents",
-                            headers=headers,
-                            json={"target_id": "simulator-only"},
-                        )
-                        timings["admission"].append(
-                            (perf_counter() - start) * 1000
-                        )
-                        if response.status_code != 202:
-                            raise AssertionError(
-                                f"expected durable 202, got {response.status_code}"
-                            )
-                        ids.append(response.json()["id"])
-
-                    # The write path is intentionally sequential on SQLite.
-                    # At capacity, the concurrent burst can only reject.
-                    rejected: list[float] = []
-
-                    async def reject(index: int) -> None:
-                        async def work() -> int:
-                            response = await client.post(
-                                "/v1/incidents",
-                                headers={
-                                    **token_headers,
-                                    "Idempotency-Key": f"overload-{index}",
-                                },
-                                json={"target_id": "simulator-only"},
-                            )
-                            assert response.headers.get("Retry-After") == "60"
-                            return response.status_code
-                        await measure(work, 429, rejected)
-
-                    started = perf_counter()
-                    await asyncio.gather(*(reject(i) for i in range(4)))
-                    overload_elapsed = perf_counter() - started
-                    replay = await client.post(
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://isolated-in-process.invalid",
+            ) as client:
+                for i in range(12):
+                    headers = {**token_headers, "Idempotency-Key": f"synthetic-{i}"}
+                    start = perf_counter()
+                    response = await client.post(
                         "/v1/incidents",
-                        headers={**token_headers, "Idempotency-Key": "synthetic-0"},
+                        headers=headers,
                         json={"target_id": "simulator-only"},
                     )
-                    assert replay.status_code == 202 and replay.json()["id"] == ids[0]
-                    async with sessions() as session:
-                        incident_count = await session.scalar(
-                            select(func.count()).select_from(Incident)
+                    timings["admission"].append(
+                        (perf_counter() - start) * 1000
+                    )
+                    if response.status_code != 202:
+                        raise AssertionError(
+                            f"expected durable 202, got {response.status_code}"
                         )
-                        start_count = await session.scalar(
-                            select(func.count()).select_from(OutboxEntry)
-                            .where(OutboxEntry.kind == "START_WORKFLOW")
+                    ids.append(response.json()["id"])
+
+                # The write path is intentionally sequential on SQLite.
+                # At capacity, the concurrent burst can only reject.
+                rejected: list[float] = []
+
+                async def reject(index: int) -> None:
+                    async def work() -> int:
+                        response = await client.post(
+                            "/v1/incidents",
+                            headers={
+                                **token_headers,
+                                "Idempotency-Key": f"overload-{index}",
+                            },
+                            json={"target_id": "simulator-only"},
                         )
-                    assert incident_count == start_count == len(ids)
-                    overload = {
-                        "concurrency": 4,
-                        "tenant_capacity": settings.max_active_incidents_per_tenant,
-                        "status_counts": {"429": len(rejected)},
-                        "retry_after_seconds": 60,
-                        "elapsed_seconds": overload_elapsed,
-                        "requests_per_second": len(rejected) / overload_elapsed,
-                        **describe(rejected),
-                        "raw_latency_ms": [round(value, 3) for value in rejected],
-                        "idempotent_replay_preserved": True,
-                        "durable_incidents": incident_count,
-                        "durable_start_intents": start_count,
+                        assert response.headers.get("Retry-After") == "60"
+                        return response.status_code
+                    await measure(work, 429, rejected)
+
+                started = perf_counter()
+                await asyncio.gather(*(reject(i) for i in range(4)))
+                overload_elapsed = perf_counter() - started
+                replay = await client.post(
+                    "/v1/incidents",
+                    headers={**token_headers, "Idempotency-Key": "synthetic-0"},
+                    json={"target_id": "simulator-only"},
+                )
+                assert replay.status_code == 202 and replay.json()["id"] == ids[0]
+                async with sessions() as session:
+                    incident_count = await session.scalar(
+                        select(func.count()).select_from(Incident)
+                    )
+                    start_count = await session.scalar(
+                        select(func.count()).select_from(OutboxEntry)
+                        .where(OutboxEntry.kind == "START_WORKFLOW")
+                    )
+                assert incident_count == start_count == len(ids)
+                overload = {
+                    "concurrency": 4,
+                    "tenant_capacity": settings.max_active_incidents_per_tenant,
+                    "status_counts": {"429": len(rejected)},
+                    "retry_after_seconds": 60,
+                    "elapsed_seconds": overload_elapsed,
+                    "requests_per_second": len(rejected) / overload_elapsed,
+                    **describe(rejected),
+                    "raw_latency_ms": [round(value, 3) for value in rejected],
+                    "idempotent_replay_preserved": True,
+                    "durable_incidents": incident_count,
+                    "durable_start_intents": start_count,
+                }
+
+                async def phase(kind: str, concurrency: int) -> dict:
+                    gate = asyncio.Semaphore(concurrency)
+                    samples: list[float] = []
+
+                    async def one(incident_id: str) -> None:
+                        async with gate:
+                            if kind == "snapshot":
+                                async def work():
+                                    response = await client.get(
+                                        f"/v1/incidents/{incident_id}",
+                                        headers=token_headers,
+                                    )
+                                    return response.status_code
+                            else:
+                                async def work():
+                                    response = await client.get(
+                                        f"/v1/incidents/{incident_id}/events",
+                                        headers=token_headers,
+                                    )
+                                    if response.status_code == 200:
+                                        assert response.json()["events"]
+                                    return response.status_code
+                            await measure(work, 200, samples)
+
+                    started = perf_counter()
+                    await asyncio.gather(*(one(incident_id) for incident_id in ids))
+                    elapsed = perf_counter() - started
+                    timings[kind].extend(samples)
+                    return {
+                        "concurrency": concurrency,
+                        "operation": kind,
+                        **describe(samples),
+                        "elapsed_seconds": elapsed,
+                        "requests_per_second": len(samples) / elapsed,
+                        "raw_latency_ms": [round(value, 3) for value in samples],
                     }
 
-                    async def phase(kind: str, concurrency: int) -> dict:
-                        gate = asyncio.Semaphore(concurrency)
-                        samples: list[float] = []
-
-                        async def one(incident_id: str) -> None:
-                            async with gate:
-                                if kind == "snapshot":
-                                    async def work():
-                                        response = await client.get(
-                                            f"/v1/incidents/{incident_id}",
-                                            headers=token_headers,
-                                        )
-                                        return response.status_code
-                                else:
-                                    async def work():
-                                        response = await client.get(
-                                            f"/v1/incidents/{incident_id}/events",
-                                            headers=token_headers,
-                                        )
-                                        if response.status_code == 200:
-                                            assert response.json()["events"]
-                                        return response.status_code
-                                await measure(work, 200, samples)
-
-                        started = perf_counter()
-                        await asyncio.gather(*(one(incident_id) for incident_id in ids))
-                        elapsed = perf_counter() - started
-                        timings[kind].extend(samples)
-                        return {
-                            "concurrency": concurrency,
-                            "operation": kind,
-                            **describe(samples),
-                            "elapsed_seconds": elapsed,
-                            "requests_per_second": len(samples) / elapsed,
-                            "raw_latency_ms": [round(value, 3) for value in samples],
-                        }
-
-                    for concurrency in (1, 2, 4):
-                        read_steps.append(await phase("snapshot", concurrency))
-                        read_steps.append(await phase("notifications", concurrency))
+                for concurrency in (1, 2, 4):
+                    read_steps.append(await phase("snapshot", concurrency))
+                    read_steps.append(await phase("notifications", concurrency))
         finally:
             app.dependency_overrides.clear()
             app.dependency_overrides.update(previous)

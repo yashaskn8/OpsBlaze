@@ -445,3 +445,55 @@ async def test_reconcile_prepared_receipt_never_infers_a_dispatch(
     assert await SimulatorAdapter(sessions_fixture).observe(
         "alpha", "checkout",
     ) == (1, False)
+
+
+@pytest.mark.asyncio
+async def test_admission_uses_request_settings_for_both_capacity_limits(
+    api_client, monkeypatch,
+):
+    # An injected app configuration must not silently use process defaults.
+    def unexpected_settings():
+        raise AssertionError("admission reread global settings")
+
+    monkeypatch.setattr("backend.services.get_settings", unexpected_settings)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        environment="development", local_token=TOKEN,
+        max_active_incidents_per_tenant=1,
+        max_active_incidents_global=10,
+        admission_limit_per_minute=1,
+    )
+
+    async def submit(tenant, key):
+        return await api_client.post(
+            "/v1/incidents", json={"target_id": "simulator-only"},
+            headers=headers(tenant, **{"Idempotency-Key": key}),
+        )
+
+    first = await submit("alpha", "first")
+    assert first.status_code == 202
+    replay = await submit("alpha", "first")
+    assert replay.status_code == 202 and replay.json()["id"] == first.json()["id"]
+    limited = await submit("alpha", "second")
+    assert limited.status_code == 429
+    assert "tenant active" in limited.json()["detail"]
+    assert (await submit("beta", "first")).status_code == 202
+
+    # Raise the active cap and use a fixed minute for the rate-limit case.
+    from datetime import datetime, timezone
+
+    class FixedClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 24, 12, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr("backend.services.datetime", FixedClock)
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        environment="development", local_token=TOKEN,
+        max_active_incidents_per_tenant=5,
+        max_active_incidents_global=10,
+        admission_limit_per_minute=1,
+    )
+    assert (await submit("gamma", "first")).status_code == 202
+    rate_limited = await submit("gamma", "second")
+    assert rate_limited.status_code == 429
+    assert "tenant admission limit" in rate_limited.json()["detail"]

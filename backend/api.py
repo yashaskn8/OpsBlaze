@@ -95,13 +95,14 @@ async def create_incident(
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
     operator_identity: str = Depends(local_operator),
+    settings: Settings = Depends(get_settings),
 ) -> IncidentView:
     if not idempotency_key.strip():
         raise HTTPException(422, "idempotency key cannot be blank")
     try:
         incident = await admit_incident(
             session, tenant_id, idempotency_key, payload,
-            created_by=operator_identity,
+            created_by=operator_identity, settings=settings,
         )
     except IdempotencyConflict as exc:
         raise HTTPException(409, str(exc)) from exc
