@@ -30,7 +30,7 @@ tracks verified fixes, residual risks and the still-blocked release gates.
 
 ## Architecture maintenance
 
-Admission capacity, queue health, the state-age worker and the read-only recovery audit now derive active incident and unresolved effect classifications from `backend/lifecycle.py`. The shared definitions classify persisted rows only; no transition or effect permission is granted. The admission API now passes its request-scoped Settings into the service, which resolves configuration once for both active-work and minute-slot limits. The isolated benchmark no longer patches the service's global settings getter.
+Admission capacity, queue health, the state-age worker and the read-only recovery audit now derive active incident and unresolved effect classifications from `backend/lifecycle.py`. The shared definitions classify persisted rows only; no transition or effect permission is granted. The admission API now passes its request-scoped Settings into the service, which resolves configuration once for both active-work and minute-slot limits. The isolated benchmark no longer patches the service's global settings getter. Operational readiness, queues and projection dead-letter routes have been extracted to `backend/routers/operations.py` without changing paths, authorization dependencies or service behavior.
 
 ## Current demonstrated checks
 

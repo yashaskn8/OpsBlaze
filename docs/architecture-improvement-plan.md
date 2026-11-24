@@ -33,3 +33,5 @@ This source-level review uses the TITAN-20 feature matrix and existing module bo
 4. Recheck CI after each coherent change. All G1–G6 remain blocked until independently witnessed acceptance evidence exists.
 
 Implemented first slices: shared durable-state classifications used by admission, queue health, age monitoring and recovery audit; explicit request-scoped admission configuration passed from the API into capacity and rate-limit checks, eliminating the benchmark's process-global monkeypatch. This does not alter state transitions, approval, release or dispatch behavior.
+
+API router extraction: readiness, tenant queue snapshots and projection dead-letter review/redrive HTTP endpoints now live in `backend/routers/operations.py`. Paths, methods, dependencies and status codes are pinned by a registration regression test; underlying service behavior and privileges are unchanged.
