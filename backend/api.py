@@ -258,7 +258,6 @@ async def incident_effects(
     ]
 
 
-from typing import Literal
 
 
 class PlanDecisionRequest(BaseModel):
