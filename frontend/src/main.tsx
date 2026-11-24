@@ -2,6 +2,10 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import { authManager, oidcConfigError, usingOidc } from "./auth";
+import {
+  detail, fetchQueueHealth, fetchDeadLetters,
+  type QueueHealth, type ExperienceDeadLetter, type ExperienceDeadLetterPage,
+} from "./api";
 
 type AuthIdentity = {
   tenant_id: string;
@@ -63,37 +67,6 @@ type Lineage = {
   missing_refs: { source: string; missing_target: string; relation: string }[];
 };
 
-type QueueHealth = {
-  pending_outbox: number;
-  experience_dead_letters_unreviewed: number;
-  active_incidents: number;
-  unresolved_effects: number;
-  aged_unresolved_effects: number;
-  oldest_pending_seconds: number;
-  oldest_active_phase_seconds: number;
-  pending_age_p95_seconds: number;
-  aged_pending_outbox: number;
-  aged_active_incidents: number;
-  max_pending_attempts: number;
-  stuck_after_seconds: number;
-};
-
-type ExperienceDeadLetter = {
-  id: number;
-  incident_id: string;
-  attempts: number;
-  code: "INVALID_PAYLOAD" | "RETRY_EXHAUSTED";
-  dead_lettered_at: string;
-  reviewed: boolean;
-  redriven_to: number | null;
-};
-
-type ExperienceDeadLetterPage = {
-  records: ExperienceDeadLetter[];
-  next_cursor: number | null;
-  metadata_only: boolean;
-};
-
 type LineagePage = {
   incident_id: string;
   kind: string;
@@ -128,14 +101,6 @@ type ReplayReport = {
     virtual_time: number;
   }[];
 };
-
-function detail(value: unknown): string {
-  if (value && typeof value === "object" && "detail" in value) {
-    const message = (value as { detail: unknown }).detail;
-    return typeof message === "string" ? message : JSON.stringify(message);
-  }
-  return "Request failed";
-}
 
 function App() {
   const [tenant, setTenant] = useState("demo");
@@ -447,13 +412,9 @@ function App() {
     setQueueError("");
     setQueueHealth(null);
     try {
-      const response = await fetch("/v1/operations/queues", {
-        headers: headers(),
-      });
-      const data: unknown = await response.json();
-      if (!response.ok) throw new Error(detail(data));
+      const data = await fetchQueueHealth(headers());
       if (queueRequestVersion.current === requestVersion) {
-        setQueueHealth(data as QueueHealth);
+        setQueueHealth(data);
       }
     } catch (cause) {
       if (queueRequestVersion.current === requestVersion) {
@@ -474,16 +435,7 @@ function App() {
     setDeadLetterBusy(true);
     setDeadLetterError("");
     try {
-      const params = new URLSearchParams({
-        cursor: String(cursor), limit: "25",
-      });
-      const response = await fetch(
-        "/v1/operations/dead-letters?" + params.toString(),
-        { headers: headers() },
-      );
-      const result: unknown = await response.json();
-      if (!response.ok) throw new Error(detail(result));
-      const page = result as ExperienceDeadLetterPage;
+      const page = await fetchDeadLetters(headers(), cursor);
       if (deadLetterRequestVersion.current === requestVersion) {
         setDeadLetterPage(previous => ({
           ...page,

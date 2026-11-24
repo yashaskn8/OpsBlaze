@@ -35,3 +35,5 @@ This source-level review uses the TITAN-20 feature matrix and existing module bo
 Implemented first slices: shared durable-state classifications used by admission, queue health, age monitoring and recovery audit; explicit request-scoped admission configuration passed from the API into capacity and rate-limit checks, eliminating the benchmark's process-global monkeypatch. This does not alter state transitions, approval, release or dispatch behavior.
 
 API router extraction: readiness, tenant queue snapshots and projection dead-letter review/redrive HTTP endpoints now live in `backend/routers/operations.py`. Paths, methods, dependencies and status codes are pinned by a registration regression test; underlying service behavior and privileges are unchanged.
+
+Frontend extraction: typed read-only operations requests and their response types now live in `frontend/src/api.ts`. Queue/dead-letter state, stale-response fencing and all mutation permission checks remain in the workbench. Node contract tests stub fetch; CI runs them before the existing strict TypeScript/Vite build. TypeScript types describe the existing wire format and are not a runtime schema validator.
