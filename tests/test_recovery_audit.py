@@ -777,3 +777,31 @@ async def test_recovery_audit_flags_invalid_receipt_identity_without_writes(
         assert receipt.plan_digest == plan_digest
         assert receipt.fence == fence
         assert receipt.state == "VERIFIED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["RUNNING", "COMPLETED", "UNKNOWN"])
+async def test_invalid_projection_cannot_be_reported_clean_or_as_terminal(
+    sessions_fixture, status,
+):
+    iid, entry = await incident_start(sessions_fixture)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            incident = await session.get(Incident, iid)
+            incident.status_projection = "INVALID_SYNTHETIC_VALUE"
+            start = await session.get(OutboxEntry, entry)
+            start.delivered_at = datetime.now(timezone.utc)
+    wid = workflow_id("audit-tenant", iid)
+    report = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal({wid: description(wid, status)}),
+    )
+    finding = report["findings"][0]
+    assert "INVALID_INCIDENT_PROJECTION" in finding["reasons"]
+    assert "TERMINAL_PROJECTION_WHILE_TEMPORAL_RUNNING" not in finding["reasons"]
+    assert finding["projection"] == "UNKNOWN"
+    assert finding["safe_action"] == "INSPECT_ONLY"
+    assert audit_exit_code(report) == 1
+    assert "INVALID_SYNTHETIC_VALUE" not in str(report)
+    async with sessions_fixture() as session:
+        incident = await session.get(Incident, iid)
+        assert incident.status_projection == "INVALID_SYNTHETIC_VALUE"

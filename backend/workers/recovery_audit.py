@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio.client import Client
 
 from backend.database import get_session_maker
-from backend.lifecycle import ACTIVE_STATES, UNRESOLVED_EFFECT_STATES
+from backend.lifecycle import ACTIVE_STATES, TERMINAL_STATES, UNRESOLVED_EFFECT_STATES
 from backend.models import EffectReceipt, Incident, OutboxEntry
 from backend.settings import get_settings
 from backend.temporal_connection import connect_temporal
@@ -28,6 +28,8 @@ TERMINAL_WORKFLOWS = frozenset({
 })
 KNOWN_WORKFLOWS = TERMINAL_WORKFLOWS | {"RUNNING"}
 ACTIVE_PROJECTIONS = frozenset(ACTIVE_STATES)
+TERMINAL_PROJECTIONS = frozenset(TERMINAL_STATES)
+KNOWN_PROJECTIONS = ACTIVE_PROJECTIONS | TERMINAL_PROJECTIONS
 UNRESOLVED_RECEIPTS = frozenset(UNRESOLVED_EFFECT_STATES)
 VALID_RECEIPTS = frozenset({
     "PREPARED", "SENT", "UNKNOWN", "CONFIRMED",
@@ -223,6 +225,9 @@ async def audit_recovery_consistency(
         async with semaphore:
             status, identity_ok = await _temporal_description(client, wid)
         reasons = set()
+        projection_known = projection in KNOWN_PROJECTIONS
+        if not projection_known:
+            reasons.add("INVALID_INCIDENT_PROJECTION")
         if start_counts.get(incident_id, 0) > 1:
             reasons.add("DUPLICATE_START_INTENT")
         if type(attempts) is not int or attempts < 0:
@@ -241,7 +246,7 @@ async def audit_recovery_consistency(
             reasons.add("TEMPORAL_START_UNACKNOWLEDGED_AFTER_REMOTE_COMMIT")
         elif status in TERMINAL_WORKFLOWS and projection in ACTIVE_PROJECTIONS:
             reasons.add("PROJECTION_LAGS_TERMINAL_HISTORY")
-        elif status == "RUNNING" and projection not in ACTIVE_PROJECTIONS:
+        elif status == "RUNNING" and projection in TERMINAL_PROJECTIONS:
             reasons.add("TERMINAL_PROJECTION_WHILE_TEMPORAL_RUNNING")
 
         if delivered is None and status == "UNKNOWN":
@@ -268,7 +273,7 @@ async def audit_recovery_consistency(
         return {
             "incident_id": str(incident_id),
             "outbox_id": entry_id,
-            "projection": projection,
+            "projection": projection if projection_known else "UNKNOWN",
             "temporal_status": status,
             "temporal_identity_verified": identity_ok,
             "start_acknowledged": delivered is not None,
