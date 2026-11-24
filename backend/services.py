@@ -7,17 +7,12 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.lifecycle import ACTIVE_STATES as ACTIVE_STATES
 from backend.models import AdmissionUsage, Incident, OutboxEntry, PolicyAssignment, UIEvent
 from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.schemas import IncidentCreate
 from backend.settings import get_settings
 from backend.telemetry import trace_operation
-
-
-ACTIVE_STATES = (
-    "DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL",
-    "PLAN_DECIDED", "EXECUTING", "CANCEL_REQUESTED", "REVIEW_ACKNOWLEDGED",
-)
 
 
 class IdempotencyConflict(Exception):

@@ -13,8 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.adapters.simulator import utc
 from backend.models import EffectReceipt, Incident, OutboxEntry
-from backend.services import ACTIVE_STATES
-from backend.workers.state_age import UNRESOLVED_EFFECT_STATES
+from backend.lifecycle import ACTIVE_STATES, UNRESOLVED_EFFECT_STATES
 
 
 def elapsed_seconds(now: datetime, then: datetime | None) -> int:

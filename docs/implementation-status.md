@@ -28,6 +28,10 @@ This matrix distinguishes **implemented local code** from the full blueprint's p
 The latest [cross-system hardening audit](hardening-audit-2026-11-22.md)
 tracks verified fixes, residual risks and the still-blocked release gates.
 
+## Architecture maintenance
+
+Admission capacity, queue health, the state-age worker and the read-only recovery audit now derive active incident and unresolved effect classifications from `backend/lifecycle.py`. The shared definitions classify persisted rows only; no transition or effect permission is granted.
+
 ## Current demonstrated checks
 
 GitHub Actions now runs ten jobs including Python coverage and correctness lint, adversarial and dependency security checks, CodeQL Python/TypeScript, native Temporal and PostgreSQL integration/migration checks, and a gated attested **simulator-only** release bundle. The build is Docker-free. See [CI/CD controls](ci-cd.md). A green pipeline does **not** prove external deployment safety or eliminate unreachable code.

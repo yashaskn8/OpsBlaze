@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio.client import Client
 
 from backend.database import get_session_maker
+from backend.lifecycle import ACTIVE_STATES, UNRESOLVED_EFFECT_STATES
 from backend.models import EffectReceipt, Incident, OutboxEntry
 from backend.settings import get_settings
 from backend.temporal_connection import connect_temporal
@@ -26,12 +27,8 @@ TERMINAL_WORKFLOWS = frozenset({
     "COMPLETED", "FAILED", "CANCELED", "TERMINATED", "TIMED_OUT",
 })
 KNOWN_WORKFLOWS = TERMINAL_WORKFLOWS | {"RUNNING"}
-ACTIVE_PROJECTIONS = frozenset({
-    "DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL",
-    "PLAN_DECIDED", "EXECUTING", "CANCEL_REQUESTED",
-    "REVIEW_ACKNOWLEDGED",
-})
-UNRESOLVED_RECEIPTS = frozenset({"SENT", "UNKNOWN", "CONFIRMED"})
+ACTIVE_PROJECTIONS = frozenset(ACTIVE_STATES)
+UNRESOLVED_RECEIPTS = frozenset(UNRESOLVED_EFFECT_STATES)
 VALID_RECEIPTS = frozenset({
     "PREPARED", "SENT", "UNKNOWN", "CONFIRMED",
     "VERIFIED", "FAILED", "NEEDS_REVIEW",
