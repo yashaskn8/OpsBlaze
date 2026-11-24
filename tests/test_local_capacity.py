@@ -50,4 +50,18 @@ async def test_bounded_capacity_profile_never_uses_network_or_production_labels(
             sample for step in steps if step["operation"] == kind
             for sample in step["raw_latency_ms"]
         ]
+    overload = report["overload"]
+    assert overload["concurrency"] == 4
+    assert overload["tenant_capacity"] == report["admissions"] == 12
+    assert overload["status_counts"] == {"429": 4}
+    assert overload["retry_after_seconds"] == 60
+    assert overload["idempotent_replay_preserved"] is True
+    assert overload["durable_incidents"] == overload["durable_start_intents"] == 12
+    assert overload["samples"] == len(overload["raw_latency_ms"]) == 4
+    assert overload["elapsed_seconds"] > 0
+    assert overload["requests_per_second"] == pytest.approx(
+        4 / overload["elapsed_seconds"]
+    )
+    for name, quantile in (("p50_ms", 0.50), ("p95_ms", 0.95), ("p99_ms", 0.99)):
+        assert overload[name] == nearest_rank_ms(overload["raw_latency_ms"], quantile)
     assert "secret" not in str(report).lower()
