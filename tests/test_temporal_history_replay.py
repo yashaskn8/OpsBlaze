@@ -1,9 +1,11 @@
 """B1 replay a serialized native Temporal history with the current workflow.
 
 This catches non-deterministic code changes against representative fresh
-histories. Archived, version-pinned historical fixtures still need collection.
+histories. CI can retain version-bound synthetic fixtures for later replay.
 """
 
+import os
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -13,6 +15,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 
 from backend.workflows.incident import IncidentWorkflow
+from backend.workflows.replay_archive import replay_archive, write_archive
 
 
 @pytest.mark.integration
@@ -65,6 +68,17 @@ async def test_native_temporal_histories_survive_json_roundtrip_and_replay(tmp_p
                 path = tmp_path / f"{branch}.json"
                 path.write_text(history.to_json(), encoding="utf-8")
                 histories.append((wid, path))
+
+    archive_path = os.environ.get("OPSBLAZE_SYNTHETIC_REPLAY_ARCHIVE")
+    if archive_path:
+        directory = Path(archive_path)
+        source_commit = os.environ["GITHUB_SHA"]
+        write_archive(directory, source_commit, {
+            path.stem: (workflow_id, path.read_text(encoding="utf-8"))
+            for workflow_id, path in histories
+        })
+        await replay_archive(directory, source_commit)
+        return
 
     replayer = Replayer(workflows=[IncidentWorkflow])
     for workflow_id, path in histories:

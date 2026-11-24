@@ -522,7 +522,7 @@
         "requirement": "P2",
         "change": "Flat operations registration and fail-closed authorization route inventory",
         "workflow_run": 45454851622,
-        "verification": "CI_RESULT_NOT_YET_RECORDED"
+        "verification": "EXACT_COMMIT_CI_SUCCESS_602_PASSED_26_DESELECTED_79_85_PERCENT_COVERAGE_ALL_10_JOBS"
       },
       {
         "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
@@ -533,9 +533,9 @@
       }
     ],
     "next_actions": [
-      "Verify Python quality jobs for both exact commits; fix failures before accepting changes.",
-      "Expand feature ledger into atomic requirements and prioritize old-history replay/worker upgrade validation from B1.",
-      "Preserve all G1–G6 production blocks until authorized external evidence exists."
+      "Verify exact-commit CI for recovery and ledger changes; fix regressions.",
+      "Confirm the synthetic replay archive is uploaded by CI; replay a downloaded prior-commit archive against a subsequent worker version.",
+      "Expand feature ledger into atomic requirements; preserve all G1–G6 production blocks until authorized external evidence exists."
     ]
   }
 }
