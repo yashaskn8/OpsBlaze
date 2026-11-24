@@ -82,6 +82,7 @@ async def run_local_profile() -> dict:
             "admission": [], "snapshot": [], "notifications": [],
         }
         ids = []
+        read_steps = []
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -104,8 +105,9 @@ async def run_local_profile() -> dict:
                         )
                     ids.append(response.json()["id"])
 
-                async def phase(kind: str, concurrency: int) -> None:
+                async def phase(kind: str, concurrency: int) -> dict:
                     gate = asyncio.Semaphore(concurrency)
+                    samples: list[float] = []
 
                     async def one(incident_id: str) -> None:
                         async with gate:
@@ -125,13 +127,24 @@ async def run_local_profile() -> dict:
                                     if response.status_code == 200:
                                         assert response.json()["events"]
                                     return response.status_code
-                            await measure(work, 200, timings[kind])
+                            await measure(work, 200, samples)
 
+                    started = perf_counter()
                     await asyncio.gather(*(one(incident_id) for incident_id in ids))
+                    elapsed = perf_counter() - started
+                    timings[kind].extend(samples)
+                    return {
+                        "concurrency": concurrency,
+                        "operation": kind,
+                        **describe(samples),
+                        "elapsed_seconds": elapsed,
+                        "requests_per_second": len(samples) / elapsed,
+                        "raw_latency_ms": [round(value, 3) for value in samples],
+                    }
 
                 for concurrency in (1, 2, 4):
-                    await phase("snapshot", concurrency)
-                    await phase("notifications", concurrency)
+                    read_steps.append(await phase("snapshot", concurrency))
+                    read_steps.append(await phase("notifications", concurrency))
         finally:
             app.dependency_overrides.clear()
             app.dependency_overrides.update(previous)
@@ -143,6 +156,7 @@ async def run_local_profile() -> dict:
         "network_requests": 0,
         "admissions": len(ids),
         "read_concurrency_steps": [1, 2, 4],
+        "read_steps": read_steps,
         "measurements": {
             kind: describe(samples) for kind, samples in timings.items()
         },

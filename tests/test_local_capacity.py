@@ -30,4 +30,24 @@ async def test_bounded_capacity_profile_never_uses_network_or_production_labels(
         assert metrics["samples"] == (12 if kind == "admission" else 36)
         assert 0 <= metrics["p50_ms"] <= metrics["p95_ms"] <= metrics["p99_ms"]
         assert len(report["raw_latency_ms"][kind]) == metrics["samples"]
+    steps = report["read_steps"]
+    assert [(step["concurrency"], step["operation"]) for step in steps] == [
+        (concurrency, kind)
+        for concurrency in (1, 2, 4)
+        for kind in ("snapshot", "notifications")
+    ]
+    for step in steps:
+        raw = step["raw_latency_ms"]
+        assert step["samples"] == len(raw) == 12
+        assert step["elapsed_seconds"] > 0
+        assert step["requests_per_second"] == pytest.approx(
+            len(raw) / step["elapsed_seconds"]
+        )
+        for name, quantile in (("p50_ms", 0.50), ("p95_ms", 0.95), ("p99_ms", 0.99)):
+            assert step[name] == nearest_rank_ms(raw, quantile)
+    for kind in ("snapshot", "notifications"):
+        assert report["raw_latency_ms"][kind] == [
+            sample for step in steps if step["operation"] == kind
+            for sample in step["raw_latency_ms"]
+        ]
     assert "secret" not in str(report).lower()
