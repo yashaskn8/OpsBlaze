@@ -4,6 +4,7 @@ This structural gate complements behavioral token and cross-tenant tests.
 """
 
 from fastapi.routing import APIRoute
+from starlette.routing import Route
 
 from backend.api import app
 from backend.auth import (
@@ -16,6 +17,16 @@ PUBLIC_GETS = frozenset({"/v1/health/ready"})
 # This write endpoint authenticates a separately-audienced signed IdP JWT in
 # the handler, not a human API bearer token or a development shared secret.
 SIGNED_EVENT_POSTS = frozenset({"/v1/security/idp-events"})
+
+
+def test_route_inventory_cannot_silently_skip_nested_routes():
+    # An opaque included router can contain /v1 endpoints that the flat
+    # dependency audit never sees. Fail closed if registration changes.
+    builtin_paths = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+    for route in app.routes:
+        assert isinstance(route, APIRoute) or (
+            type(route) is Route and route.path in builtin_paths
+        ), (type(route), getattr(route, "path", None))
 
 
 def test_api_authorization_matrix_is_exhaustive():

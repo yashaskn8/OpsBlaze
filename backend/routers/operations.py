@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,10 +10,6 @@ from backend.auth import local_operator, local_security_admin, local_tenant
 from backend.database import get_session
 from backend.settings import Settings, get_settings
 
-router = APIRouter()
-
-
-@router.get("/v1/health/ready")
 async def readiness(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
@@ -83,7 +79,6 @@ async def readiness(
             raise HTTPException(503, "Temporal unreachable") from exc
     return {"status": "ready"}
 
-@router.get("/v1/operations/queues")
 async def tenant_queues(
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
@@ -96,7 +91,6 @@ async def tenant_queues(
     )
 
 
-@router.get("/v1/operations/dead-letters")
 async def experience_dead_letters(
     cursor: int = Query(default=0, ge=0, le=(1 << 63) - 1),
     limit: int = Query(default=50, ge=1, le=50),
@@ -108,7 +102,6 @@ async def experience_dead_letters(
     return await list_projection_dead_letters(session, tenant_id, cursor, limit)
 
 
-@router.post("/v1/operations/dead-letters/{entry_id}/acknowledge", status_code=202)
 async def acknowledge_experience_dead_letter(
     entry_id: int,
     if_match: Annotated[str, Header()],
@@ -141,7 +134,6 @@ class ProjectionRedriveRequest(BaseModel):
     reason: Literal["STORE_RESTORED", "TRANSIENT_FIX_VERIFIED"]
 
 
-@router.post("/v1/operations/dead-letters/{entry_id}/redrive", status_code=202)
 async def redrive_experience_dead_letter(
     entry_id: int,
     request: ProjectionRedriveRequest,
@@ -176,3 +168,20 @@ async def redrive_experience_dead_letter(
         "id": row.id, "source_id": entry_id,
         "state": "PENDING_PROJECTION",
     }
+
+
+def register_operations_routes(app: FastAPI) -> None:
+    """Register flat routes so the structural authorization gate sees every endpoint."""
+    app.add_api_route("/v1/health/ready", readiness, methods=["GET"])
+    app.add_api_route("/v1/operations/queues", tenant_queues, methods=["GET"])
+    app.add_api_route(
+        "/v1/operations/dead-letters", experience_dead_letters, methods=["GET"],
+    )
+    app.add_api_route(
+        "/v1/operations/dead-letters/{entry_id}/acknowledge",
+        acknowledge_experience_dead_letter, methods=["POST"], status_code=202,
+    )
+    app.add_api_route(
+        "/v1/operations/dead-letters/{entry_id}/redrive",
+        redrive_experience_dead_letter, methods=["POST"], status_code=202,
+    )

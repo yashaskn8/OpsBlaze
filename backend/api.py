@@ -13,7 +13,7 @@ from backend.auth import (
     local_security_admin, local_tenant,
 )
 from backend.database import get_session
-from backend.routers.operations import router as operations_router
+from backend.routers.operations import register_operations_routes
 from backend.schemas import IncidentCreate, IncidentView
 from backend.services import IdempotencyConflict, RateLimited, admit_incident, find_incident
 from backend.settings import Settings, get_settings
@@ -175,7 +175,7 @@ async def acknowledge_incident_review(
     return IncidentView.model_validate(incident)
 
 
-app.include_router(operations_router)
+register_operations_routes(app)
 
 
 @app.get("/v1/incidents/{incident_id}/evidence")
