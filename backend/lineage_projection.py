@@ -9,15 +9,23 @@ from backend.lineage_projection_refs import EDGE_SPECS, evidence_candidates, pro
 from backend.effect_lineage import EFFECT_RELATIONS, effect_relationships
 from backend.lineage_refs import MAX_EVIDENCE_REFS
 from backend.models import (
-    ApprovalGrant, EffectReceipt, Evidence, HypothesisStep, Incident,
-    IncidentPlan, LineageEdge, OutcomeRevision,
+    ApprovalGrant, EffectReceipt, Evidence, ExperienceCapsule, FailureCase,
+    HypothesisStep, Incident, IncidentPlan, LineageEdge, OperationalLesson, OutcomeRevision,
 )
 
 SOURCE_MODELS = {
     "hypothesis": HypothesisStep, "plan": IncidentPlan,
     "approval": ApprovalGrant, "outcome": OutcomeRevision, "effect": EffectReceipt,
+    "experience": ExperienceCapsule, "lesson": OperationalLesson, "failure": FailureCase,
 }
-TARGET_MODELS = {"evidence": Evidence, "plan": IncidentPlan, "effect": EffectReceipt}
+TARGET_MODELS = {
+    "evidence": Evidence, "plan": IncidentPlan, "effect": EffectReceipt,
+    "outcome": OutcomeRevision, "experience": ExperienceCapsule,
+}
+DIRECT_REFERENCE_FIELDS = {
+    "approval": "plan_id", "outcome": "effect_id", "experience": "outcome_revision_id",
+    "lesson": "source_capsule_id", "failure": "outcome_revision_id",
+}
 
 
 def source_query(kind, tenant_id, incident_id):
@@ -27,6 +35,11 @@ def source_query(kind, tenant_id, incident_id):
         return stmt.join(IncidentPlan, IncidentPlan.id == ApprovalGrant.plan_id).where(
             ApprovalGrant.tenant_id == tenant_id,
             IncidentPlan.tenant_id == tenant_id, IncidentPlan.incident_id == incident_id,
+        )
+    if kind == "lesson":
+        return stmt.join(ExperienceCapsule, ExperienceCapsule.id == OperationalLesson.source_capsule_id).where(
+            OperationalLesson.tenant_id == tenant_id,
+            ExperienceCapsule.tenant_id == tenant_id, ExperienceCapsule.incident_id == incident_id,
         )
     stmt = stmt.where(model.incident_id == incident_id)
     if kind != "hypothesis":
@@ -64,7 +77,7 @@ async def replace_record_edges(
         if kind in {"hypothesis", "plan"}:
             ids = evidence_candidates(source.evidence_ids)
         else:
-            target_id = source.plan_id if kind == "approval" else source.effect_id
+            target_id = getattr(source, DIRECT_REFERENCE_FIELDS[kind])
             ids = {target_id} if isinstance(target_id, UUID) else set()
         target = TARGET_MODELS[target_kind]
         known = (await session.scalars(select(target.id).where(
@@ -172,8 +185,8 @@ async def check_evidence_projection(
     )
     if not full_incident:
         stmt = stmt.where(LineageEdge.from_id.in_(ids))
-    # Two direct-reference kinds and up to two links per effect, 50 records each.
-    cap = MAX_EVIDENCE_REFS + 200
+    # Five direct-reference kinds and up to two links per effect, 50 records each.
+    cap = MAX_EVIDENCE_REFS + 350
     rows = (await session.scalars(stmt.limit(cap + 1))).all()
     if not source_nodes and not rows:
         return "NOT_APPLICABLE"

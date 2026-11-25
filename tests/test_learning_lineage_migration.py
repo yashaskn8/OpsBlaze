@@ -1,0 +1,51 @@
+"""Exercise learning-edge constraints without changing authoritative rows."""
+
+from uuid import uuid4
+
+import pytest
+import sqlalchemy as sa
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+
+from test_lineage_edge_migration import migration
+
+
+def test_learning_relation_migration_preserves_prior_edges_and_rolls_back():
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(sa.text("PRAGMA foreign_keys=ON"))
+        conn.execute(sa.text("CREATE TABLE incident (id CHAR(32) PRIMARY KEY)"))
+        incident = uuid4().hex
+        conn.execute(sa.text("INSERT INTO incident VALUES (:id)"), {"id": incident})
+        with Operations.context(MigrationContext.configure(conn)):
+            for name in ("0042_lineage_edge.py", "0043_causal_edge_kinds.py", "0044_effect_lineage.py"):
+                migration(name).upgrade()
+            new = migration("0045_learning_lineage.py")
+
+            def insert(source, target, relation):
+                conn.execute(sa.text(
+                    "INSERT INTO lineage_edge (tenant_id,incident_id,from_type,from_id,to_type,to_id,relation) "
+                    "VALUES ('lab',:incident,:source,:sid,:target,:tid,:relation)"
+                ), {"incident": incident, "source": source, "sid": uuid4().hex,
+                    "target": target, "tid": uuid4().hex, "relation": relation})
+
+            insert("effect", "approval", "AUTHORIZED_BY_GRANT")
+            new.upgrade()
+            for source, target, relation in (
+                ("experience", "outcome", "DERIVED_FROM"),
+                ("lesson", "experience", "SUPPORTED_BY"),
+                ("failure", "outcome", "CLASSIFIES"),
+            ):
+                insert(source, target, relation)
+            for source, target, relation in (
+                ("experience", "plan", "DERIVED_FROM"),
+                ("lesson", "outcome", "SUPPORTED_BY"),
+                ("failure", "outcome", "AUTHORIZED_BY"),
+            ):
+                with pytest.raises(sa.exc.IntegrityError):
+                    insert(source, target, relation)
+            assert conn.scalar(sa.text("SELECT count(*) FROM lineage_edge")) == 4
+            new.downgrade()
+            assert conn.scalar(sa.text("SELECT count(*) FROM lineage_edge")) == 1
+            assert conn.scalar(sa.text("SELECT count(*) FROM incident")) == 1
+    engine.dispose()

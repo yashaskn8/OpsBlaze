@@ -159,3 +159,28 @@ async def test_candidate_submission_rechecks_latest_source_revision(sessions_fix
     async with sessions_fixture() as session:
         with pytest.raises(FailureConflict, match="superseded"):
             await submit_candidate(session, "t", candidate.id, 1)
+
+
+@pytest.mark.asyncio
+async def test_failure_lineage_is_transactional_and_reconstructable(failure_case):
+    from sqlalchemy import delete
+    from backend.lineage import build_lineage, read_lineage_page
+    from backend.lineage_projection import rebuild_evidence_page
+    from backend.models import LineageEdge
+
+    sessions, incident_id, outcome_id, case = failure_case
+    async with sessions() as session:
+        row = await session.scalar(select(LineageEdge).where(LineageEdge.from_type == "failure"))
+        assert (row.from_id, row.to_id, row.relation) == (case.id, outcome_id, "CLASSIFIES")
+        assert (await build_lineage(session, "t", incident_id))["evidence_projection"] == "MATCHED"
+    async with sessions() as session:
+        async with session.begin():
+            await session.execute(delete(LineageEdge).where(LineageEdge.from_type == "failure"))
+    async with sessions() as session:
+        assert (await read_lineage_page(session, "t", incident_id, "failure"))["evidence_projection"] == "STALE_OR_MISSING"
+    async with sessions() as session:
+        async with session.begin():
+            assert await rebuild_evidence_page(session, "other", incident_id, "failure") is None
+            assert (await rebuild_evidence_page(session, "t", incident_id, "failure"))["processed"] == 1
+    async with sessions() as session:
+        assert (await build_lineage(session, "t", incident_id))["evidence_projection"] == "MATCHED"

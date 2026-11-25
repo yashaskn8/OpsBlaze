@@ -42,7 +42,7 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
                 "FROM pg_catalog.pg_roles WHERE rolname = current_user"
             ))).one()
             assert not any(flags)
-            for table in ("effect_receipt", "incident_plan"):
+            for table in ("effect_receipt", "incident_plan", "lineage_edge"):
                 assert await conn.scalar(text(
                     "SELECT has_table_privilege(current_user, :table, 'SELECT')"
                 ), {"table": f"public.{table}"}) is False
@@ -53,6 +53,10 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
                 "SELECT has_column_privilege(current_user, 'public.incident',"
                 "'status_projection', 'UPDATE')"
             ))) is False
+            for privilege in ("INSERT", "UPDATE", "DELETE"):
+                assert await conn.scalar(text(
+                    "SELECT has_table_privilege(current_user, 'public.lineage_edge', :privilege)"
+                ), {"privilege": privilege}) is False
             # Allow only capture inputs, not origin actor, raw probe excerpts
             # or the adjudicator's free-form outcome rationale.
             for table, column, allowed in (

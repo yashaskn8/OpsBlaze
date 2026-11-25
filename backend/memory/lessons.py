@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.adapters.simulator import utc
+from backend.lineage_projection import replace_record_edges
 from backend.models import (
     ExperienceCapsule, ExperienceConsent, Incident, OperationalLesson,
     OutcomeRevision,
@@ -134,6 +135,8 @@ async def create_draft(
             ),
         )
         session.add(lesson)
+        await session.flush()
+        await replace_record_edges(session, tenant_id, incident, "lesson", lesson)
     return lesson
 
 

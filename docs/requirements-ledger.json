@@ -274,7 +274,7 @@
         "G6"
       ],
       "acceptance_criteria": "Tenant-scoped complete causal lineage, cross-process traces and privacy review.",
-      "remaining_validation": "Effect links, relation-aware drift checks and bounded reconstruction added; exact candidate CI pending. Experience/lesson/failure and incident membership edges, other trace kinds, runtime recovery, collector, performance and accessibility remain.",
+      "remaining_validation": "Learning relation constraints, transactional failure/lesson links and owner-side experience rebuild added; exact candidate CI pending. Automatic experience and incident membership edges, runtime recovery, other trace kinds, performance, collector and accessibility remain.",
       "evidence": [
         {
           "kind": "implementation_status_reference",
@@ -303,6 +303,12 @@
         {
           "kind": "implementation_status_reference",
           "commit": "139034d7aa7684322d51be70ac973ab43a0cca9b",
+          "path": "backend/lineage_projection.py",
+          "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+        },
+        {
+          "kind": "implementation_status_reference",
+          "commit": "308ec9475ca493bec7b064903613b9a010a613ab",
           "path": "backend/lineage_projection.py",
           "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
         }
@@ -539,7 +545,7 @@
     }
   ],
   "checkpoint": {
-    "base_commit": "139034d7aa7684322d51be70ac973ab43a0cca9b",
+    "base_commit": "308ec9475ca493bec7b064903613b9a010a613ab",
     "implemented_changes": [
       {
         "commit": "9310682c08fa6605b09b412347d290163b5c2ae7",
@@ -582,12 +588,19 @@
         "change": "Approval and outcome causal edges",
         "workflow_run": 45602988958,
         "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+      },
+      {
+        "commit": "308ec9475ca493bec7b064903613b9a010a613ab",
+        "requirement": "P3",
+        "change": "Historical effect links and relation-aware drift",
+        "workflow_run": 45603581347,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
       }
     ],
     "next_actions": [
-      "Verify migration 0044, real simulator dispatch and relation-label corruption regression against exact candidate CI; repair failures.",
-      "Extend experience/lesson/failure and incident membership persistence without expanding restricted projector permissions; integrate bounded recovery.",
-      "Complete additional trace kinds, controlled workload evidence, independent collector/retention and accessibility gates; production remains blocked."
+      "Verify exact candidate migration 0045, lesson/failure writes, consent revocation, owner-side experience rebuild and restricted role tests; repair failures.",
+      "Integrate automatic experience and incident membership projection using existing privilege boundaries, and bounded runtime recovery.",
+      "Complete remaining trace kinds, workload evidence, independent collector/retention and accessibility; G1–G6 remain blocked."
     ]
   }
 }

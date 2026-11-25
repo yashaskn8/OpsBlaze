@@ -9,6 +9,8 @@ from uuid import UUID, NAMESPACE_URL, uuid4, uuid5
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.lineage_projection import replace_record_edges
+
 from backend.models import (
     EffectReceipt, EvaluationManifest, FailureCase, FailureCluster,
     FailureReview, ImprovementCandidate, Incident, OutcomeRevision, ProbeCall,
@@ -109,6 +111,8 @@ async def record_case(
             classification_version=1, review_status=review,
         )
         session.add(case)
+        await session.flush()
+        await replace_record_edges(session, tenant_id, outcome.incident_id, "failure", case)
     return case
 
 

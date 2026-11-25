@@ -201,3 +201,39 @@ async def test_redteam_poisoned_lesson_cannot_be_validated(lesson_source, damage
     async with sessions() as session:
         row = await session.get(OperationalLesson, lesson.id)
         assert row.status == "DRAFT"
+
+
+@pytest.mark.asyncio
+async def test_learning_lineage_is_scoped_and_rebuildable_after_consent_revocation(lesson_source):
+    from sqlalchemy import delete, select
+    from backend.lineage import build_lineage
+    from backend.lineage_projection import rebuild_evidence_page
+    from backend.models import LineageEdge
+
+    sessions, incident_id, capsule_id = lesson_source
+    async with sessions() as session:
+        lesson = await create_draft(session, "t", capsule_id, "CHECK_VERSION")
+    async with sessions() as session:
+        row = await session.scalar(select(LineageEdge).where(LineageEdge.from_type == "lesson"))
+        assert (row.from_id, row.to_id, row.relation) == (lesson.id, capsule_id, "SUPPORTED_BY")
+        assert (await build_lineage(session, "t", incident_id))["evidence_projection"] == "STALE_OR_MISSING"
+    async with sessions() as session:
+        async with session.begin():
+            assert await rebuild_evidence_page(session, "other", incident_id, "experience") is None
+            assert (await rebuild_evidence_page(session, "t", incident_id, "experience"))["processed"] == 1
+            assert (await rebuild_evidence_page(session, "t", incident_id, "experience"))["processed"] == 1
+    async with sessions() as session:
+        assert (await build_lineage(session, "t", incident_id))["evidence_projection"] == "MATCHED"
+        assert len((await session.scalars(select(LineageEdge))).all()) == 2
+    async with sessions() as session:
+        await set_consent(session, "t", incident_id, 1, False)
+    async with sessions() as session:
+        async with session.begin():
+            await session.execute(delete(LineageEdge))
+            await rebuild_evidence_page(session, "t", incident_id, "experience")
+            await rebuild_evidence_page(session, "t", incident_id, "lesson")
+    async with sessions() as session:
+        graph = await build_lineage(session, "t", incident_id)
+        assert graph["evidence_projection"] == "MATCHED"
+        assert any(n["kind"] == "lesson" and n["status"] == "REVOKED" for n in graph["nodes"])
+        assert await retrieve_active_lessons(session, "t", "checkout") == []

@@ -9,7 +9,11 @@ import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
-from backend.lineage_projection_refs import EDGE_SPECS
+# Historical revision 0043 supports exactly these four kinds, not later additions.
+EDGE_SPECS = {
+    "hypothesis": ("evidence", "CITES"), "plan": ("evidence", "JUSTIFIED_BY"),
+    "approval": ("plan", "REVIEWS"), "outcome": ("effect", "WITNESSES"),
+}
 
 
 def migration(name):

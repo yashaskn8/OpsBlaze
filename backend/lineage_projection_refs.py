@@ -9,6 +9,9 @@ EDGE_SPECS = {
     "plan": ("evidence", "JUSTIFIED_BY"),
     "approval": ("plan", "REVIEWS"),
     "outcome": ("effect", "WITNESSES"),
+    "experience": ("outcome", "DERIVED_FROM"),
+    "lesson": ("experience", "SUPPORTED_BY"),
+    "failure": ("outcome", "CLASSIFIES"),
 }
 
 
