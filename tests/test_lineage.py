@@ -76,7 +76,8 @@ async def test_missing_evidence_reference_is_reported_not_invented(sessions_fixt
     async with sessions_fixture() as session:
         graph = await build_lineage(session, "t", incident.id)
         assert graph["projection"] == "PARTIAL_LINKS"
-        assert any(m["missing_target"] == f"evidence:{phantom}" for m in graph["missing_refs"])
+        assert any(m["missing_target"] == "evidence:unavailable" for m in graph["missing_refs"])
+        assert phantom not in str(graph["missing_refs"])
         assert not any(
             n["id"] == f"evidence:{phantom}" for n in graph["nodes"]
         )
@@ -324,6 +325,10 @@ async def test_redteam_paginated_lineage_resolves_real_references_without_leaks(
         )
         assert len(page["missing_refs"]) == 3
         assert str(foreign_evidence_id) not in str(page["missing_refs"])
+        summary = await build_lineage(session, "alpha", own.id)
+        assert str(foreign_evidence_id) not in str(summary)
+        assert "not-a-uuid" not in str(summary)
+        assert summary["projection"] == "PARTIAL_LINKS"
 
     async with sessions_fixture() as session:
         async with session.begin():
@@ -335,6 +340,10 @@ async def test_redteam_paginated_lineage_resolves_real_references_without_leaks(
         capped = await read_lineage_page(session, "alpha", own.id, "hypothesis")
         assert capped["links_truncated"] is True
         assert len(capped["edges"]) <= 201
+        summary = await build_lineage(session, "alpha", own.id)
+        assert summary["links_truncated"] is True
+        assert summary["projection"] == "PARTIAL_LINKS"
+        assert len([edge for edge in summary["edges"] if edge["relation"] == "CITES"]) <= 200
 
 
 
@@ -384,3 +393,26 @@ async def test_redteam_lineage_page_api_rejects_cross_tenant_and_unbounded_queri
             }, headers=own)).status_code == 422
     finally:
         app.dependency_overrides.clear()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed", ["private-content", {"secret": "private-content"}, 42])
+async def test_redteam_malformed_summary_reference_list_is_redacted(sessions_fixture, malformed):
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "t", "bad-ref-list", IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(HypothesisStep(
+                id=uuid4(), incident_id=incident.id, step_no=1,
+                model_id="deterministic-baseline-v1", prompt_version="none",
+                evidence_ids=malformed, cause_scores={}, probe_id="simulator.health",
+                decision="ABSTAINED", token_reserved=0, token_used=0,
+            ))
+    async with sessions_fixture() as session:
+        summary = await build_lineage(session, "t", incident.id)
+        page = await read_lineage_page(session, "t", incident.id, "hypothesis")
+        for graph in (summary, page):
+            assert "private-content" not in str(graph)
+            assert any(r["missing_target"] == "invalid-evidence-list" for r in graph["missing_refs"])
+        assert summary["projection"] == "PARTIAL_LINKS"

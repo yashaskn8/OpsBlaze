@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.lineage_refs import MAX_EVIDENCE_REFS, bounded_evidence_refs, reference_uuid
 from backend.models import (
     ApprovalGrant, Evidence, EffectReceipt, ExperienceCapsule,
     FailureCase, HypothesisStep, Incident, IncidentPlan,
@@ -121,6 +122,7 @@ async def read_lineage_page(
     # Bound fan-out even if persisted JSON references were corrupted.
     references: list[tuple[str, str, UUID, str]] = []
     links_truncated = False
+    remaining_evidence = MAX_EVIDENCE_REFS
     direct_kinds = set(LINEAGE_SOURCE_MODELS)
     for row in visible:
         source = f"{kind}:{row.id}"
@@ -132,18 +134,15 @@ async def read_lineage_page(
         related = []
         if kind in {"hypothesis", "plan"}:
             relation = "CITES" if kind == "hypothesis" else "JUSTIFIED_BY"
-            if not isinstance(row.evidence_ids, list):
+            values, omitted, valid = bounded_evidence_refs(row.evidence_ids, remaining_evidence)
+            links_truncated |= omitted
+            remaining_evidence -= len(values)
+            if not valid:
                 missing_refs.append({
                     "source": source, "missing_target": "invalid-evidence-list",
                     "relation": relation,
                 })
-            else:
-                if len(row.evidence_ids) > 200:
-                    links_truncated = True
-                related = [
-                    ("evidence", value, relation)
-                    for value in row.evidence_ids[:200]
-                ]
+            related = [("evidence", value, relation) for value in values]
         elif kind == "approval":
             related = [("plan", row.plan_id, "REVIEWS")]
         elif kind == "lesson":
@@ -158,9 +157,8 @@ async def read_lineage_page(
             if len(references) >= 200:
                 links_truncated = True
                 break
-            try:
-                target_uuid = UUID(str(value))
-            except (TypeError, ValueError, AttributeError):
+            target_uuid = reference_uuid(value)
+            if target_uuid is None:
                 missing_refs.append({
                     "source": source, "missing_target": "invalid-reference",
                     "relation": relation,
@@ -291,7 +289,8 @@ async def build_lineage(
     def edge(source: str, target: str, relation: str) -> None:
         if target not in nodes:
             missing.append({
-                "source": source, "missing_target": target, "relation": relation,
+                "source": source, "missing_target": target.split(":", 1)[0] + ":unavailable",
+                "relation": relation,
             })
         else:
             edges.append({"from": source, "to": target, "relation": relation})
@@ -347,15 +346,30 @@ async def build_lineage(
         for record in records[kind]:
             edge(f"{kind}:{record.id}", root, "BELONGS_TO")
 
-    for step in records["hypothesis"]:
-        for evidence_id in step.evidence_ids:
-            edge(
-                f"hypothesis:{step.id}", f"evidence:{evidence_id}", "CITES",
+    remaining_evidence = MAX_EVIDENCE_REFS
+    evidence_links_truncated = False
+    for kind, relation in (("hypothesis", "CITES"), ("plan", "JUSTIFIED_BY")):
+        for record in records[kind]:
+            source = f"{kind}:{record.id}"
+            values, omitted, valid = bounded_evidence_refs(
+                record.evidence_ids, remaining_evidence,
             )
-
-    for plan in records["plan"]:
-        for evidence_id in plan.evidence_ids:
-            edge(f"plan:{plan.id}", f"evidence:{evidence_id}", "JUSTIFIED_BY")
+            remaining_evidence -= len(values)
+            evidence_links_truncated |= omitted
+            if not valid:
+                missing.append({
+                    "source": source, "missing_target": "invalid-evidence-list",
+                    "relation": relation,
+                })
+            for value in values:
+                evidence_id = reference_uuid(value)
+                if evidence_id is None:
+                    missing.append({
+                        "source": source, "missing_target": "invalid-reference",
+                        "relation": relation,
+                    })
+                else:
+                    edge(source, f"evidence:{evidence_id}", relation)
 
     plans_by_digest: dict[str, list[IncidentPlan]] = {}
     for plan in records["plan"]:
@@ -368,7 +382,7 @@ async def build_lineage(
         if not matching_effect_plan(effect, plan):
             missing.append({
                 "source": source,
-                "missing_target": f"matching-plan-digest:{effect.plan_digest}",
+                "missing_target": "matching-plan-digest:unavailable",
                 "relation": "REFERENCES_PLAN",
             })
             continue
@@ -424,7 +438,8 @@ async def build_lineage(
         "nodes": list(nodes.values()),
         "edges": edges,
         "missing_refs": missing,
-        "projection": "PARTIAL_LINKS" if missing or truncated_sources else "COMPLETE",
+        "projection": "PARTIAL_LINKS" if missing or truncated_sources or evidence_links_truncated else "COMPLETE",
+        "links_truncated": evidence_links_truncated,
         "truncated_sources": truncated_sources,
         "trace_spans_available": False,
     }
