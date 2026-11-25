@@ -10,6 +10,7 @@ from backend.adapters.simulator import (
     observed_healthy_at_version, permit_digest, utc,
 )
 from backend.models import ApprovalGrant, EffectReceipt, IncidentPlan, RevokedIdentity
+from backend.lineage_projection import replace_record_edges
 
 
 class EffectConflict(Exception):
@@ -74,6 +75,7 @@ async def prepare_receipt(
                 or receipt.expected_version != permit.expected_version
             ):
                 raise EffectConflict("effect identity reused for another plan or permit")
+            await replace_record_edges(session, receipt.tenant_id, receipt.incident_id, "effect", receipt)
             return receipt.id
 
 async def set_state(
@@ -175,6 +177,8 @@ async def set_state(
                 receipt.observed_version = observed_version
             if state == "SENT":
                 receipt.attempt_count += 1
+            await session.flush()
+            await replace_record_edges(session, receipt.tenant_id, receipt.incident_id, "effect", receipt)
 
 
 async def reconcile_effect(

@@ -274,7 +274,7 @@
         "G6"
       ],
       "acceptance_criteria": "Tenant-scoped complete causal lineage, cross-process traces and privacy review.",
-      "remaining_validation": "Four causal relation kinds are projected with scoped writes/rebuild/cleanup; exact candidate CI pending. Effect authority, experience/lesson/failure and incident membership edges, other trace kinds, runtime recovery, collector, performance and accessibility remain.",
+      "remaining_validation": "Effect links, relation-aware drift checks and bounded reconstruction added; exact candidate CI pending. Experience/lesson/failure and incident membership edges, other trace kinds, runtime recovery, collector, performance and accessibility remain.",
       "evidence": [
         {
           "kind": "implementation_status_reference",
@@ -297,6 +297,12 @@
         {
           "kind": "implementation_status_reference",
           "commit": "49850334961bf7433cf436da544ea2f8a4ad4fbb",
+          "path": "backend/lineage_projection.py",
+          "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+        },
+        {
+          "kind": "implementation_status_reference",
+          "commit": "139034d7aa7684322d51be70ac973ab43a0cca9b",
           "path": "backend/lineage_projection.py",
           "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
         }
@@ -533,7 +539,7 @@
     }
   ],
   "checkpoint": {
-    "base_commit": "eca5123dd13d90f9a5157a77e9082215c0f8ceb6",
+    "base_commit": "139034d7aa7684322d51be70ac973ab43a0cca9b",
     "implemented_changes": [
       {
         "commit": "9310682c08fa6605b09b412347d290163b5c2ae7",
@@ -569,12 +575,19 @@
         "change": "Durable scoped incident-level trace context",
         "workflow_run": 45601565920,
         "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+      },
+      {
+        "commit": "139034d7aa7684322d51be70ac973ab43a0cca9b",
+        "requirement": "P3",
+        "change": "Approval and outcome causal edges",
+        "workflow_run": 45602988958,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
       }
     ],
     "next_actions": [
-      "Check exact commit CI, especially migration 0043, review and witness projection regressions; repair any failure.",
-      "Extend remaining relation types, preserving live authorization and restricted projector privileges. Integrate bounded recovery and additional trace kinds.",
-      "Measure controlled read/write and large-history workload; require independent collector, retention, accessibility and production gates."
+      "Verify migration 0044, real simulator dispatch and relation-label corruption regression against exact candidate CI; repair failures.",
+      "Extend experience/lesson/failure and incident membership persistence without expanding restricted projector permissions; integrate bounded recovery.",
+      "Complete additional trace kinds, controlled workload evidence, independent collector/retention and accessibility gates; production remains blocked."
     ]
   }
 }

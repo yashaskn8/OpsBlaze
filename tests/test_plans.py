@@ -521,3 +521,42 @@ async def test_approval_projection_records_review_not_authority(proposed_lab, de
             assert (await rebuild_evidence_page(session, "a", incident_id, "approval"))["processed"] == 1
     async with sessions() as session:
         assert (await read_lineage_page(session, "a", incident_id, "approval"))["evidence_projection"] == "MATCHED"
+
+
+@pytest.mark.asyncio
+async def test_effect_projection_tracks_actual_lab_dispatch_and_detects_relation_drift(proposed_lab):
+    from sqlalchemy import delete
+    from backend.models import LineageEdge
+    from backend.lineage import build_lineage, read_lineage_page
+    from backend.lineage_projection import rebuild_evidence_page
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        await decide_plan(session, "a", plan_id, 1, "APPROVE")
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+    assert await execute_approved_simulator_plan(sessions, "a", incident_id, plan_id) == "VERIFIED"
+    async with sessions() as session:
+        rows = (await session.scalars(select(LineageEdge).where(LineageEdge.from_type == "effect"))).all()
+        assert {row.relation for row in rows} == {"AUTHORIZED_BY", "AUTHORIZED_BY_GRANT"}
+        graph = await build_lineage(session, "a", incident_id)
+        assert graph["evidence_projection"] == "MATCHED"
+    async with sessions() as session:
+        async with session.begin():
+            row = await session.scalar(select(LineageEdge).where(LineageEdge.relation == "AUTHORIZED_BY"))
+            row.relation = "REFERENCES_PLAN"
+    async with sessions() as session:
+        graph = await build_lineage(session, "a", incident_id)
+        assert graph["evidence_projection"] == "STALE_OR_MISSING"
+        assert (await read_lineage_page(session, "a", incident_id, "effect"))["evidence_projection"] == "STALE_OR_MISSING"
+        assert any(edge["relation"] == "AUTHORIZED_BY" for edge in graph["edges"])
+    async with sessions() as session:
+        async with session.begin():
+            assert await rebuild_evidence_page(session, "b", incident_id, "effect") is None
+            assert (await rebuild_evidence_page(session, "a", incident_id, "effect"))["processed"] == 1
+    async with sessions() as session:
+        assert (await build_lineage(session, "a", incident_id))["evidence_projection"] == "MATCHED"
+    async with sessions() as session:
+        async with session.begin():
+            await session.execute(delete(LineageEdge).where(LineageEdge.from_type == "effect"))
+    async with sessions() as session:
+        assert (await build_lineage(session, "a", incident_id))["evidence_projection"] == "STALE_OR_MISSING"

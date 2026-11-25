@@ -6,6 +6,7 @@ from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.lineage_projection_refs import EDGE_SPECS, evidence_candidates, projection_status
+from backend.effect_lineage import EFFECT_RELATIONS, effect_relationships
 from backend.lineage_refs import MAX_EVIDENCE_REFS
 from backend.models import (
     ApprovalGrant, EffectReceipt, Evidence, HypothesisStep, Incident,
@@ -14,7 +15,7 @@ from backend.models import (
 
 SOURCE_MODELS = {
     "hypothesis": HypothesisStep, "plan": IncidentPlan,
-    "approval": ApprovalGrant, "outcome": OutcomeRevision,
+    "approval": ApprovalGrant, "outcome": OutcomeRevision, "effect": EffectReceipt,
 }
 TARGET_MODELS = {"evidence": Evidence, "plan": IncidentPlan, "effect": EffectReceipt}
 
@@ -49,17 +50,28 @@ async def replace_record_edges(
         model.id == source.id,
     )) is None:
         raise ValueError("invalid causal projection source scope")
-    target_kind, relation = EDGE_SPECS[kind]
-    if kind in {"hypothesis", "plan"}:
-        ids = evidence_candidates(source.evidence_ids)
+    if kind == "effect":
+        plan = await session.scalar(select(IncidentPlan).where(
+            IncidentPlan.tenant_id == tenant_id, IncidentPlan.incident_id == incident_id,
+            IncidentPlan.plan_digest == source.plan_digest,
+        ))
+        grant = await session.scalar(select(ApprovalGrant).where(
+            ApprovalGrant.tenant_id == tenant_id, ApprovalGrant.plan_id == plan.id,
+        )) if plan is not None else None
+        links, _ = effect_relationships(source, plan, grant)
     else:
-        target_id = source.plan_id if kind == "approval" else source.effect_id
-        ids = {target_id} if isinstance(target_id, UUID) else set()
-    target = TARGET_MODELS[target_kind]
-    known = (await session.scalars(select(target.id).where(
-        target.id.in_(ids), target.tenant_id == tenant_id,
-        target.incident_id == incident_id,
-    ))).all() if ids else []
+        target_kind, relation = EDGE_SPECS[kind]
+        if kind in {"hypothesis", "plan"}:
+            ids = evidence_candidates(source.evidence_ids)
+        else:
+            target_id = source.plan_id if kind == "approval" else source.effect_id
+            ids = {target_id} if isinstance(target_id, UUID) else set()
+        target = TARGET_MODELS[target_kind]
+        known = (await session.scalars(select(target.id).where(
+            target.id.in_(ids), target.tenant_id == tenant_id,
+            target.incident_id == incident_id,
+        ))).all() if ids else []
+        links = [(target_kind, target_id, relation) for target_id in known]
     await session.execute(delete(LineageEdge).where(
         LineageEdge.tenant_id == tenant_id, LineageEdge.incident_id == incident_id,
         LineageEdge.from_type == kind, LineageEdge.from_id == source.id,
@@ -69,7 +81,7 @@ async def replace_record_edges(
             tenant_id=tenant_id, incident_id=incident_id,
             from_type=kind, from_id=source.id, to_type=target_kind,
             to_id=target_id, relation=relation,
-        ) for target_id in known
+        ) for target_kind, target_id, relation in links
     ])
 
 
@@ -146,12 +158,12 @@ async def check_evidence_projection(
     """Compare scoped live causal links; never substitute cached authority."""
     if truncated:
         return "NOT_CHECKED_TRUNCATED"
-    source_nodes = {node["id"] for node in nodes if node["kind"] in EDGE_SPECS}
+    source_nodes = {node["id"] for node in nodes if node["kind"] in SOURCE_MODELS}
     if not source_nodes and not full_incident:
         return "NOT_APPLICABLE"
-    relations = {spec[1] for spec in EDGE_SPECS.values()}
+    relations = {spec[1] for spec in EDGE_SPECS.values()} | EFFECT_RELATIONS
     expected = {
-        (edge["from"], edge["to"]) for edge in edges
+        (edge["from"], edge["to"], edge["relation"]) for edge in edges
         if edge["from"] in source_nodes and edge["relation"] in relations
     }
     ids = [UUID(node.split(":", 1)[1]) for node in source_nodes]
@@ -160,15 +172,15 @@ async def check_evidence_projection(
     )
     if not full_incident:
         stmt = stmt.where(LineageEdge.from_id.in_(ids))
-    # Two direct-reference kinds add at most 50 links each in the summary.
-    cap = MAX_EVIDENCE_REFS + 100
+    # Two direct-reference kinds and up to two links per effect, 50 records each.
+    cap = MAX_EVIDENCE_REFS + 200
     rows = (await session.scalars(stmt.limit(cap + 1))).all()
     if not source_nodes and not rows:
         return "NOT_APPLICABLE"
     if len(rows) > cap:
         return "STALE_OR_MISSING"
     recorded = {
-        (f"{row.from_type}:{row.from_id}", f"{row.to_type}:{row.to_id}")
+        (f"{row.from_type}:{row.from_id}", f"{row.to_type}:{row.to_id}", row.relation)
         for row in rows if full_incident or f"{row.from_type}:{row.from_id}" in source_nodes
     }
     return projection_status(expected, recorded, truncated=False)

@@ -86,11 +86,14 @@ class LineageEdge(Base):
     __tablename__ = "lineage_edge"
     __table_args__ = (
         CheckConstraint(
-            "(to_type = 'evidence' AND ((from_type = 'hypothesis' AND relation = 'CITES') "
+            "((to_type = 'evidence' AND ((from_type = 'hypothesis' AND relation = 'CITES') "
             "OR (from_type = 'plan' AND relation = 'JUSTIFIED_BY'))) "
             "OR (from_type = 'approval' AND to_type = 'plan' AND relation = 'REVIEWS') "
-            "OR (from_type = 'outcome' AND to_type = 'effect' AND relation = 'WITNESSES')",
-            name="ck_lineage_edge_causal_relation",
+            "OR (from_type = 'outcome' AND to_type = 'effect' AND relation = 'WITNESSES')) "
+            "OR (from_type = 'effect' AND ((to_type = 'plan' AND "
+            "relation IN ('PREPARED_FOR', 'REFERENCES_PLAN', 'AUTHORIZED_BY')) "
+            "OR (to_type = 'approval' AND relation = 'AUTHORIZED_BY_GRANT')))",
+            name="ck_lineage_edge_effect_relation",
         ),
         Index("ix_lineage_edge_incident_created", "tenant_id", "incident_id", "created_at"),
         Index("ix_lineage_edge_source", "from_type", "from_id"),

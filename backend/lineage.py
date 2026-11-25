@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.lineage_refs import MAX_EVIDENCE_REFS, bounded_evidence_refs, reference_uuid
 from backend.lineage_projection import check_evidence_projection
+from backend.effect_lineage import effect_relationships
 from backend.trace_refs import graph_trace_refs
 from backend.models import (
     ApprovalGrant, Evidence, EffectReceipt, ExperienceCapsule,
@@ -43,35 +44,6 @@ def record_status(kind: str, record: object) -> str:
             getattr(record, "label", getattr(record, "decision", "RECORDED")),
         ),
     ))
-
-
-def matching_effect_plan(
-    effect: EffectReceipt, plan: IncidentPlan | None,
-) -> bool:
-    return (
-        plan is not None
-        and plan.incident_id == effect.incident_id
-        and plan.target_id == effect.target_id
-        and plan.expected_version == effect.expected_version
-        and plan.action_id == "SIMULATOR_MARK_HEALTHY"
-        and effect.adapter_id == "simulator"
-    )
-
-
-def consumed_effect_authority(
-    effect: EffectReceipt, plan: IncidentPlan, grant: ApprovalGrant | None,
-) -> bool:
-    return (
-        effect.attempt_count == 1
-        and effect.state != "PREPARED"
-        and grant is not None
-        and grant.plan_digest == plan.plan_digest
-        and grant.scope == plan.action_id
-        and grant.decision == "APPROVE"
-        and grant.state == "CONSUMED"
-        and plan.status == "APPROVED"
-        and plan.decided_by == grant.reviewer_id
-    )
 
 
 async def read_lineage_page(
@@ -220,37 +192,18 @@ async def read_lineage_page(
             source = f"effect:{effect.id}"
             matches = plans_by_digest.get(effect.plan_digest, [])
             plan = matches[0] if len(matches) == 1 else None
-            if not matching_effect_plan(effect, plan):
+            grant = grants_by_plan.get(plan.id) if plan is not None else None
+            links, gap = effect_relationships(effect, plan, grant)
+            for target_kind, target_id, relation in links:
+                edges.append({"from": source, "to": f"{target_kind}:{target_id}", "relation": relation})
+            if gap is not None:
                 missing_refs.append({
                     "source": source,
-                    "missing_target": "matching-plan-digest:unavailable",
-                    "relation": "REFERENCES_PLAN",
+                    "missing_target": "matching-plan-digest:unavailable" if gap == "REFERENCES_PLAN"
+                    else "valid-approval:unavailable",
+                    "relation": gap,
                 })
-                continue
-            if effect.state == "PREPARED" and effect.attempt_count == 0:
-                edges.append({
-                    "from": source, "to": f"plan:{plan.id}",
-                    "relation": "PREPARED_FOR",
-                })
-                continue
-            grant = grants_by_plan.get(plan.id)
-            if not consumed_effect_authority(effect, plan, grant):
-                edges.append({
-                    "from": source, "to": f"plan:{plan.id}",
-                    "relation": "REFERENCES_PLAN",
-                })
-                missing_refs.append({
-                    "source": source,
-                    "missing_target": "valid-approval:unavailable",
-                    "relation": "AUTHORIZED_BY_GRANT",
-                })
-                continue
-            edges.extend([
-                {"from": source, "to": f"plan:{plan.id}",
-                 "relation": "AUTHORIZED_BY"},
-                {"from": source, "to": f"approval:{grant.id}",
-                 "relation": "AUTHORIZED_BY_GRANT"},
-            ])
+
 
     nodes = [
         {"id": f"{kind}:{row.id}", "kind": kind, "status": record_status(kind, row)}
@@ -385,29 +338,17 @@ async def build_lineage(
         source = f"effect:{effect.id}"
         matches = plans_by_digest.get(effect.plan_digest, [])
         plan = matches[0] if len(matches) == 1 else None
-        if not matching_effect_plan(effect, plan):
+        grant = grants_by_plan.get(plan.id) if plan is not None else None
+        links, gap = effect_relationships(effect, plan, grant)
+        for target_kind, target_id, relation in links:
+            edge(source, f"{target_kind}:{target_id}", relation)
+        if gap is not None:
             missing.append({
                 "source": source,
-                "missing_target": "matching-plan-digest:unavailable",
-                "relation": "REFERENCES_PLAN",
+                "missing_target": "matching-plan-digest:unavailable" if gap == "REFERENCES_PLAN"
+                else "valid-approval:unavailable",
+                "relation": gap,
             })
-            continue
-        if effect.state == "PREPARED" and effect.attempt_count == 0:
-            edge(source, f"plan:{plan.id}", "PREPARED_FOR")
-            continue
-        grant = grants_by_plan.get(plan.id)
-        if not consumed_effect_authority(effect, plan, grant):
-            # The digest still links a forensic plan reference, but that
-            # reference must not be displayed as valid effect authority.
-            edge(source, f"plan:{plan.id}", "REFERENCES_PLAN")
-            missing.append({
-                "source": source,
-                "missing_target": f"valid-approval-for-plan:{plan.id}",
-                "relation": "AUTHORIZED_BY_GRANT",
-            })
-            continue
-        edge(source, f"plan:{plan.id}", "AUTHORIZED_BY")
-        edge(source, f"approval:{grant.id}", "AUTHORIZED_BY_GRANT")
 
     for outcome in records["outcome"]:
         if outcome.effect_id is not None:
