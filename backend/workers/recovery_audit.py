@@ -22,6 +22,7 @@ from backend.models import EffectReceipt, Incident, OutboxEntry
 from backend.settings import get_settings
 from backend.temporal_connection import connect_temporal
 from backend.workers.dispatcher import workflow_id
+from backend.workflows.activity_timing import schedule_to_start_ms
 
 TERMINAL_WORKFLOWS = frozenset({
     "COMPLETED", "FAILED", "CANCELED", "TERMINATED", "TIMED_OUT",
@@ -87,7 +88,7 @@ def check_receipt(
 
 async def _temporal_description(
     client: Client, wid: str,
-) -> tuple[str, bool]:
+) -> tuple[str, bool, datetime | None, datetime | None]:
     """Return a bounded, non-authoritative Temporal view and identity check."""
     try:
         desc = await asyncio.wait_for(
@@ -96,7 +97,7 @@ async def _temporal_description(
     except Exception:
         # Never treat a timeout, missing history or transport failure as
         # proof the start was not committed.
-        return "UNKNOWN", False
+        return "UNKNOWN", False, None, None
 
     # A transport may return an incomplete or malformed description. Never
     # let an unexpected response turn a bounded audit into an uncaught error.
@@ -104,16 +105,16 @@ async def _temporal_description(
         raw_status = getattr(desc, "status", None)
         status = getattr(raw_status, "name", raw_status)
         if not isinstance(status, str) or status not in KNOWN_WORKFLOWS:
-            return "UNKNOWN", False
+            return "UNKNOWN", False, None, None
 
         # The SDK normally includes ID/type; absence is not a positive match.
         observed_id = getattr(desc, "id", None)
         observed_type = getattr(desc, "workflow_type", None)
         if observed_id != wid or observed_type != "IncidentWorkflow":
-            return status, False
-        return status, True
+            return status, False, None, None
+        return status, True, getattr(desc, "start_time", None), getattr(desc, "close_time", None)
     except Exception:
-        return "UNKNOWN", False
+        return "UNKNOWN", False, None, None
 
 
 async def audit_recovery_consistency(
@@ -223,7 +224,7 @@ async def audit_recovery_consistency(
         tenant, incident_id, projection, entry_id, attempts, delivered, dead = row
         wid = workflow_id(tenant, incident_id)
         async with semaphore:
-            status, identity_ok = await _temporal_description(client, wid)
+            status, identity_ok, started_at, closed_at = await _temporal_description(client, wid)
         reasons = set()
         projection_known = projection in KNOWN_PROJECTIONS
         if not projection_known:
@@ -270,12 +271,25 @@ async def audit_recovery_consistency(
             )
             if finding is not None:
                 reasons.add(finding)
+        # The fixed audit observation time is not a historical DB snapshot.
+        # Only report durations when the verified terminal history was already
+        # closed by that time; missing/skewed timestamps stay null.
+        runtime_ms = None
+        projection_lag_ms = None
+        if identity_ok and status in TERMINAL_WORKFLOWS:
+            closed_age = schedule_to_start_ms(closed_at, observed)
+            if closed_age is not None:
+                runtime_ms = schedule_to_start_ms(started_at, closed_at)
+                if runtime_ms is not None and projection in ACTIVE_PROJECTIONS:
+                    projection_lag_ms = closed_age
         return {
             "incident_id": str(incident_id),
             "outbox_id": entry_id,
             "projection": projection if projection_known else "UNKNOWN",
             "temporal_status": status,
             "temporal_identity_verified": identity_ok,
+            "terminal_workflow_runtime_ms": runtime_ms,
+            "terminal_projection_lag_ms": projection_lag_ms,
             "start_acknowledged": delivered is not None,
             "reasons": sorted(reasons),
             "safe_action": "INSPECT_ONLY",

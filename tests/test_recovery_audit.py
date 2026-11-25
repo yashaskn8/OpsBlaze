@@ -805,3 +805,50 @@ async def test_invalid_projection_cannot_be_reported_clean_or_as_terminal(
     async with sessions_fixture() as session:
         incident = await session.get(Incident, iid)
         assert incident.status_projection == "INVALID_SYNTHETIC_VALUE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case,expected_runtime,expected_lag", [
+    ("valid", 120000, 60000),
+    ("missing", None, None),
+    ("future", None, None),
+    ("reversed", None, None),
+    ("naive", None, None),
+    ("wrong_identity", None, None),
+    ("running", None, None),
+    ("terminal_projection", 120000, None),
+])
+async def test_terminal_projection_timing_is_observed_and_identity_bound(
+    sessions_fixture, case, expected_runtime, expected_lag,
+):
+    iid, entry = await incident_start(sessions_fixture)
+    fixed = datetime.now(timezone.utc)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            start = await session.get(OutboxEntry, entry)
+            start.delivered_at = fixed - timedelta(hours=1)
+            if case == "terminal_projection":
+                incident = await session.get(Incident, iid)
+                incident.status_projection = "VERIFIED"
+    wid = workflow_id("audit-tenant", iid)
+    desc = description(wid, "RUNNING" if case == "running" else "COMPLETED")
+    desc.start_time = fixed - timedelta(minutes=3)
+    desc.close_time = fixed - timedelta(minutes=1)
+    if case == "missing":
+        del desc.close_time
+    elif case == "future":
+        desc.close_time = fixed + timedelta(seconds=1)
+    elif case == "reversed":
+        desc.start_time = fixed
+    elif case == "naive":
+        desc.close_time = desc.close_time.replace(tzinfo=None)
+    elif case == "wrong_identity":
+        desc.id = "unrelated"
+    report = await audit_recovery_consistency(
+        sessions_fixture, FakeTemporal({wid: desc}), now=fixed,
+    )
+    finding = report["findings"][0]
+    assert finding["terminal_workflow_runtime_ms"] == expected_runtime
+    assert finding["terminal_projection_lag_ms"] == expected_lag
+    assert finding["safe_action"] == "INSPECT_ONLY"
+    assert not report["recovery_certified"]
