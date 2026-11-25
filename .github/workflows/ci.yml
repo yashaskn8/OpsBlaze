@@ -133,7 +133,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-audit --no-fund
       - name: Read-only frontend API contract tests
-        run: node --experimental-strip-types --test tests/api.test.mjs
+        run: node --experimental-strip-types --test tests/api.test.mjs tests/lineagePages.test.mjs
       - name: Strict TypeScript check and Vite build
         run: npm run build
       - name: Validate bundle output

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
+import { replaceLineagePage } from "./lineagePages";
 import { authManager, oidcConfigError, usingOidc } from "./auth";
 import {
   detail, fetchQueueHealth, fetchDeadLetters,
@@ -61,6 +62,7 @@ type Effect = {
 type Lineage = {
   projection: "COMPLETE" | "PARTIAL_LINKS";
   trace_spans_available: boolean;
+  links_truncated: boolean;
   truncated_sources: string[];
   nodes: { id: string; kind: string; status: string }[];
   edges: { from: string; to: string; relation: string }[];
@@ -366,26 +368,7 @@ function App() {
       if (page.incident_id !== incident.id || page.kind !== kind) {
         throw new Error("Lineage page did not match the selected incident");
       }
-      setLineagePages(current => {
-        const pages = current.incidentId === page.incident_id ? current.pages : {};
-        return {
-          incidentId: page.incident_id,
-          pages: {
-            ...pages,
-            [kind]: {
-              ...page,
-              nodes: [...(pages[kind]?.nodes ?? []), ...page.nodes],
-              edges: [...(pages[kind]?.edges ?? []), ...page.edges],
-              missing_refs: [
-                ...(pages[kind]?.missing_refs ?? []), ...page.missing_refs,
-              ],
-              links_truncated: Boolean(
-                pages[kind]?.links_truncated || page.links_truncated
-              ),
-            },
-          },
-        };
-      });
+      setLineagePages(current => replaceLineagePage(current, page));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not load lineage page");
     } finally {
@@ -947,16 +930,19 @@ function App() {
               {!lineage.trace_spans_available && <p className="muted">Telemetry spans unavailable; durable records are shown instead.</p>}
               {lineage.truncated_sources.length > 0 && <>
                 <p className="error">Incomplete forensic graph: over 50 records in {lineage.truncated_sources.join(", ")}. Do not treat this view as complete.</p>
+                <p className="muted">Only the initial records and the current additional page per kind are retained. Loading the next page replaces the previous additional page.</p>
                 {lineage.truncated_sources.map(kind => {
                   const page = lineagePages.incidentId === incident.id
                     ? lineagePages.pages[kind] : undefined;
                   return <button type="button" className="secondary" key={kind}
                     disabled={busy || page?.next_cursor === null}
                     onClick={() => loadMoreLineage(kind)}>
-                    {page?.next_cursor === null ? "All " + kind + " records loaded" : "Load more " + kind + " records"}
+                    {page?.next_cursor === null ? "End of " + kind + " records" : "Next " + kind + " page"}
                   </button>;
                 })}
               </>}
+              {lineage.links_truncated &&
+                <p className="error">The initial graph exceeds the evidence-reference limit. Some links were omitted; this view is incomplete.</p>}
               {lineage.missing_refs.length > 0 &&
                 <p className="error">{lineage.missing_refs.length} missing durable link(s). Do not infer the omitted evidence.</p>}
               {additionalLineagePages.some(page => page.links_truncated) &&
