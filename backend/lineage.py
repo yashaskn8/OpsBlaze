@@ -445,7 +445,7 @@ async def build_lineage(
         "trace_refs": await graph_trace_refs(session, tenant_id, incident_id, list(nodes.values())),
         "evidence_projection": await check_evidence_projection(
             session, tenant_id, incident_id, list(nodes.values()), edges,
-            truncated=bool(truncated_sources or evidence_links_truncated),
+            truncated=bool(truncated_sources or evidence_links_truncated), full_incident=True,
         ),
         "edges": edges,
         "missing_refs": missing,

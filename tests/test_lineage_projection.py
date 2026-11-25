@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 
 from backend.investigator.baseline import inspect
 from backend.lineage import build_lineage, read_lineage_page
-from backend.lineage_projection import rebuild_evidence_page
+from backend.lineage_projection import prune_orphan_edges, rebuild_evidence_page
 from backend.models import Evidence, HypothesisStep, LineageEdge, SimulatorTarget
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
@@ -90,3 +90,42 @@ async def test_redteam_rebuild_masks_foreign_and_invalid_refs(sessions_fixture):
         assert graph["projection"] == "PARTIAL_LINKS"
         assert str(foreign) not in str(graph)
         assert "secret" not in str(graph)
+
+
+@pytest.mark.asyncio
+async def test_redteam_orphan_cleanup_is_bounded_scoped_and_rollback_safe(sessions_fixture):
+    async with sessions_fixture() as session:
+        own = await admit_incident(session, "a", "orphan-own", IncidentCreate(target_id="checkout"))
+    async with sessions_fixture() as session:
+        foreign = await admit_incident(session, "b", "orphan-other", IncidentCreate(target_id="checkout"))
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add_all([
+                LineageEdge(
+                    tenant_id=tenant, incident_id=incident_id, from_type="plan",
+                    from_id=uuid4(), to_type="evidence", to_id=uuid4(), relation="JUSTIFIED_BY",
+                )
+                for tenant, incident_id in [("a", own.id), ("a", own.id), ("b", foreign.id)]
+            ])
+    async with sessions_fixture() as session:
+        graph = await build_lineage(session, "a", own.id)
+        assert graph["evidence_projection"] == "STALE_OR_MISSING"
+        assert not graph["edges"]
+    async with sessions_fixture() as session:
+        with pytest.raises(RuntimeError, match="rollback"):
+            async with session.begin():
+                assert await prune_orphan_edges(session, "a", own.id, limit=1) == {"removed": 1, "more": True}
+                raise RuntimeError("rollback")
+    async with sessions_fixture() as session:
+        async with session.begin():
+            assert len((await session.scalars(select(LineageEdge))).all()) == 3
+            assert await prune_orphan_edges(session, "b", own.id) is None
+            assert await prune_orphan_edges(session, "a", own.id, limit=1) == {"removed": 1, "more": True}
+    async with sessions_fixture() as session:
+        async with session.begin():
+            assert await prune_orphan_edges(session, "a", own.id, limit=1) == {"removed": 1, "more": False}
+            assert await prune_orphan_edges(session, "a", own.id) == {"removed": 0, "more": False}
+    async with sessions_fixture() as session:
+        rows = (await session.scalars(select(LineageEdge))).all()
+        assert len(rows) == 1 and rows[0].incident_id == foreign.id
+        assert (await build_lineage(session, "a", own.id))["evidence_projection"] == "NOT_APPLICABLE"

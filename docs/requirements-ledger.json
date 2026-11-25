@@ -274,7 +274,7 @@
         "G6"
       ],
       "acceptance_criteria": "Tenant-scoped complete causal lineage, cross-process traces and privacy review.",
-      "remaining_validation": "Scoped incident/outcome tracing and incident-level correlation passed prior CI. Evidence-edge persistence and bounded source rebuild added; exact-commit integration pending. Remaining: all graph relation types, orphan repair, runtime rebuild integration, additional trace kinds, multi-process/collector retention, large-history and accessibility evidence.",
+      "remaining_validation": "Evidence-edge persistence and bounded source rebuild, orphan cleanup and workbench drift notice implemented; exact-commit checks pending. Remaining graph relation types, runtime repair integration, other trace kinds, multi-process/collector retention, performance and accessibility.",
       "evidence": [
         {
           "kind": "implementation_status_reference",
@@ -527,7 +527,7 @@
     }
   ],
   "checkpoint": {
-    "base_commit": "097d4174be416c794a27a1d2b4a07a37f952cd63",
+    "base_commit": "49850334961bf7433cf436da544ea2f8a4ad4fbb",
     "implemented_changes": [
       {
         "commit": "9310682c08fa6605b09b412347d290163b5c2ae7",
@@ -566,9 +566,9 @@
       }
     ],
     "next_actions": [
-      "Verify migration 0042, transactional evidence-edge writes, stale detection and bounded rebuild integration against exact candidate CI.",
-      "Finish remaining P3 graph relation projections, orphan cleanup, runtime repair integration and trace references; measure before/after rather than assuming speedup.",
-      "Verify independent multi-process, collector/retention, accessibility and large-history performance; G1–G6 remain blocked."
+      "Verify exact final commit: source/edge atomicity, bounded rebuild, orphan cleanup and rollback, tenant isolation, migration 0042 and workbench status.",
+      "Finish P3 remaining graph relation persistence and runtime rebuild integration, additional durable trace reference kinds, and before/after workload evidence.",
+      "Independent multi-process, collector/retention, accessibility and large-history acceptance remain unverified; preserve G1–G6 blocks."
     ]
   }
 }

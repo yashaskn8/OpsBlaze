@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
-import { replaceLineagePage } from "./lineagePages";
+import { evidenceProjectionWarning, replaceLineagePage, type EvidenceProjectionStatus } from "./lineagePages";
 import { authManager, oidcConfigError, usingOidc } from "./auth";
 import {
   detail, fetchQueueHealth, fetchDeadLetters,
@@ -63,6 +63,7 @@ type TraceRef = { node_id: string; trace_id: string; span_id: string; collector_
 
 type Lineage = {
   projection: "COMPLETE" | "PARTIAL_LINKS";
+  evidence_projection?: EvidenceProjectionStatus;
   trace_spans_available: boolean;
   trace_refs: TraceRef[];
   links_truncated: boolean;
@@ -73,6 +74,7 @@ type Lineage = {
 };
 
 type LineagePage = {
+  evidence_projection?: EvidenceProjectionStatus;
   incident_id: string;
   kind: string;
   nodes: Lineage["nodes"];
@@ -931,6 +933,7 @@ function App() {
             {lineage && <div className="audit">
               <h3>Evidence-to-effect trace</h3>
               <p className="muted">{lineage.projection.replaceAll("_", " ")} · {lineage.nodes.length} durable records · {lineage.edges.length} links</p>
+              {evidenceProjectionWarning([lineage.evidence_projection, ...additionalLineagePages.map(page => page.evidence_projection)]) && <p className="error" role="status">{evidenceProjectionWarning([lineage.evidence_projection, ...additionalLineagePages.map(page => page.evidence_projection)])}</p>}
               {!lineage.trace_spans_available && <p className="muted">Collector delivery is not verified. Durable records remain authoritative; recorded span references are diagnostic only.</p>}
               <details>
                 <summary>Recorded span references (incident and outcome records)</summary>
