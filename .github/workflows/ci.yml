@@ -178,6 +178,10 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "17aae2fc5500b2f95107231edae946d91b4e89e8"
           GITHUB_SHA=17aae2fc5500b2f95107231edae946d91b4e89e8 python -m pytest -q -o addopts= -m integration tests/test_temporal_history_replay.py
+      - name: Resume active baseline workflows on the candidate worker
+        env:
+          OPSBLAZE_RESTART_BASELINE: ${{ github.workspace }}/replay-baseline
+        run: python -m pytest -q -o addopts= -m integration tests/test_temporal_worker_restart.py
       - name: Replay pinned-source histories against the candidate
         env:
           PRIOR_REPLAY_ARCHIVE: ${{ runner.temp }}/opsblaze-prior-replay
