@@ -164,6 +164,28 @@ jobs:
         env:
           OPSBLAZE_SYNTHETIC_REPLAY_ARCHIVE: ${{ runner.temp }}/opsblaze-synthetic-replay
         run: python -m pytest -q -o addopts= -m "integration and not pg_e2e"
+      - name: Check out pinned synthetic replay baseline
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: 17aae2fc5500b2f95107231edae946d91b4e89e8
+          path: replay-baseline
+          persist-credentials: false
+      - name: Generate native histories from the pinned source revision
+        working-directory: replay-baseline
+        env:
+          OPSBLAZE_SYNTHETIC_REPLAY_ARCHIVE: ${{ runner.temp }}/opsblaze-prior-replay
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "17aae2fc5500b2f95107231edae946d91b4e89e8"
+          GITHUB_SHA=17aae2fc5500b2f95107231edae946d91b4e89e8 python -m pytest -q -o addopts= -m integration tests/test_temporal_history_replay.py
+      - name: Replay pinned-source histories against the candidate
+        env:
+          PRIOR_REPLAY_ARCHIVE: ${{ runner.temp }}/opsblaze-prior-replay
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$GITHUB_SHA" != "17aae2fc5500b2f95107231edae946d91b4e89e8"
+          python -m backend.workflows.replay_archive "$PRIOR_REPLAY_ARCHIVE" --source-commit 17aae2fc5500b2f95107231edae946d91b4e89e8
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: synthetic-replay-histories-${{ github.sha }}

@@ -7,6 +7,8 @@ import json
 import re
 from pathlib import Path
 
+from backend.workflows.replay_completion import validate_completion
+
 CASES = ("approve", "reject", "cancel")
 MAX_HISTORY_BYTES = 2 * 1024 * 1024
 MAX_MANIFEST_BYTES = 16 * 1024
@@ -99,8 +101,7 @@ async def replay_archive(directory: Path, expected_source_commit: str) -> None:
     replayer = Replayer(workflows=[IncidentWorkflow])
     for workflow_id, raw in histories:
         history = WorkflowHistory.from_json(workflow_id, raw)
-        if not history.events:
-            raise ValueError("empty workflow history")
+        validate_completion(workflow_id, history.events)
         await replayer.replay_workflow(history)
 
 
