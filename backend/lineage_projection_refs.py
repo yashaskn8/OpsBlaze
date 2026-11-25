@@ -1,10 +1,15 @@
-"""Canonical bounded evidence edge identities, independent of storage."""
+"""Canonical bounded causal edge identities, independent of storage."""
 
 from uuid import UUID
 
 from backend.lineage_refs import MAX_EVIDENCE_REFS, bounded_evidence_refs, reference_uuid
 
-RELATIONS = {"hypothesis": "CITES", "plan": "JUSTIFIED_BY"}
+EDGE_SPECS = {
+    "hypothesis": ("evidence", "CITES"),
+    "plan": ("evidence", "JUSTIFIED_BY"),
+    "approval": ("plan", "REVIEWS"),
+    "outcome": ("effect", "WITNESSES"),
+}
 
 
 def evidence_candidates(values: object) -> set[UUID]:

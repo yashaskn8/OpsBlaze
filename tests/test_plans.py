@@ -490,3 +490,34 @@ async def test_redteam_provenance_metadata_swap_blocks_preapproved_effect(
         target = await session.get(SimulatorTarget, ("a", "checkout"))
         assert not target.healthy and target.version == 3
         assert (await session.scalars(select(EffectReceipt))).all() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["APPROVE", "REJECT"])
+async def test_approval_projection_records_review_not_authority(proposed_lab, decision):
+    from sqlalchemy import delete
+    from backend.models import ApprovalGrant, LineageEdge
+    from backend.lineage import build_lineage, read_lineage_page
+    from backend.lineage_projection import rebuild_evidence_page
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        await decide_plan(session, "a", plan_id, 1, decision)
+    async with sessions() as session:
+        grant = await session.scalar(select(ApprovalGrant))
+        row = await session.scalar(select(LineageEdge).where(LineageEdge.from_type == "approval"))
+        assert (row.from_id, row.to_id, row.relation) == (grant.id, plan_id, "REVIEWS")
+        graph = await build_lineage(session, "a", incident_id)
+        assert graph["evidence_projection"] == "MATCHED"
+        assert not any(e["relation"] == "AUTHORIZED_BY_GRANT" for e in graph["edges"])
+    async with sessions() as session:
+        async with session.begin():
+            await session.execute(delete(LineageEdge).where(LineageEdge.from_type == "approval"))
+    async with sessions() as session:
+        assert (await read_lineage_page(session, "a", incident_id, "approval"))["evidence_projection"] == "STALE_OR_MISSING"
+    async with sessions() as session:
+        async with session.begin():
+            assert await rebuild_evidence_page(session, "b", incident_id, "approval") is None
+            assert (await rebuild_evidence_page(session, "a", incident_id, "approval"))["processed"] == 1
+    async with sessions() as session:
+        assert (await read_lineage_page(session, "a", incident_id, "approval"))["evidence_projection"] == "MATCHED"

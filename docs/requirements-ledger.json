@@ -274,7 +274,7 @@
         "G6"
       ],
       "acceptance_criteria": "Tenant-scoped complete causal lineage, cross-process traces and privacy review.",
-      "remaining_validation": "Evidence-edge persistence and bounded source rebuild, orphan cleanup and workbench drift notice implemented; exact-commit checks pending. Remaining graph relation types, runtime repair integration, other trace kinds, multi-process/collector retention, performance and accessibility.",
+      "remaining_validation": "Four causal relation kinds are projected with scoped writes/rebuild/cleanup; exact candidate CI pending. Effect authority, experience/lesson/failure and incident membership edges, other trace kinds, runtime recovery, collector, performance and accessibility remain.",
       "evidence": [
         {
           "kind": "implementation_status_reference",
@@ -292,6 +292,12 @@
           "kind": "implementation_status_reference",
           "commit": "097d4174be416c794a27a1d2b4a07a37f952cd63",
           "path": "backend/trace_refs.py",
+          "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+        },
+        {
+          "kind": "implementation_status_reference",
+          "commit": "49850334961bf7433cf436da544ea2f8a4ad4fbb",
+          "path": "backend/lineage_projection.py",
           "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
         }
       ]
@@ -527,7 +533,7 @@
     }
   ],
   "checkpoint": {
-    "base_commit": "49850334961bf7433cf436da544ea2f8a4ad4fbb",
+    "base_commit": "eca5123dd13d90f9a5157a77e9082215c0f8ceb6",
     "implemented_changes": [
       {
         "commit": "9310682c08fa6605b09b412347d290163b5c2ae7",
@@ -566,9 +572,9 @@
       }
     ],
     "next_actions": [
-      "Verify exact final commit: source/edge atomicity, bounded rebuild, orphan cleanup and rollback, tenant isolation, migration 0042 and workbench status.",
-      "Finish P3 remaining graph relation persistence and runtime rebuild integration, additional durable trace reference kinds, and before/after workload evidence.",
-      "Independent multi-process, collector/retention, accessibility and large-history acceptance remain unverified; preserve G1–G6 blocks."
+      "Check exact commit CI, especially migration 0043, review and witness projection regressions; repair any failure.",
+      "Extend remaining relation types, preserving live authorization and restricted projector privileges. Integrate bounded recovery and additional trace kinds.",
+      "Measure controlled read/write and large-history workload; require independent collector, retention, accessibility and production gates."
     ]
   }
 }

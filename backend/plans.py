@@ -15,7 +15,7 @@ from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
 from backend.models import ApprovalGrant, ApprovalRevocation, RevokedIdentity, DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, ProbeCall, SimulatorTarget, UIEvent
 from backend.outcomes import adjudicate_simulator
-from backend.lineage_projection import replace_evidence_edges
+from backend.lineage_projection import replace_evidence_edges, replace_record_edges
 from backend.probes.gateway import evidence_links_intact
 from backend.settings import get_settings
 
@@ -245,6 +245,8 @@ async def decide_plan(
             expires_at=decided_at + timedelta(seconds=ttl),
         )
         session.add(grant)
+        await session.flush()
+        await replace_record_edges(session, tenant_id, incident.id, "approval", grant)
         incident.status_projection = "PLAN_DECIDED"
         incident.status_version += 1
         incident.phase_entered_at = datetime.now(timezone.utc)

@@ -10,6 +10,7 @@ from backend.adapters.simulator import SimulatorAdapter, observed_healthy_at_ver
 from backend.models import EffectReceipt, Incident, OutboxEntry, OutcomeRevision
 from backend.learning.invalidation import invalidate_outcome_dependents
 from backend.telemetry import trace_operation
+from backend.lineage_projection import replace_record_edges
 from backend.trace_identity import recorded_span_ids
 from backend.trace_refs import admission_parent, store_trace_ref
 from backend.settings import get_settings
@@ -150,8 +151,9 @@ async def adjudicate_simulator(
                 ))
             else:
                 await invalidate_outcome_dependents(session, tenant_id, incident_id)
+            await session.flush()
+            await replace_record_edges(session, tenant_id, incident_id, "outcome", row)
             if span_ids is not None:
-                await session.flush()
                 await store_trace_ref(session, tenant_id, incident_id, "outcome", row.id, span_ids)
     return label
 
@@ -193,5 +195,7 @@ async def dispute_outcome(
             observed_version=prior.observed_version, reason=reason.strip(),
         )
         session.add(disputed)
+        await session.flush()
+        await replace_record_edges(session, tenant_id, prior.incident_id, "outcome", disputed)
         await invalidate_outcome_dependents(session, tenant_id, prior.incident_id)
     return disputed

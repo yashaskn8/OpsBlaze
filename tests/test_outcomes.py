@@ -341,3 +341,36 @@ async def test_recorded_witness_span_links_exact_immutable_outcome(witnessed_eff
             assert await read_trace(session, "b", incident_id, refs[0].trace_id) is None
     finally:
         provider.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_outcome_projection_preserves_both_revisions_and_rebuilds(witnessed_effect):
+    from sqlalchemy import delete
+    from backend.models import LineageEdge
+    from backend.lineage import build_lineage
+    from backend.lineage_projection import rebuild_evidence_page
+
+    sessions, adapter, incident_id, effect_id = witnessed_effect
+    assert await adjudicate_simulator(sessions, adapter, "a", incident_id, effect_id) == "VERIFIED"
+    async with sessions() as session:
+        first_id = await session.scalar(select(OutcomeRevision.id))
+    async with sessions() as session:
+        await dispute_outcome(session, "a", first_id, 1, "synthetic observation disagrees")
+    async with sessions() as session:
+        rows = (await session.scalars(select(LineageEdge).where(LineageEdge.from_type == "outcome"))).all()
+        source_ids = set((await session.scalars(select(OutcomeRevision.id))).all())
+        assert len(rows) == 2 and {r.from_id for r in rows} == source_ids
+        assert all(r.to_id == effect_id and r.relation == "WITNESSES" for r in rows)
+        graph = await build_lineage(session, "a", incident_id)
+        assert graph["evidence_projection"] == "MATCHED"
+    async with sessions() as session:
+        async with session.begin():
+            await session.execute(delete(LineageEdge).where(LineageEdge.from_type == "outcome"))
+    async with sessions() as session:
+        assert (await build_lineage(session, "a", incident_id))["evidence_projection"] == "STALE_OR_MISSING"
+    async with sessions() as session:
+        async with session.begin():
+            assert (await rebuild_evidence_page(session, "a", incident_id, "outcome"))["processed"] == 2
+            assert (await rebuild_evidence_page(session, "a", incident_id, "outcome"))["processed"] == 2
+    async with sessions() as session:
+        assert (await build_lineage(session, "a", incident_id))["evidence_projection"] == "MATCHED"

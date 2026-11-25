@@ -13,7 +13,7 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tenant", required=True)
     parser.add_argument("--incident", required=True, type=UUID)
-    parser.add_argument("--kind", required=True, choices=("hypothesis", "plan", "orphans"))
+    parser.add_argument("--kind", required=True, choices=("hypothesis", "plan", "approval", "outcome", "orphans"))
     parser.add_argument("--cursor", type=UUID)
     parser.add_argument("--limit", type=int, default=20, choices=range(1, 21))
     args = parser.parse_args()

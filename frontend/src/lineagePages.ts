@@ -21,13 +21,13 @@ export type EvidenceProjectionStatus = "MATCHED" | "STALE_OR_MISSING" | "NOT_CHE
 
 export function evidenceProjectionWarning(statuses: readonly unknown[]): string | null {
   if (statuses.includes("STALE_OR_MISSING")) {
-    return "Evidence-edge projection is stale or missing. Live source records are shown; cached links are not trusted.";
+    return "Causal-edge projection is stale or missing. Live source records are shown; cached links are not trusted.";
   }
   if (statuses.includes("NOT_CHECKED_TRUNCATED")) {
-    return "Evidence-edge projection agreement was not checked for truncated data.";
+    return "Causal-edge projection agreement was not checked for truncated data.";
   }
   if (statuses.some(status => status !== "MATCHED" && status !== "NOT_APPLICABLE")) {
-    return "Evidence-edge projection status is unavailable.";
+    return "Causal-edge projection status is unavailable.";
   }
   return null;
 }
