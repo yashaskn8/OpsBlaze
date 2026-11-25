@@ -206,3 +206,105 @@ async def test_redteam_outcome_cannot_be_attributed_to_forged_effect_lineage(
         )
     async with sessions() as session:
         assert (await session.scalars(select(OutcomeRevision))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_recorded_recovery_latency_uses_latest_witness_not_projection(witnessed_effect):
+    from datetime import datetime, timedelta, timezone
+
+    from backend.models import Incident
+    from backend.outcomes import recorded_recovery_timing
+
+    sessions, adapter, incident_id, effect_id = witnessed_effect
+    fixed = datetime(2026, 11, 25, tzinfo=timezone.utc)
+    async with sessions() as session:
+        async with session.begin():
+            incident = await session.get(Incident, incident_id)
+            incident.created_at = fixed
+            incident.status_projection = "VERIFIED"
+    async with sessions() as session:
+        report = await recorded_recovery_timing(session, "a", incident_id)
+        assert report["admission_to_recorded_witness_ms"] is None
+        assert report["latest_outcome_revision"] is None
+        assert await recorded_recovery_timing(session, "b", incident_id) is None
+
+    assert await adjudicate_simulator(sessions, adapter, "a", incident_id, effect_id) == "VERIFIED"
+    async with sessions() as session:
+        async with session.begin():
+            outcome = await session.scalar(select(OutcomeRevision))
+            outcome.created_at = fixed + timedelta(seconds=3, milliseconds=125)
+            outcome_id = outcome.id
+    async with sessions() as session:
+        report = await recorded_recovery_timing(session, "a", incident_id)
+        assert report == {
+            "scope": "SIMULATOR_LEDGER_ONLY",
+            "latest_outcome_revision": 1,
+            "latest_outcome_label": "VERIFIED",
+            "admission_to_recorded_witness_ms": 3125,
+            "production_recovery_certified": False,
+        }
+    async with sessions() as session:
+        await dispute_outcome(session, "a", outcome_id, 1, "witness disputed in lab")
+    async with sessions() as session:
+        report = await recorded_recovery_timing(session, "a", incident_id)
+        assert report["latest_outcome_revision"] == 2
+        assert report["latest_outcome_label"] == "DISPUTED"
+        assert report["admission_to_recorded_witness_ms"] is None
+
+
+@pytest.mark.asyncio
+async def test_recorded_recovery_timing_rejects_wrong_witness_and_negative_duration(
+    witnessed_effect,
+):
+    from datetime import datetime, timedelta, timezone
+
+    from backend.models import Incident
+    from backend.outcomes import recorded_recovery_timing
+
+    sessions, adapter, incident_id, effect_id = witnessed_effect
+    assert await adjudicate_simulator(sessions, adapter, "a", incident_id, effect_id) == "VERIFIED"
+    fixed = datetime(2026, 11, 25, tzinfo=timezone.utc)
+    async with sessions() as session:
+        async with session.begin():
+            incident = await session.get(Incident, incident_id)
+            incident.created_at = fixed
+            outcome = await session.scalar(select(OutcomeRevision))
+            outcome.created_at = fixed - timedelta(seconds=1)
+    async with sessions() as session:
+        report = await recorded_recovery_timing(session, "a", incident_id)
+        assert report["admission_to_recorded_witness_ms"] is None
+    async with sessions() as session:
+        async with session.begin():
+            outcome = await session.scalar(select(OutcomeRevision))
+            outcome.created_at = fixed + timedelta(seconds=1)
+            outcome.witness_source = "OPERATOR_DISPUTE"
+    async with sessions() as session:
+        report = await recorded_recovery_timing(session, "a", incident_id)
+        assert report["admission_to_recorded_witness_ms"] is None
+
+
+@pytest.mark.asyncio
+async def test_redteam_recovery_timing_api_requires_tenant_and_token(witnessed_effect):
+    from httpx import ASGITransport, AsyncClient
+
+    from backend.api import app
+    from backend.database import get_session
+    from backend.settings import Settings, get_settings
+
+    sessions, _, incident_id, _ = witnessed_effect
+
+    async def override_session():
+        async with sessions() as session:
+            yield session
+
+    app.dependency_overrides[get_settings] = lambda: Settings(local_token="timing-test-token")
+    app.dependency_overrides[get_session] = override_session
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            path = f"/v1/incidents/{incident_id}/recovery-timing"
+            own = {"X-Tenant-Id": "a", "X-OpsBlaze-Token": "timing-test-token"}
+            assert (await client.get(path, headers=own)).status_code == 200
+            assert (await client.get(path, headers={**own, "X-Tenant-Id": "b"})).status_code == 404
+            assert (await client.get(path, headers={**own, "X-OpsBlaze-Token": "wrong"})).status_code == 401
+    finally:
+        app.dependency_overrides.clear()

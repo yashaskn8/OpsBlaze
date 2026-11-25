@@ -372,6 +372,20 @@ async def incident_outcomes(
     ]
 
 
+@app.get("/v1/incidents/{incident_id}/recovery-timing")
+async def incident_recovery_timing(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.outcomes import recorded_recovery_timing
+
+    report = await recorded_recovery_timing(session, tenant_id, incident_id)
+    if report is None:
+        raise HTTPException(404, "incident not found")
+    return report
+
+
 @app.post("/v1/outcomes/{outcome_id}/feedback", status_code=202)
 async def report_outcome_dispute(
     outcome_id: UUID,

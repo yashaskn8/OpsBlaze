@@ -3,13 +3,14 @@
 
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.adapters.simulator import SimulatorAdapter, observed_healthy_at_version
+from backend.adapters.simulator import SimulatorAdapter, observed_healthy_at_version, utc
 from backend.models import EffectReceipt, Incident, OutboxEntry, OutcomeRevision
 from backend.learning.invalidation import invalidate_outcome_dependents
 from backend.telemetry import trace_operation
+from backend.workflows.activity_timing import schedule_to_start_ms
 
 
 class OutcomeConflict(Exception):
@@ -26,6 +27,38 @@ async def latest_outcome(session: AsyncSession, tenant_id: str, incident_id: UUI
         .order_by(OutcomeRevision.revision.desc())
         .limit(1)
     )
+
+
+async def recorded_recovery_timing(
+    session: AsyncSession, tenant_id: str, incident_id: UUID,
+) -> dict | None:
+    """Read the latest scoped outcome; a projection or receipt is not a witness."""
+    row = (await session.execute(
+        select(
+            Incident.created_at, OutcomeRevision.revision, OutcomeRevision.label,
+            OutcomeRevision.witness_source, OutcomeRevision.created_at,
+        )
+        .outerjoin(OutcomeRevision, and_(
+            OutcomeRevision.incident_id == Incident.id,
+            OutcomeRevision.tenant_id == Incident.tenant_id,
+        ))
+        .where(Incident.id == incident_id, Incident.tenant_id == tenant_id)
+        .order_by(OutcomeRevision.revision.desc()).limit(1)
+    )).one_or_none()
+    if row is None:
+        return None
+    admitted, revision, label, witness, recorded = row
+    duration = None
+    if label == "VERIFIED" and witness == "SIMULATOR_WITNESS" and recorded is not None:
+        # Database timestamps are UTC, including naive SQLite test timestamps.
+        duration = schedule_to_start_ms(utc(admitted), utc(recorded))
+    return {
+        "scope": "SIMULATOR_LEDGER_ONLY",
+        "latest_outcome_revision": revision,
+        "latest_outcome_label": label,
+        "admission_to_recorded_witness_ms": duration,
+        "production_recovery_certified": False,
+    }
 
 
 async def adjudicate_simulator(
