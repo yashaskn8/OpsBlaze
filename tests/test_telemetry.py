@@ -107,3 +107,39 @@ def test_redteam_trace_exception_text_not_automatically_exported(monkeypatch):
         assert "must-not-export-this" not in str(spans[0].attributes)
     finally:
         provider.shutdown()
+
+
+def test_redteam_activity_span_contains_only_attempt_delay_and_safe_identity(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from backend.workflows import activities
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr("backend.telemetry.TRACER", provider.get_tracer("opsblaze"))
+    started = datetime.now(timezone.utc)
+    monkeypatch.setattr(activities.activity, "in_activity", lambda: True)
+    monkeypatch.setattr(activities.activity, "info", lambda: SimpleNamespace(
+        current_attempt_scheduled_time=started - timedelta(milliseconds=125),
+        started_time=started,
+        workflow_id="private-tenant",
+    ))
+    incident_id = uuid4()
+    try:
+        with activities._trace_activity("opsblaze.incident.route", str(incident_id)):
+            pass
+        span = exporter.get_finished_spans()[0]
+        assert dict(span.attributes) == {
+            "opsblaze.component": "incident",
+            "opsblaze.incident_id": str(incident_id),
+            "opsblaze.activity.schedule_to_start_ms": 125,
+        }
+        assert not span.events
+        monkeypatch.setattr(activities.activity, "in_activity", lambda: False)
+        with activities._trace_activity("opsblaze.incident.route", str(incident_id)):
+            pass
+        assert "opsblaze.activity.schedule_to_start_ms" not in exporter.get_finished_spans()[1].attributes
+    finally:
+        provider.shutdown()

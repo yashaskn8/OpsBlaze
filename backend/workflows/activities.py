@@ -7,6 +7,19 @@ from temporalio import activity
 from backend.database import get_session_maker
 from backend.models import Incident, UIEvent
 from backend.telemetry import trace_operation
+from backend.workflows.activity_timing import schedule_to_start_ms
+
+
+def _trace_activity(operation: str, incident_id: str):
+    delay = None
+    if activity.in_activity():
+        info = activity.info()
+        delay = schedule_to_start_ms(
+            info.current_attempt_scheduled_time, info.started_time,
+        )
+    return trace_operation(
+        operation, incident_id=UUID(incident_id), activity_schedule_to_start_ms=delay,
+    )
 
 
 # A projection is only a cached view of Temporal history. These state guards
@@ -36,7 +49,7 @@ async def project_incident_status(
     except KeyError as exc:
         raise ValueError("unsupported workflow projection") from exc
 
-    with trace_operation("opsblaze.incident.project", incident_id=UUID(incident_id)):
+    with _trace_activity("opsblaze.incident.project", incident_id):
         async with get_session_maker()() as session:
             async with session.begin():
                 result = await session.execute(
@@ -68,7 +81,8 @@ async def inspect_incident_read_only(
 ) -> str:
     from backend.investigator.baseline import inspect
 
-    return await inspect(get_session_maker(), tenant_id, UUID(incident_id))
+    with _trace_activity("opsblaze.incident.inspect", incident_id):
+        return await inspect(get_session_maker(), tenant_id, UUID(incident_id))
 
 
 @activity.defn(name="apply_approved_simulator_plan")
@@ -77,14 +91,16 @@ async def apply_approved_simulator_plan(
 ) -> str:
     from backend.plans import execute_approved_simulator_plan
 
-    return await execute_approved_simulator_plan(
-        get_session_maker(), tenant_id, UUID(incident_id), UUID(plan_id)
-    )
+    with _trace_activity("opsblaze.incident.simulator_apply", incident_id):
+        return await execute_approved_simulator_plan(
+            get_session_maker(), tenant_id, UUID(incident_id), UUID(plan_id)
+        )
 
 
 @activity.defn(name="select_incident_route")
 async def select_incident_route(tenant_id: str, incident_id: str) -> str:
     from backend.routing.decision import select_route
 
-    decision = await select_route(get_session_maker(), tenant_id, UUID(incident_id))
-    return decision.route if decision is not None else "HANDOFF"
+    with _trace_activity("opsblaze.incident.route", incident_id):
+        decision = await select_route(get_session_maker(), tenant_id, UUID(incident_id))
+        return decision.route if decision is not None else "HANDOFF"

@@ -20,6 +20,9 @@ OPERATIONS = frozenset({
     "opsblaze.experience.capture",
     "opsblaze.outcome.observe",
     "opsblaze.incident.project",
+    "opsblaze.incident.route",
+    "opsblaze.incident.inspect",
+    "opsblaze.incident.simulator_apply",
 })
 
 
@@ -27,6 +30,7 @@ OPERATIONS = frozenset({
 def trace_operation(
     operation: str, *, incident_id: UUID | None = None,
     event_id: int | None = None,
+    activity_schedule_to_start_ms: int | None = None,
 ):
     """Emit only approved identifiers; errors are never serialized in spans."""
     if operation not in OPERATIONS:
@@ -35,6 +39,10 @@ def trace_operation(
         raise ValueError("incident trace key must be UUID")
     if event_id is not None and (type(event_id) is not int or event_id < 1):
         raise ValueError("event trace key must be a positive integer")
+    if activity_schedule_to_start_ms is not None and (
+        type(activity_schedule_to_start_ms) is not int or activity_schedule_to_start_ms < 0
+    ):
+        raise ValueError("activity scheduling delay must be nonnegative milliseconds")
     with TRACER.start_as_current_span(
         operation, record_exception=False, set_status_on_exception=False,
     ) as span:
@@ -43,6 +51,8 @@ def trace_operation(
             span.set_attribute("opsblaze.incident_id", str(incident_id))
         if event_id is not None:
             span.set_attribute("opsblaze.outbox_id", event_id)
+        if activity_schedule_to_start_ms is not None:
+            span.set_attribute("opsblaze.activity.schedule_to_start_ms", activity_schedule_to_start_ms)
         yield
 
 
