@@ -81,6 +81,31 @@ class TraceRef(Base):
     span_id: Mapped[str] = mapped_column(String(16), nullable=False)
 
 
+class LineageEdge(Base):
+    """Rebuildable P3 evidence projection, never an approval authority."""
+    __tablename__ = "lineage_edge"
+    __table_args__ = (
+        CheckConstraint(
+            "to_type = 'evidence' AND ((from_type = 'hypothesis' AND relation = 'CITES') "
+            "OR (from_type = 'plan' AND relation = 'JUSTIFIED_BY'))",
+            name="ck_lineage_edge_evidence_relation",
+        ),
+        Index("ix_lineage_edge_incident_created", "tenant_id", "incident_id", "created_at"),
+        Index("ix_lineage_edge_source", "from_type", "from_id"),
+    )
+
+    tenant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id", ondelete="CASCADE"), primary_key=True,
+    )
+    from_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    from_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    to_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    to_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    relation: Mapped[str] = mapped_column(String(24), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class OutboxEntry(Base):
     __tablename__ = "outbox"
     __table_args__ = (

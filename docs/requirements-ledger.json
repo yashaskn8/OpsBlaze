@@ -274,7 +274,7 @@
         "G6"
       ],
       "acceptance_criteria": "Tenant-scoped complete causal lineage, cross-process traces and privacy review.",
-      "remaining_validation": "Incident/outcome trace references, scoped lookup and durable server-side admission context reconstruction implemented; exact-commit correlation tests pending. Remaining: additional record kinds, precomputed and rebuildable lineage edges, independent multi-process/collector/retention, large-history and accessibility evidence.",
+      "remaining_validation": "Scoped incident/outcome tracing and incident-level correlation passed prior CI. Evidence-edge persistence and bounded source rebuild added; exact-commit integration pending. Remaining: all graph relation types, orphan repair, runtime rebuild integration, additional trace kinds, multi-process/collector retention, large-history and accessibility evidence.",
       "evidence": [
         {
           "kind": "implementation_status_reference",
@@ -286,6 +286,12 @@
           "kind": "implementation_status_reference",
           "commit": "5ac2bfbb32670ec0d2526dd8a425fa19c39f45a2",
           "path": "backend/lineage.py",
+          "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+        },
+        {
+          "kind": "implementation_status_reference",
+          "commit": "097d4174be416c794a27a1d2b4a07a37f952cd63",
+          "path": "backend/trace_refs.py",
           "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
         }
       ]
@@ -521,7 +527,7 @@
     }
   ],
   "checkpoint": {
-    "base_commit": "837962897c932b5fcc77afb98d7d5c3766d67757",
+    "base_commit": "097d4174be416c794a27a1d2b4a07a37f952cd63",
     "implemented_changes": [
       {
         "commit": "9310682c08fa6605b09b412347d290163b5c2ae7",
@@ -550,12 +556,19 @@
         "change": "Bounded redacted summary graph and React pagination",
         "workflow_run": 45600566916,
         "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+      },
+      {
+        "commit": "097d4174be416c794a27a1d2b4a07a37f952cd63",
+        "requirement": "P3",
+        "change": "Durable scoped incident-level trace context",
+        "workflow_run": 45601565920,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
       }
     ],
     "next_actions": [
-      "Verify exact candidate migration, optional trace failure, dispatcher/activity/outcome context correlation and immutable witness tests; repair regressions.",
-      "Continue P3: additional durable record kinds; bounded precomputed lineage edges, atomic commit/rebuild and explicit missing-link states.",
-      "Require external collector/retention, independent multi-process, browser accessibility and large-history evidence; G1–G6 remain blocked."
+      "Verify migration 0042, transactional evidence-edge writes, stale detection and bounded rebuild integration against exact candidate CI.",
+      "Finish remaining P3 graph relation projections, orphan cleanup, runtime repair integration and trace references; measure before/after rather than assuming speedup.",
+      "Verify independent multi-process, collector/retention, accessibility and large-history performance; G1–G6 remain blocked."
     ]
   }
 }

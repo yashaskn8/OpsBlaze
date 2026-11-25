@@ -15,6 +15,7 @@ from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
 from backend.models import ApprovalGrant, ApprovalRevocation, RevokedIdentity, DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, ProbeCall, SimulatorTarget, UIEvent
 from backend.outcomes import adjudicate_simulator
+from backend.lineage_projection import replace_evidence_edges
 from backend.probes.gateway import evidence_links_intact
 from backend.settings import get_settings
 
@@ -168,6 +169,8 @@ async def propose_simulator_plan(
                 evidence_ids=evidence_ids, status="PROPOSED", version=1,
             )
             session.add(plan)
+            await session.flush()
+            await replace_evidence_edges(session, tenant_id, incident_id, "plan", plan)
         return plan
 
 

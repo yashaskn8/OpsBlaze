@@ -6,7 +6,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.models import HypothesisStep
+from backend.models import HypothesisStep, Incident
+from backend.lineage_projection import replace_evidence_edges
 from backend.probes.gateway import ProbeDenied, invoke_probe
 from backend.plans import PlanConflict, propose_simulator_plan
 from backend.investigator.advisory import advise_after_unhealthy
@@ -35,17 +36,19 @@ async def write_step(
             )
             if row is not None:
                 return
-            session.add(
-                HypothesisStep(
-                    id=uuid4(), incident_id=incident_id, step_no=step_no,
-                    model_id=model_id,
-                    prompt_version="none",
-                    evidence_ids=evidence_ids, cause_scores=scores,
-                    probe_id=probe_id, decision=decision,
-                    token_reserved=token_reserved,
-                    token_used=token_used,
-                )
+            tenant_id = await session.scalar(select(Incident.tenant_id).where(Incident.id == incident_id))
+            if tenant_id is None:
+                raise ValueError("incident not found")
+            source = HypothesisStep(
+                id=uuid4(), incident_id=incident_id, step_no=step_no,
+                model_id=model_id, prompt_version="none",
+                evidence_ids=evidence_ids, cause_scores=scores,
+                probe_id=probe_id, decision=decision,
+                token_reserved=token_reserved, token_used=token_used,
             )
+            session.add(source)
+            await session.flush()
+            await replace_evidence_edges(session, tenant_id, incident_id, "hypothesis", source)
 
 
 async def inspect(
