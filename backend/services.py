@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
+from opentelemetry.context import Context
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,7 +52,7 @@ async def admit_incident(
         status_version=1,
     )
     try:
-        with trace_operation("opsblaze.incident.admit", incident_id=incident.id) as span:
+        with trace_operation("opsblaze.incident.admit", incident_id=incident.id, parent=Context()) as span:
             async with session.begin():
                 # Serialize global admission-capacity reads across PostgreSQL
                 # processes. No lock is held over network or workflow calls.

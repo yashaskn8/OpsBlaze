@@ -1,16 +1,19 @@
 from uuid import UUID
 from datetime import datetime, timezone
 
+from opentelemetry.context import Context
 from sqlalchemy import update
 from temporalio import activity
 
 from backend.database import get_session_maker
 from backend.models import Incident, UIEvent
+from backend.settings import get_settings
+from backend.trace_refs import admission_parent
 from backend.telemetry import trace_operation
 from backend.workflows.activity_timing import schedule_to_start_ms
 
 
-def _trace_activity(operation: str, incident_id: str):
+def _trace_activity(operation: str, incident_id: str, parent: Context | None = None):
     delay = None
     if activity.in_activity():
         info = activity.info()
@@ -18,7 +21,15 @@ def _trace_activity(operation: str, incident_id: str):
             info.current_attempt_scheduled_time, info.started_time,
         )
     return trace_operation(
-        operation, incident_id=UUID(incident_id), activity_schedule_to_start_ms=delay,
+        operation, incident_id=UUID(incident_id), activity_schedule_to_start_ms=delay, parent=parent,
+    )
+
+
+async def _activity_parent(tenant_id: str, incident_id: str) -> Context:
+    if not get_settings().otel_traces_endpoint:
+        return Context()
+    return await admission_parent(
+        get_session_maker(), tenant_id, UUID(incident_id), enabled=True,
     )
 
 
@@ -49,7 +60,8 @@ async def project_incident_status(
     except KeyError as exc:
         raise ValueError("unsupported workflow projection") from exc
 
-    with _trace_activity("opsblaze.incident.project", incident_id):
+    parent = await _activity_parent(tenant_id, incident_id)
+    with _trace_activity("opsblaze.incident.project", incident_id, parent):
         async with get_session_maker()() as session:
             async with session.begin():
                 result = await session.execute(
@@ -81,7 +93,8 @@ async def inspect_incident_read_only(
 ) -> str:
     from backend.investigator.baseline import inspect
 
-    with _trace_activity("opsblaze.incident.inspect", incident_id):
+    parent = await _activity_parent(tenant_id, incident_id)
+    with _trace_activity("opsblaze.incident.inspect", incident_id, parent):
         return await inspect(get_session_maker(), tenant_id, UUID(incident_id))
 
 
@@ -91,7 +104,8 @@ async def apply_approved_simulator_plan(
 ) -> str:
     from backend.plans import execute_approved_simulator_plan
 
-    with _trace_activity("opsblaze.incident.simulator_apply", incident_id):
+    parent = await _activity_parent(tenant_id, incident_id)
+    with _trace_activity("opsblaze.incident.simulator_apply", incident_id, parent):
         return await execute_approved_simulator_plan(
             get_session_maker(), tenant_id, UUID(incident_id), UUID(plan_id)
         )
@@ -101,6 +115,7 @@ async def apply_approved_simulator_plan(
 async def select_incident_route(tenant_id: str, incident_id: str) -> str:
     from backend.routing.decision import select_route
 
-    with _trace_activity("opsblaze.incident.route", incident_id):
+    parent = await _activity_parent(tenant_id, incident_id)
+    with _trace_activity("opsblaze.incident.route", incident_id, parent):
         decision = await select_route(get_session_maker(), tenant_id, UUID(incident_id))
         return decision.route if decision is not None else "HANDOFF"

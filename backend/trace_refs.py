@@ -1,14 +1,16 @@
 """Tenant-scoped, bounded access to local recorded-span references."""
 
+import asyncio
 import logging
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from opentelemetry.context import Context
 
 from backend.models import Incident, OutcomeRevision, TraceRef
-from backend.trace_identity import valid_hex_id
+from backend.trace_identity import parent_context, valid_hex_id
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +60,30 @@ def scoped_trace_refs(tenant_id: str, incident_id: UUID):
             and_(TraceRef.record_type == "outcome", outcome_exists),
         ),
     )
+
+
+async def admission_parent(
+    sessions: async_sessionmaker[AsyncSession], tenant_id: str, incident_id: UUID,
+    *, enabled: bool,
+) -> Context:
+    """Bound an optional read, trusting only the durable, scoped admission link.
+
+    Missing diagnostics never block a workflow or carry an ambient parent.
+    This is incident-level correlation, not a claim of Temporal task causality.
+    """
+    if not enabled:
+        return Context()
+    try:
+        async with asyncio.timeout(1):
+            async with sessions() as session:
+                row = await session.scalar(scoped_trace_refs(tenant_id, incident_id).where(
+                    TraceRef.record_type == "incident", TraceRef.record_id == incident_id,
+                ))
+                if row is not None:
+                    return parent_context(row.trace_id, row.span_id)
+    except (SQLAlchemyError, TimeoutError) as exc:
+        log.warning("Optional trace parent unavailable: class=%s", type(exc).__name__)
+    return Context()
 
 
 def redacted_ref(row: TraceRef) -> dict | None:

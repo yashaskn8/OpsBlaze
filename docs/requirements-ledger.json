@@ -274,7 +274,7 @@
         "G6"
       ],
       "acceptance_criteria": "Tenant-scoped complete causal lineage, cross-process traces and privacy review.",
-      "remaining_validation": "Trace-ref persistence for incident/outcome and authenticated lookup added; exact-commit integration evidence pending. Remaining: cross-process trace context, additional durable record kinds, precomputed and rebuildable lineage edges, collector/retention, large-history and accessibility evidence.",
+      "remaining_validation": "Incident/outcome trace references, scoped lookup and durable server-side admission context reconstruction implemented; exact-commit correlation tests pending. Remaining: additional record kinds, precomputed and rebuildable lineage edges, independent multi-process/collector/retention, large-history and accessibility evidence.",
       "evidence": [
         {
           "kind": "implementation_status_reference",
@@ -521,7 +521,7 @@
     }
   ],
   "checkpoint": {
-    "base_commit": "5ac2bfbb32670ec0d2526dd8a425fa19c39f45a2",
+    "base_commit": "837962897c932b5fcc77afb98d7d5c3766d67757",
     "implemented_changes": [
       {
         "commit": "9310682c08fa6605b09b412347d290163b5c2ae7",
@@ -553,9 +553,9 @@
       }
     ],
     "next_actions": [
-      "Verify exact-commit trace_ref migration, optional write failure, tenant scope, actual span IDs and graph/UI tests; repair any regression.",
-      "Continue P3: trusted cross-process correlation, additional record kinds, bounded precomputed lineage edges and crash-safe rebuild.",
-      "Require external collector/retention, browser accessibility and large-history evidence before full P3 acceptance; G1–G6 remain blocked."
+      "Verify exact candidate migration, optional trace failure, dispatcher/activity/outcome context correlation and immutable witness tests; repair regressions.",
+      "Continue P3: additional durable record kinds; bounded precomputed lineage edges, atomic commit/rebuild and explicit missing-link states.",
+      "Require external collector/retention, independent multi-process, browser accessibility and large-history evidence; G1–G6 remain blocked."
     ]
   }
 }

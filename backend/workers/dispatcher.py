@@ -13,6 +13,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from backend.database import get_session_maker
 from backend.settings import get_settings
 from backend.telemetry import initialize_tracing, trace_operation
+from backend.trace_refs import admission_parent
 from backend.temporal_connection import connect_temporal
 from backend.workflows.incident import IncidentWorkflow
 from backend.workers.heartbeat import heartbeat_loop
@@ -88,9 +89,14 @@ async def dispatch_once(
         return False
     entry_id = intent[0]
     try:
+        incident_id = UUID(intent[2])
+        parent = await admission_parent(
+            sessions, intent[1], incident_id,
+            enabled=bool(get_settings().otel_traces_endpoint),
+        )
         with trace_operation(
-            "opsblaze.outbox.deliver", incident_id=UUID(intent[2]),
-            event_id=entry_id,
+            "opsblaze.outbox.deliver", incident_id=incident_id,
+            event_id=entry_id, parent=parent,
         ):
             await deliver_intent(client, intent)
     except Exception as exc:

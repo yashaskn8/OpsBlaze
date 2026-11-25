@@ -308,3 +308,36 @@ async def test_redteam_recovery_timing_api_requires_tenant_and_token(witnessed_e
             assert (await client.get(path, headers={**own, "X-OpsBlaze-Token": "wrong"})).status_code == 401
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_recorded_witness_span_links_exact_immutable_outcome(witnessed_effect, monkeypatch):
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from backend.models import TraceRef
+    from backend.trace_refs import read_trace
+
+    sessions, adapter, incident_id, effect_id = witnessed_effect
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr("backend.telemetry.TRACER", provider.get_tracer("witness"))
+    try:
+        assert await adjudicate_simulator(sessions, adapter, "a", incident_id, effect_id) == "VERIFIED"
+        assert await adjudicate_simulator(sessions, adapter, "a", incident_id, effect_id) == "VERIFIED"
+        async with sessions() as session:
+            outcome = await session.scalar(select(OutcomeRevision))
+            refs = (await session.scalars(select(TraceRef).where(
+                TraceRef.record_type == "outcome",
+            ))).all()
+            assert len(refs) == 1 and refs[0].record_id == outcome.id
+            observed = next(span for span in exporter.get_finished_spans()
+                            if span.name == "opsblaze.outcome.observe")
+            assert refs[0].span_id == f"{observed.context.span_id:016x}"
+            report = await read_trace(session, "a", incident_id, refs[0].trace_id)
+            assert report["references"][0]["node_id"] == f"outcome:{outcome.id}"
+            assert not report["collector_verified"]
+            assert await read_trace(session, "b", incident_id, refs[0].trace_id) is None
+    finally:
+        provider.shutdown()

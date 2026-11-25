@@ -11,7 +11,8 @@ from backend.models import EffectReceipt, Incident, OutboxEntry, OutcomeRevision
 from backend.learning.invalidation import invalidate_outcome_dependents
 from backend.telemetry import trace_operation
 from backend.trace_identity import recorded_span_ids
-from backend.trace_refs import store_trace_ref
+from backend.trace_refs import admission_parent, store_trace_ref
+from backend.settings import get_settings
 from backend.workflows.activity_timing import schedule_to_start_ms
 
 
@@ -97,7 +98,10 @@ async def adjudicate_simulator(
         effect_version = receipt.observed_version
         effect_state = receipt.state
 
-    with trace_operation("opsblaze.outcome.observe", incident_id=incident_id) as span:
+    parent = await admission_parent(
+        sessions, tenant_id, incident_id, enabled=bool(get_settings().otel_traces_endpoint),
+    )
+    with trace_operation("opsblaze.outcome.observe", incident_id=incident_id, parent=parent) as span:
         observation = await adapter.observe(tenant_id, target_id)
         span_ids = recorded_span_ids(span)
     verified = (

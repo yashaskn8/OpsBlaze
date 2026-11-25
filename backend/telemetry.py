@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from opentelemetry import trace
+from opentelemetry.context import Context
 
 from backend.settings import Settings
 
@@ -31,6 +32,7 @@ def trace_operation(
     operation: str, *, incident_id: UUID | None = None,
     event_id: int | None = None,
     activity_schedule_to_start_ms: int | None = None,
+    parent: Context | None = None,
 ):
     """Emit only approved identifiers; errors are never serialized in spans."""
     if operation not in OPERATIONS:
@@ -44,7 +46,7 @@ def trace_operation(
     ):
         raise ValueError("activity scheduling delay must be nonnegative milliseconds")
     with TRACER.start_as_current_span(
-        operation, record_exception=False, set_status_on_exception=False,
+        operation, context=parent, record_exception=False, set_status_on_exception=False,
     ) as span:
         span.set_attribute("opsblaze.component", operation.split(".")[1])
         if incident_id is not None:

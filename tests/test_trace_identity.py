@@ -32,3 +32,28 @@ def test_unsampled_or_remote_nonrecording_context_is_not_evidence():
     assert recorded_span_ids(INVALID_SPAN) is None
     remote = NonRecordingSpan(SpanContext(1, 2, True, TraceFlags(TraceFlags.SAMPLED)))
     assert recorded_span_ids(remote) is None
+
+
+def test_parent_reconstruction_correlates_separate_providers_without_ambient_context():
+    from opentelemetry.trace import get_current_span
+    from backend.trace_identity import parent_context
+
+    api = TracerProvider(sampler=ALWAYS_ON)
+    worker = TracerProvider(sampler=ALWAYS_ON)
+    try:
+        with api.get_tracer("api").start_as_current_span("admit") as root:
+            ids = recorded_span_ids(root)
+        with worker.get_tracer("worker").start_as_current_span("unrelated") as unrelated:
+            parent = parent_context(*ids)
+            with worker.get_tracer("worker").start_as_current_span("activity", context=parent) as child:
+                assert child.get_span_context().trace_id == root.get_span_context().trace_id
+                assert child.parent.span_id == root.get_span_context().span_id
+                assert child.parent.is_remote
+            empty = parent_context(ids[0], "0" * 16)
+            assert not get_current_span(empty).get_span_context().is_valid
+            with worker.get_tracer("worker").start_as_current_span("gap", context=empty) as gap:
+                assert gap.parent is None
+                assert gap.get_span_context().trace_id != unrelated.get_span_context().trace_id
+    finally:
+        api.shutdown()
+        worker.shutdown()

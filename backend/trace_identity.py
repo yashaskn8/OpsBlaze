@@ -2,7 +2,8 @@
 
 import re
 
-from opentelemetry.trace import Span
+from opentelemetry.context import Context
+from opentelemetry.trace import NonRecordingSpan, Span, SpanContext, TraceFlags, set_span_in_context
 
 
 def valid_hex_id(value: object, width: int) -> bool:
@@ -24,3 +25,14 @@ def recorded_span_ids(span: Span) -> tuple[str, str] | None:
     if not valid_hex_id(trace_id, 32) or not valid_hex_id(span_id, 16):
         return None
     return trace_id, span_id
+
+
+def parent_context(trace_id: object, span_id: object) -> Context:
+    """Reconstruct a sampled server-side parent or explicitly start a new root."""
+    if not valid_hex_id(trace_id, 32) or not valid_hex_id(span_id, 16):
+        return Context()
+    parent = SpanContext(
+        trace_id=int(trace_id, 16), span_id=int(span_id, 16), is_remote=True,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    )
+    return set_span_in_context(NonRecordingSpan(parent), Context())
