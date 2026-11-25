@@ -1,0 +1,26 @@
+"""Strict, diagnostic-only identities for locally recorded OpenTelemetry spans."""
+
+import re
+
+from opentelemetry.trace import Span
+
+
+def valid_hex_id(value: object, width: int) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == width
+        and re.fullmatch(r"[0-9a-f]+", value) is not None
+        and value != "0" * width
+    )
+
+
+def recorded_span_ids(span: Span) -> tuple[str, str] | None:
+    """Never invent IDs or confuse an unsampled context with a recorded span."""
+    context = span.get_span_context()
+    if not span.is_recording() or not context.is_valid or not context.trace_flags.sampled:
+        return None
+    trace_id = f"{context.trace_id:032x}"
+    span_id = f"{context.span_id:016x}"
+    if not valid_hex_id(trace_id, 32) or not valid_hex_id(span_id, 16):
+        return None
+    return trace_id, span_id

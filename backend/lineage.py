@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.lineage_refs import MAX_EVIDENCE_REFS, bounded_evidence_refs, reference_uuid
+from backend.trace_refs import graph_trace_refs
 from backend.models import (
     ApprovalGrant, Evidence, EffectReceipt, ExperienceCapsule,
     FailureCase, HypothesisStep, Incident, IncidentPlan,
@@ -250,13 +251,14 @@ async def read_lineage_page(
                  "relation": "AUTHORIZED_BY_GRANT"},
             ])
 
+    nodes = [
+        {"id": f"{kind}:{row.id}", "kind": kind, "status": record_status(kind, row)}
+        for row in visible
+    ]
     return {
         "incident_id": str(incident_id), "kind": kind,
-        "nodes": [
-            {"id": f"{kind}:{row.id}", "kind": kind,
-             "status": record_status(kind, row)}
-            for row in visible
-        ],
+        "nodes": nodes,
+        "trace_refs": await graph_trace_refs(session, tenant_id, incident_id, nodes),
         "edges": edges, "missing_refs": missing_refs,
         "links_truncated": links_truncated,
         "next_cursor": str(visible[-1].id) if len(rows) > limit else None,
@@ -436,6 +438,7 @@ async def build_lineage(
         "incident_id": str(incident.id),
         "status_version": incident.status_version,
         "nodes": list(nodes.values()),
+        "trace_refs": await graph_trace_refs(session, tenant_id, incident_id, list(nodes.values())),
         "edges": edges,
         "missing_refs": missing,
         "projection": "PARTIAL_LINKS" if missing or truncated_sources or evidence_links_truncated else "COMPLETE",

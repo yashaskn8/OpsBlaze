@@ -53,7 +53,7 @@ def trace_operation(
             span.set_attribute("opsblaze.outbox_id", event_id)
         if activity_schedule_to_start_ms is not None:
             span.set_attribute("opsblaze.activity.schedule_to_start_ms", activity_schedule_to_start_ms)
-        yield
+        yield span
 
 
 def initialize_tracing(settings: Settings) -> bool:

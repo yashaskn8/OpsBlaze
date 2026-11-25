@@ -10,6 +10,8 @@ from backend.adapters.simulator import SimulatorAdapter, observed_healthy_at_ver
 from backend.models import EffectReceipt, Incident, OutboxEntry, OutcomeRevision
 from backend.learning.invalidation import invalidate_outcome_dependents
 from backend.telemetry import trace_operation
+from backend.trace_identity import recorded_span_ids
+from backend.trace_refs import store_trace_ref
 from backend.workflows.activity_timing import schedule_to_start_ms
 
 
@@ -95,8 +97,9 @@ async def adjudicate_simulator(
         effect_version = receipt.observed_version
         effect_state = receipt.state
 
-    with trace_operation("opsblaze.outcome.observe", incident_id=incident_id):
+    with trace_operation("opsblaze.outcome.observe", incident_id=incident_id) as span:
         observation = await adapter.observe(tenant_id, target_id)
+        span_ids = recorded_span_ids(span)
     verified = (
         effect_state == "VERIFIED"
         and observed_healthy_at_version(observation, effect_version)
@@ -143,6 +146,9 @@ async def adjudicate_simulator(
                 ))
             else:
                 await invalidate_outcome_dependents(session, tenant_id, incident_id)
+            if span_ids is not None:
+                await session.flush()
+                await store_trace_ref(session, tenant_id, incident_id, "outcome", row.id, span_ids)
     return label
 
 

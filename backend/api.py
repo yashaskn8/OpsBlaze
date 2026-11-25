@@ -906,6 +906,26 @@ async def incident_lineage_records(
     return page
 
 
+@app.get("/v1/incidents/{incident_id}/traces/{trace_id}")
+async def incident_trace(
+    incident_id: UUID,
+    trace_id: str,
+    cursor: UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.trace_refs import read_trace
+    from backend.trace_identity import valid_hex_id
+
+    if not valid_hex_id(trace_id, 32):
+        raise HTTPException(422, "invalid trace identifier")
+    report = await read_trace(session, tenant_id, incident_id, trace_id, cursor, limit)
+    if report is None:
+        raise HTTPException(404, "trace not found")
+    return report
+
+
 @app.get("/v1/incidents/{incident_id}/route")
 async def incident_route(
     incident_id: UUID,

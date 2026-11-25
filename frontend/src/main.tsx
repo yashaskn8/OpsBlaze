@@ -59,9 +59,12 @@ type Effect = {
   observed_version: number | null;
 };
 
+type TraceRef = { node_id: string; trace_id: string; span_id: string; collector_verified: false };
+
 type Lineage = {
   projection: "COMPLETE" | "PARTIAL_LINKS";
   trace_spans_available: boolean;
+  trace_refs: TraceRef[];
   links_truncated: boolean;
   truncated_sources: string[];
   nodes: { id: string; kind: string; status: string }[];
@@ -73,6 +76,7 @@ type LineagePage = {
   incident_id: string;
   kind: string;
   nodes: Lineage["nodes"];
+  trace_refs: TraceRef[];
   edges: Lineage["edges"];
   missing_refs: Lineage["missing_refs"];
   links_truncated: boolean;
@@ -927,7 +931,17 @@ function App() {
             {lineage && <div className="audit">
               <h3>Evidence-to-effect trace</h3>
               <p className="muted">{lineage.projection.replaceAll("_", " ")} · {lineage.nodes.length} durable records · {lineage.edges.length} links</p>
-              {!lineage.trace_spans_available && <p className="muted">Telemetry spans unavailable; durable records are shown instead.</p>}
+              {!lineage.trace_spans_available && <p className="muted">Collector delivery is not verified. Durable records remain authoritative; recorded span references are diagnostic only.</p>}
+              <details>
+                <summary>Recorded span references (incident and outcome records)</summary>
+                {[...lineage.trace_refs, ...additionalLineagePages.flatMap(page => page.trace_refs)].length === 0
+                  ? <p className="muted">No recorded references in the displayed pages.</p>
+                  : [...lineage.trace_refs, ...additionalLineagePages.flatMap(page => page.trace_refs)].map(ref =>
+                    <div className="trace-node" key={ref.node_id}>
+                      <strong>{ref.node_id}</strong><code>Trace {ref.trace_id}</code><code>Span {ref.span_id}</code>
+                    </div>)}
+                <p className="muted">Other or missing links are not inferred. A reference does not establish recovery or collector retention.</p>
+              </details>
               {lineage.truncated_sources.length > 0 && <>
                 <p className="error">Incomplete forensic graph: over 50 records in {lineage.truncated_sources.join(", ")}. Do not treat this view as complete.</p>
                 <p className="muted">Only the initial records and the current additional page per kind are retained. Loading the next page replaces the previous additional page.</p>

@@ -274,13 +274,19 @@
         "G6"
       ],
       "acceptance_criteria": "Tenant-scoped complete causal lineage, cross-process traces and privacy review.",
-      "remaining_validation": "True W3C/Temporal cross-process trace context and durable span links, deployed collector/retention verification, realistic large-history latency and accessibility proof",
+      "remaining_validation": "Trace-ref persistence for incident/outcome and authenticated lookup added; exact-commit integration evidence pending. Remaining: cross-process trace context, additional durable record kinds, precomputed and rebuildable lineage edges, collector/retention, large-history and accessibility evidence.",
       "evidence": [
         {
           "kind": "implementation_status_reference",
           "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
           "path": "docs/implementation-status.md",
           "verification": "DOCUMENTED_BASELINE_NOT_INDEPENDENTLY_VERIFIED"
+        },
+        {
+          "kind": "implementation_status_reference",
+          "commit": "5ac2bfbb32670ec0d2526dd8a425fa19c39f45a2",
+          "path": "backend/lineage.py",
+          "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
         }
       ]
     },
@@ -515,7 +521,7 @@
     }
   ],
   "checkpoint": {
-    "base_commit": "17aae2fc5500b2f95107231edae946d91b4e89e8",
+    "base_commit": "5ac2bfbb32670ec0d2526dd8a425fa19c39f45a2",
     "implemented_changes": [
       {
         "commit": "9310682c08fa6605b09b412347d290163b5c2ae7",
@@ -537,12 +543,19 @@
         "change": "Synthetic Temporal history archive and offline replay",
         "workflow_run": 45455611809,
         "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS_ARCHIVE_METADATA_CONFIRMED"
+      },
+      {
+        "commit": "5ac2bfbb32670ec0d2526dd8a425fa19c39f45a2",
+        "requirement": "P3",
+        "change": "Bounded redacted summary graph and React pagination",
+        "workflow_run": 45600566916,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
       }
     ],
     "next_actions": [
-      "Verify the exact candidate's pinned-source native replay job, including terminal-result validation; repair any failure.",
-      "Replay independently retained older synthetic histories and expand worker upgrade and active-history scenarios; no production history export.",
-      "Expand the feature ledger into atomic requirements; preserve G1–G6 production blocks until authorized external evidence exists."
+      "Verify exact-commit trace_ref migration, optional write failure, tenant scope, actual span IDs and graph/UI tests; repair any regression.",
+      "Continue P3: trusted cross-process correlation, additional record kinds, bounded precomputed lineage edges and crash-safe rebuild.",
+      "Require external collector/retention, browser accessibility and large-history evidence before full P3 acceptance; G1–G6 remain blocked."
     ]
   }
 }

@@ -13,6 +13,8 @@ from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.schemas import IncidentCreate
 from backend.settings import Settings, get_settings
 from backend.telemetry import trace_operation
+from backend.trace_identity import recorded_span_ids
+from backend.trace_refs import store_trace_ref
 
 
 class IdempotencyConflict(Exception):
@@ -49,7 +51,7 @@ async def admit_incident(
         status_version=1,
     )
     try:
-        with trace_operation("opsblaze.incident.admit", incident_id=incident.id):
+        with trace_operation("opsblaze.incident.admit", incident_id=incident.id) as span:
             async with session.begin():
                 # Serialize global admission-capacity reads across PostgreSQL
                 # processes. No lock is held over network or workflow calls.
@@ -83,6 +85,7 @@ async def admit_incident(
                 session.add(OutboxEntry(incident_id=incident.id, kind="START_WORKFLOW"))
                 session.add(UIEvent(tenant_id=tenant_id, incident_id=incident.id, kind="ADMITTED", projection_version=1))
                 await session.flush()
+                await store_trace_ref(session, tenant_id, incident.id, "incident", incident.id, recorded_span_ids(span))
         return incident
     except IntegrityError:
         await session.rollback()

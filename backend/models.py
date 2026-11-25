@@ -60,6 +60,27 @@ class Incident(Base):
     )
 
 
+class TraceRef(Base):
+    """Local recorded-span reference; never an effect or recovery authority."""
+    __tablename__ = "trace_ref"
+    __table_args__ = (
+        UniqueConstraint("record_type", "record_id", name="uq_trace_ref_record"),
+        Index("ix_trace_ref_incident_trace", "tenant_id", "incident_id", "trace_id", "id"),
+        CheckConstraint("record_type IN ('incident', 'outcome')", name="ck_trace_ref_kind"),
+        CheckConstraint("length(trace_id) = 32 AND length(span_id) = 16", name="ck_trace_ref_length"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id", ondelete="CASCADE"), nullable=False,
+    )
+    record_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    record_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    span_id: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
 class OutboxEntry(Base):
     __tablename__ = "outbox"
     __table_args__ = (
