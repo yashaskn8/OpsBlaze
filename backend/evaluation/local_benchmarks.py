@@ -8,14 +8,14 @@ routing decisions, memory retrieval, and held-out/cost evaluators. Results carry
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-import hashlib
 import math
 import time
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.evaluation.heldout import canonical_digest, evaluate_heldout
@@ -24,13 +24,18 @@ from backend.experiences import capture_capsule, set_consent, set_tenant_consent
 from backend.investigator.baseline import inspect as inspect_incident
 from backend.memory.lessons import create_draft, revoke_lesson, validate_draft
 from backend.models import (
-    ContextManifest, EffectReceipt, Incident, IncidentPlan, OperationalLesson,
-    OutcomeRevision, PolicyAssignment, SimulatorAppliedEffect, SimulatorTarget,
+    ApprovalGrant, ContextManifest, EffectReceipt, Incident, IncidentPlan, OperationalLesson,
+    OutcomeRevision, PolicyAssignment, ResourceEpoch, SimulatorAppliedEffect, SimulatorTarget,
 )
 from backend.policy.constants import INCUMBENT_POLICY_ID
-from backend.routing.decision import ROUTER_POLICY_ID, select_route
+from backend.routing.decision import ROUTER_POLICY_ID, pinned_runbook_strategy, select_route
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
+from backend.settings import get_settings
+
+
+Strategy = Literal["ADAPTIVE", "FIXED_RUNBOOK", "CHEAPEST_FIRST"]
+DriveTrial = Callable[[str, UUID, Strategy], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,9 @@ async def _ensure_target(
                         last_fence=0,
                     )
                 )
+                session.add(ResourceEpoch(
+                    tenant_id=tenant_id, target_id=target_id, latest_fence=0, version_seen=version,
+                ))
             else:
                 target.healthy = healthy
                 target.version = version
@@ -93,10 +101,11 @@ async def _execute_simulator_case(
     case: SimulatorScenario,
     *,
     key_suffix: str,
-    strategy: Literal["ADAPTIVE", "FIXED_RUNBOOK", "CHEAPEST_FIRST"] = "ADAPTIVE",
+    strategy: Strategy = "ADAPTIVE",
     route_mode: Literal["DEFAULT", "FIXED_RUNBOOK", "CHEAPEST_FIRST", "ADAPTIVE"] | None = None,
     allow_memory: bool = False,
     drain: bool = True,
+    drive_trial: DriveTrial | None = None,
 ) -> dict:
     target_id = f"{case.case_id}-{key_suffix}"
     if case.create_target:
@@ -145,13 +154,24 @@ async def _execute_simulator_case(
 
     started = time.perf_counter()
     route_row = None
+    executed_strategy = None
     if route_mode is not None:
         route_row = await select_route(
             sessions, tenant_id, incident.id, strategy_mode=route_mode,
         )
-    if route_row is not None and route_row.route == "HANDOFF":
+    if drive_trial is not None:
+        await drive_trial(tenant_id, incident.id, strategy)
+        decision = None
+    elif route_row is not None and route_row.route == "HANDOFF":
         decision = "ABSTAIN"
     else:
+        if route_row is not None:
+            if route_row.route == "RUNBOOK":
+                strategy = pinned_runbook_strategy(route_row)
+            elif route_row.route in {"ADAPTIVE", "CHEAPEST_FIRST"}:
+                strategy = route_row.route
+            else:
+                raise ValueError("local comparison cannot execute the selected route")
         outcome = await inspect_incident(
             sessions,
             tenant_id,
@@ -159,6 +179,7 @@ async def _execute_simulator_case(
             allow_memory=allow_memory,
             strategy=strategy,
         )
+        executed_strategy = strategy
         decision = "PROPOSE" if outcome == "SIMULATOR_REVIEW_REQUIRED" else "ABSTAIN"
     elapsed_ms = max(1, int(round((time.perf_counter() - started) * 1000.0)))
 
@@ -166,7 +187,9 @@ async def _execute_simulator_case(
         async with session.begin():
             inc_row = await session.get(Incident, incident.id)
             plan = await session.scalar(
-                select(IncidentPlan).where(IncidentPlan.incident_id == incident.id)
+                select(IncidentPlan).where(
+                    IncidentPlan.tenant_id == tenant_id, IncidentPlan.incident_id == incident.id,
+                )
             )
             manifests = list((await session.scalars(
                 select(ContextManifest)
@@ -180,10 +203,13 @@ async def _execute_simulator_case(
                 )
             )) or 0)
             probes = inc_row.probe_used if inc_row is not None else 0
-            if drain and inc_row is not None:
+            if drain and drive_trial is None and inc_row is not None:
                 inc_row.status_projection = "NEEDS_REVIEW"
                 inc_row.status_version += 1
+    if decision is None:
+        decision = "PROPOSE" if plan is not None else "ABSTAIN"
     return {
+        "incident_id": incident.id,
         "case_id": case.case_id,
         "family": case.family,
         "decision": decision,
@@ -196,6 +222,7 @@ async def _execute_simulator_case(
         "target_mutations": applied,
         "route": route_row.route if route_row is not None else None,
         "policy_id": route_row.policy_id if route_row is not None else None,
+        "executed_strategy": executed_strategy,
         "selected_strategy": (
             (route_row.context_features or {}).get("selected_strategy")
             if route_row is not None
@@ -356,11 +383,85 @@ async def run_e4_memory_ablation(
     }
 
 
+async def _e5_recorded_recovery(
+    sessions: async_sessionmaker[AsyncSession], tenant_id: str, incident_id: UUID,
+) -> dict:
+    async with sessions() as session:
+        latest_revision = select(func.max(OutcomeRevision.revision)).where(
+            OutcomeRevision.tenant_id == tenant_id, OutcomeRevision.incident_id == incident_id,
+        ).scalar_subquery()
+        plan, grant, receipt, applied, witness = (await session.execute(
+            select(IncidentPlan, ApprovalGrant, EffectReceipt, SimulatorAppliedEffect, OutcomeRevision)
+            .select_from(Incident)
+            .outerjoin(IncidentPlan, and_(IncidentPlan.tenant_id == Incident.tenant_id,
+                                         IncidentPlan.incident_id == Incident.id))
+            .outerjoin(ApprovalGrant, and_(ApprovalGrant.tenant_id == Incident.tenant_id,
+                                           ApprovalGrant.plan_id == IncidentPlan.id))
+            .outerjoin(EffectReceipt, and_(
+                EffectReceipt.tenant_id == Incident.tenant_id, EffectReceipt.incident_id == Incident.id,
+                EffectReceipt.plan_digest == IncidentPlan.plan_digest, EffectReceipt.target_id == IncidentPlan.target_id,
+                EffectReceipt.adapter_id == "simulator",
+            ))
+            .outerjoin(SimulatorAppliedEffect, SimulatorAppliedEffect.id == EffectReceipt.id)
+            .outerjoin(OutcomeRevision, and_(
+                OutcomeRevision.tenant_id == Incident.tenant_id, OutcomeRevision.incident_id == Incident.id,
+                OutcomeRevision.revision == latest_revision,
+            ))
+            .where(Incident.tenant_id == tenant_id, Incident.id == incident_id)
+        )).one()
+
+    dispatched = bool(
+        plan and grant and receipt and plan.action_id == grant.scope == "SIMULATOR_MARK_HEALTHY"
+        and plan.status == "APPROVED" and plan.version == 2
+        and grant.decision == "APPROVE" and grant.state == "CONSUMED"
+        and grant.consumed_at is not None
+        and grant.plan_digest == plan.plan_digest and receipt.attempt_count == 1
+        and receipt.expected_version == plan.expected_version and receipt.permit_digest
+    )
+    matching_witness = witness is not None and receipt is not None and witness.effect_id == receipt.id
+    label = "FAILED"
+    witness_digest = None
+    if matching_witness and witness.label == "DISPUTED":
+        label = "DISPUTED"
+    elif receipt and receipt.state in {"PREPARED", "SENT", "UNKNOWN", "CONFIRMED"}:
+        label = "UNKNOWN"
+    elif dispatched and receipt.state == "VERIFIED":
+        label = "UNKNOWN"
+        if (
+            matching_witness and witness.label == "VERIFIED" and witness.witness_source == "SIMULATOR_WITNESS"
+            and applied and applied.tenant_id == tenant_id and applied.target_id == plan.target_id
+            and applied.permit_digest == receipt.permit_digest
+            and applied.observed_version == receipt.observed_version == witness.observed_version == plan.expected_version + 1
+        ):
+            label = "VERIFIED"
+            witness_digest = canonical_digest({
+                "incident_id": str(incident_id), "effect_id": str(receipt.id),
+                "witness_id": str(witness.id), "revision": witness.revision,
+                "source": witness.witness_source, "recorded_at": witness.created_at.isoformat(),
+                "observed_version": witness.observed_version, "permit_digest": receipt.permit_digest,
+            })
+    return {
+        "outcome": label, "witness_sha256": witness_digest, "authorized_dispatch": dispatched,
+        "approval_state": grant.state if grant else None,
+        "receipt_state": receipt.state if receipt else None,
+        "effect_attempts": receipt.attempt_count if receipt else 0,
+        "outcome_recorded": matching_witness,
+        "simulator_applied": bool(applied and receipt and applied.tenant_id == tenant_id
+                                  and applied.target_id == receipt.target_id
+                                  and applied.permit_digest == receipt.permit_digest),
+    }
+
+
 async def run_e5_paired_recovery_cost(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: str,
+    *,
+    drive_trial: DriveTrial | None = None,
 ) -> dict:
-    """E5-05: execute 36 paired simulator trials across 3 families and score recovery per total cost."""
+    """Score 36 paired lab trials. Without a workflow driver, investigate only."""
+    settings = get_settings()
+    if settings.environment != "development" or settings.ai_advisory_enabled:
+        raise ValueError("E5 local pairs require development settings with advisory disabled")
     scenarios: list[SimulatorScenario] = []
     # 3 disjoint families x 12 cases = 36 pairs; 12 negative controls (>=10, >=10%)
     for i in range(12):
@@ -395,62 +496,51 @@ async def run_e5_paired_recovery_cost(
         "training_families": ["dev-only-family"],
     }
 
-    cand_runs = []
-    inc_runs = []
-    cand_obs = []
-    inc_obs = []
+    runs = {"candidate": [], "incumbent": []}
+    arm_observations = {"candidate": [], "incumbent": []}
+    details = {"candidate": [], "incumbent": []}
+    prefix = "e5-" + canonical_digest(tenant_id)[:10] + "-" + uuid4().hex[:10]
+    strategies: tuple[tuple[str, Strategy], ...] = (
+        ("candidate", "ADAPTIVE"), ("incumbent", "FIXED_RUNBOOK"),
+    )
     for idx, sc in enumerate(scenarios):
-        cand = await _execute_simulator_case(
-            sessions, f"{tenant_id}-e5-cand-{idx // 4}", sc,
-            key_suffix=f"c-{idx}", strategy="ADAPTIVE",
-        )
-        inc = await _execute_simulator_case(
-            sessions, f"{tenant_id}-e5-inc-{idx // 4}", sc,
-            key_suffix=f"i-{idx}", strategy="FIXED_RUNBOOK",
-        )
-        for arm_runs, arm_obs, res, tag in (
-            (cand_runs, cand_obs, cand, "cand"),
-            (inc_runs, inc_obs, inc, "inc"),
-        ):
-            arm_runs.append({
+        # Alternate execution order while preserving identical fixtures in each arm.
+        for arm, strategy in (strategies if idx % 2 == 0 else reversed(strategies)):
+            tenant = f"{prefix}-{arm}-{idx // 4}"
+            res = await _execute_simulator_case(
+                sessions, tenant, sc, key_suffix=str(arm), strategy=strategy,
+                drive_trial=drive_trial,
+            )
+            recovery = await _e5_recorded_recovery(sessions, tenant, res["incident_id"])
+            runs[arm].append({
                 "case_id": sc.case_id,
                 "decision": res["decision"],
                 "probe_cost_units": res["probe_cost_units"],
                 "latency_ms": res["latency_ms"],
             })
-            # Map simulator proposal outcome; uncertain unresolved fixture stays UNKNOWN or DISPUTED.
-            if res["decision"] == "PROPOSE" and sc.expected == "PROPOSE":
-                outcome_label = "UNKNOWN" if idx % 17 == 15 else "VERIFIED"
-            elif sc.negative_control and res["decision"] == "PROPOSE":
-                outcome_label = "DISPUTED"
-            elif res["decision"] == "ABSTAIN" and sc.expected == "PROPOSE":
-                outcome_label = "FAILED"
-            else:
-                outcome_label = "FAILED"
-            arm_obs.append({
+            details[arm].append({
+                "case_id": sc.case_id, "diagnosis_correct": res["correct"],
+                "decision": res["decision"], "requested_strategy": strategy,
+                "probe_calls": res["probe_cost_units"], "elapsed_ms": res["latency_ms"],
+                **recovery,
+            })
+            arm_observations[arm].append({
                 "case_id": sc.case_id,
-                "outcome": outcome_label,
-                "witness_sha256": (
-                    hashlib.sha256(
-                        f"e5-sim/{tag}/{sc.case_id}/{outcome_label}".encode()
-                    ).hexdigest()
-                    if outcome_label == "VERIFIED"
-                    else None
-                ),
+                "outcome": recovery["outcome"],
+                "witness_sha256": recovery["witness_sha256"],
                 "latency_ms": res["latency_ms"],
                 "probe_microcredits": res["probe_cost_units"] * 100,
                 "model_microcredits": 0,
-                "provider_microcredits": 0,
-                "status_microcredits": 10 if res["probe_cost_units"] > 0 else 0,
+                "provider_microcredits": recovery["effect_attempts"] * 100,
+                "status_microcredits": 10 if recovery["outcome_recorded"] else 0,
                 "compute_microcredits": max(1, res["latency_ms"]),
             })
 
-    runs = {"candidate": cand_runs, "incumbent": inc_runs}
     observations = {
         "schema": COST_SCHEMA,
         "oracle_sha256": oracle_sha,
         "trials_sha256": canonical_digest(runs),
-        "arms": {"candidate": cand_obs, "incumbent": inc_obs},
+        "arms": arm_observations,
     }
     heldout_report = evaluate_heldout(manifest, oracle, runs)
     cost_report = measured_recovery_cost(oracle, runs, observations)
@@ -459,6 +549,8 @@ async def run_e5_paired_recovery_cost(
         "measured_ai_comparison": False,
         "promotion_eligible": False,
         "pairs": len(scenarios),
+        "trial_details": details,
+        "cost_basis": "CONFIGURED_SYNTHETIC_RATES_ON_OBSERVED_LAB_COUNTS_AND_ELAPSED_TIME",
         "heldout_report": heldout_report,
         "recovery_cost_report": cost_report,
     }
@@ -469,6 +561,8 @@ async def run_e7_routing_comparison(
     tenant_id: str,
 ) -> dict:
     """E7-08: compare ADAPTIVE routing against FIXED_RUNBOOK and CHEAPEST_FIRST across rare/risky cases."""
+    if get_settings().ai_advisory_enabled:
+        raise ValueError("E7 deterministic comparisons require advisory disabled")
     scenarios = (
         SimulatorScenario("e7-normal", "standard", True, False, 1, "PROPOSE", False),
         SimulatorScenario("e7-healthy", "standard", True, True, 1, "ABSTAIN", True),
@@ -478,23 +572,23 @@ async def run_e7_routing_comparison(
         SimulatorScenario("e7-no-target", "rare-risky", False, False, 1, "ABSTAIN", True),
     )
     arms: dict[str, dict] = {}
-    for arm_label, route_mode, inv_strategy in (
-        ("ADAPTIVE", "ADAPTIVE", "ADAPTIVE"),
-        ("FIXED_RUNBOOK", "FIXED_RUNBOOK", "FIXED_RUNBOOK"),
-        ("CHEAPEST_FIRST", "CHEAPEST_FIRST", "CHEAPEST_FIRST"),
-        ("SINGLE_MODEL", "DEFAULT", "ADAPTIVE"),
+    prefix = "e7-" + canonical_digest(tenant_id)[:10] + "-" + uuid4().hex[:10]
+    for arm_label, route_mode in (
+        ("ADAPTIVE", "ADAPTIVE"), ("FIXED_RUNBOOK", "FIXED_RUNBOOK"),
+        ("CHEAPEST_FIRST", "CHEAPEST_FIRST"), ("DEFAULT_RUNBOOK", "DEFAULT"),
     ):
         results = [
             await _execute_simulator_case(
-                sessions, f"{tenant_id}-e7-{arm_label.lower()}", sc,
+                sessions, f"{prefix}-{arm_label.lower()}", sc,
                 key_suffix=arm_label.lower(),
-                strategy=inv_strategy,  # type: ignore[arg-type]
                 route_mode=route_mode,  # type: ignore[arg-type]
             )
             for sc in scenarios
         ]
         attribution_matches = all(
-            (r["route"] == r["selected_strategy"])
+            (r["executed_strategy"] == {"HANDOFF": None, "RUNBOOK": "ADAPTIVE"}.get(
+                r["selected_strategy"], r["selected_strategy"],
+            )) and (r["executed_strategy"] is not None or r["probe_cost_units"] == 0)
             for r in results
         )
         policy_pins_valid = all(r["policy_id"] == ROUTER_POLICY_ID == INCUMBENT_POLICY_ID for r in results)
@@ -506,6 +600,9 @@ async def run_e7_routing_comparison(
             "unsafe_proposals": sum(1 for r in results if r["unsafe"]),
             "total_probes": sum(r["probe_cost_units"] for r in results),
             "route_counts": dict(Counter(r["route"] for r in results)),
+            "executed_strategy_counts": dict(Counter(
+                r["executed_strategy"] or "NO_INVESTIGATION" for r in results
+            )),
         }
     return {
         "scope": "SIMULATOR_LAB_ONLY",

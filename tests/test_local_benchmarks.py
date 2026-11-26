@@ -46,9 +46,10 @@ async def test_executable_local_comparative_benchmarks_all_pass(sessions_fixture
     assert metrics["candidate_probe_cost_units"] < metrics["incumbent_probe_cost_units"]
     cand_cost = e5["recovery_cost_report"]["arms"]["candidate"]
     inc_cost = e5["recovery_cost_report"]["arms"]["incumbent"]
-    assert cand_cost["outcomes"]["UNKNOWN"] > 0
-    assert cand_cost["verified_per_million_microcredits"] > 0
-    assert inc_cost["verified_per_million_microcredits"] > 0
+    for cost in (cand_cost, inc_cost):
+        assert cost["outcomes"] == {"DISPUTED": 0, "FAILED": 36, "UNKNOWN": 0, "VERIFIED": 0}
+        assert cost["verified_per_million_microcredits"] == 0
+        assert cost["total_microcredits"] > 0
 
     e7 = await run_e7_routing_comparison(sessions_fixture, "bench-e7")
     assert e7["scope"] == "SIMULATOR_LAB_ONLY"
@@ -58,3 +59,97 @@ async def test_executable_local_comparative_benchmarks_all_pass(sessions_fixture
         assert summary["policy_pins_valid"] is True, arm_name
         assert summary["unsafe_proposals"] == 0, arm_name
     assert e7["arms"]["ADAPTIVE"]["route_counts"].get("HANDOFF", 0) >= 3
+    assert e7["arms"]["ADAPTIVE"]["executed_strategy_counts"] == {"ADAPTIVE": 3, "NO_INVESTIGATION": 3}
+    assert e7["arms"]["FIXED_RUNBOOK"]["executed_strategy_counts"] == {
+        "FIXED_RUNBOOK": 3, "NO_INVESTIGATION": 3,
+    }
+    assert e7["arms"]["CHEAPEST_FIRST"]["executed_strategy_counts"] == {
+        "CHEAPEST_FIRST": 3, "NO_INVESTIGATION": 3,
+    }
+    assert e7["arms"]["FIXED_RUNBOOK"]["total_probes"] == e7["arms"]["ADAPTIVE"]["total_probes"] + 1
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+async def test_postgres_temporal_e5_counts_only_authorized_witnessed_recovery(monkeypatch, record_property):
+    import json
+
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy import select
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Worker
+
+    from backend.adapters.conformance import execute_suite
+    from backend.adapters.simulator import SimulatorAdapter
+    from backend.api import app
+    from backend.benchmarks.paired_simulator import run_e5_with_temporal
+    from backend.database import get_session_maker
+    from backend.models import IncidentPlan
+    from backend.settings import get_settings
+    from backend.workflows.activities import (
+        apply_approved_simulator_plan, inspect_incident_read_only, project_incident_status,
+        select_incident_route,
+    )
+    from backend.workflows.incident import IncidentWorkflow
+
+    settings = get_settings()
+    sessions = get_session_maker()
+    assert settings.database_url.startswith("postgresql+asyncpg:")
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+
+    apply = SimulatorAdapter.apply
+
+    async def lost_ack(self, effect_id, permit):
+        version = await apply(self, effect_id, permit)
+        if permit.target_id.startswith("fam-rec-0-"):
+            raise TimeoutError("synthetic loss after durable simulator apply")
+        return version
+
+    monkeypatch.setattr(SimulatorAdapter, "apply", lost_ack)
+    async with (
+        await WorkflowEnvironment.start_local() as env,
+        Worker(env.client, task_queue=settings.temporal_task_queue, workflows=[IncidentWorkflow],
+               activities=[apply_approved_simulator_plan, inspect_incident_read_only,
+                           project_incident_status, select_incident_route]),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http,
+    ):
+        async def review(tenant, plan_id, version):
+            async with sessions() as session:
+                plan = await session.scalar(select(IncidentPlan).where(
+                    IncidentPlan.id == plan_id, IncidentPlan.tenant_id == tenant,
+                ))
+            response = await http.post(
+                f"/v1/plans/{plan_id}/decisions",
+                headers={"X-Tenant-Id": tenant, "X-OpsBlaze-Token": settings.local_token,
+                         "X-OpsBlaze-Reviewer-Token": settings.review_token, "If-Match": str(version)},
+                json={"decision": "REJECT" if plan.target_id.startswith("fam-rec-1-") else "APPROVE",
+                      "reason": "Disposable paired simulator fixture reviewed"},
+            )
+            assert response.status_code == 201, response.text
+
+        report = await run_e5_with_temporal(env.client, "native-e5", review_requested=review)
+
+    assert report["scope"] == "SIMULATOR_LAB_ONLY" and not report["promotion_eligible"]
+    record_property("lab_e5_summary", json.dumps({
+        "diagnosis": report["heldout_report"]["metrics"],
+        "cost": report["recovery_cost_report"]["arms"],
+    }))
+    assert report["heldout_report"]["metrics"]["candidate_probe_cost_units"] < (
+        report["heldout_report"]["metrics"]["incumbent_probe_cost_units"]
+    )
+    for arm, rows in report["trial_details"].items():
+        assert report["recovery_cost_report"]["arms"][arm]["outcomes"] == {
+            "DISPUTED": 0, "FAILED": 13, "UNKNOWN": 1, "VERIFIED": 22,
+        }
+        by_id = {row["case_id"]: row for row in rows}
+        assert by_id["fam-rec-0"]["receipt_state"] == "UNKNOWN"
+        assert by_id["fam-rec-0"]["authorized_dispatch"]
+        assert by_id["fam-rec-0"]["simulator_applied"]
+        assert by_id["fam-rec-0"]["witness_sha256"] is None
+        assert by_id["fam-rec-1"]["decision"] == "PROPOSE"
+        assert by_id["fam-rec-1"]["approval_state"] == "REJECTED"
+        assert not by_id["fam-rec-1"]["authorized_dispatch"]
+        assert by_id["fam-rec-1"]["effect_attempts"] == 0
+        assert by_id["fam-rec-2"]["authorized_dispatch"]
+        assert by_id["fam-rec-2"]["witness_sha256"] is not None
+        assert all(row["witness_sha256"] is None for row in rows if row["outcome"] != "VERIFIED")

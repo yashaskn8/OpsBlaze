@@ -93,7 +93,7 @@ async def inspect_incident_read_only(
 ) -> str:
     from backend.investigator.baseline import inspect
     from backend.investigator.advisory import MAX_RESERVE_TOKENS
-    from backend.routing.decision import ROUTER_POLICY_ID, ROUTER_VERSION, read_route
+    from backend.routing.decision import ROUTER_POLICY_ID, ROUTER_VERSION, pinned_runbook_strategy, read_route
 
     parent = await _activity_parent(tenant_id, incident_id)
     with _trace_activity("opsblaze.incident.inspect", incident_id, parent):
@@ -103,6 +103,7 @@ async def inspect_incident_read_only(
             decision = await read_route(session, tenant_id, source_id)
         model_id = None
         reuse_legacy_advice = False
+        strategy = "ADAPTIVE"
         if decision is not None:
             if decision.policy_id != ROUTER_POLICY_ID or decision.cost_cap_probes != 2:
                 return "ABSTAINED"
@@ -115,12 +116,14 @@ async def inspect_incident_read_only(
                 model_id = decision.model_id
             elif decision.route == "RUNBOOK":
                 reuse_legacy_advice = decision.router_version is None
+                strategy = pinned_runbook_strategy(decision)
             else:
                 return "ABSTAINED"
         return await inspect(
             sessions, tenant_id, source_id, advisory_model=model_id,
             reuse_legacy_advice=reuse_legacy_advice,
             allow_memory=(decision is None or decision.route != "AGENT_NO_MEMORY"),
+            strategy=strategy,
         )
 
 

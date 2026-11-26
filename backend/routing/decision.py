@@ -30,6 +30,15 @@ ROUTER_POLICY_ID = INCUMBENT_POLICY_ID
 ROUTER_VERSION = "simulator-routing-v2"
 
 
+def pinned_runbook_strategy(decision: RouteDecision) -> Literal["ADAPTIVE", "FIXED_RUNBOOK"]:
+    if (
+        decision.router_version == ROUTER_VERSION
+        and (decision.context_features or {}).get("selected_strategy") == "FIXED_RUNBOOK"
+    ):
+        return "FIXED_RUNBOOK"
+    return "ADAPTIVE"
+
+
 async def read_route(session: AsyncSession, tenant_id: str, incident_id: UUID) -> RouteDecision | None:
     return await session.scalar(select(RouteDecision).where(
         RouteDecision.tenant_id == tenant_id, RouteDecision.incident_id == incident_id,
@@ -144,9 +153,7 @@ async def select_route(
                 cost_cap = 2
 
             selected_strategy = (
-                "AGENT_NO_MEMORY"
-                if route == "AGENT_NO_MEMORY"
-                else ("HANDOFF" if route == "HANDOFF" else route)
+                "FIXED_RUNBOOK" if route == "RUNBOOK" and strategy_mode == "FIXED_RUNBOOK" else route
             )
             context = {
                 "tenant": tenant_id,
