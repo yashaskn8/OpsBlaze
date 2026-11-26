@@ -98,4 +98,16 @@ The `bb96140` baseline passed [all ten exact-commit Linux jobs](https://github.c
 
 P2 automated software acceptance covers keyboard review, named controls, live status semantics, focus after approval, rejection, expiry and conflict, removal of stale controls, and the narrow layout. Spoken screen-reader output is deferred manual acceptance for the UI redesign. The original P2 requirement and production gates remain part of the acceptance record.
 
-The completion definition is **measured acceptance of every relevant test in the PDF**, not the presence of a similarly named file or endpoint.
+### Functional closeout before UI redesign
+
+The functional software checkpoint `d6e6be4` passed [all ten exact-commit Linux jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45817385047). A focused review found no remaining locally actionable software defect in the E4 comparator or the P2 automated approval gate. The repository is ready for the UI redesign phase.
+
+| Acceptance category | Status |
+| --- | --- |
+| Local software | The deterministic E4 comparator is complete. P2 retains `COMPLETE_AUTOMATABLE_SOFTWARE`. |
+| Automated acceptance | Both software gates are satisfied. The E4 query regression preserves three SQL statements per eligible lookup, and Playwright covers P2 keyboard interaction, review states and focus. |
+| Manual acceptance | Spoken screen-reader verification is deferred to UI redesign acceptance. |
+| Empirical effectiveness | The E4 lookup improvement is measured. Improved decisions, probe consumption and recovery remain unverified. |
+| External production acceptance | G1–G6 remain blocked. |
+
+The original PDF audit records 154 verified requirements out of 176. The two partial rows retain their manual or empirical acceptance criteria, and 20 rows remain externally blocked.

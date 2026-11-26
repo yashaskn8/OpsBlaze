@@ -238,7 +238,7 @@
       "id": "P2",
       "blueprint_section": "2.10",
       "title": "Approval boundary",
-      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "implementation_status": "COMPLETE_AUTOMATABLE_SOFTWARE",
       "production_status": "BLOCKED",
       "dependencies": [
         "B1",
@@ -246,11 +246,18 @@
       ],
       "production_gates": [
         "G1",
-        "G5"
+        "G5",
+        "G6"
       ],
       "acceptance_criteria": "Exact-version human approval, expiry/revocation and separation of authority.",
-      "remaining_validation": "Real-IdP event delivery/browser callback testing, independent release authority and two-person release policy",
+      "remaining_validation": "Spoken screen-reader approval acceptance is deferred to the UI redesign. External identity, independent release authority and two-person release evidence remain blocked.",
       "evidence": [
+        {
+          "kind": "local_software_checkpoint",
+          "commit": "d6e6be47744cc6d8a3b3e5300971d262e847fbce",
+          "path": "docs/requirements-audit.json",
+          "verification": "PLAYWRIGHT_KEYBOARD_LIVE_STATUS_AND_FOCUS_PASS"
+        },
         {
           "kind": "implementation_status_reference",
           "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
@@ -430,7 +437,7 @@
       "id": "E4",
       "blueprint_section": "2.16",
       "title": "Validated memory",
-      "implementation_status": "PARTIAL_LAB_BASELINE",
+      "implementation_status": "COMPLETE_DETERMINISTIC_SIMULATOR_COMPARATOR",
       "production_status": "BLOCKED",
       "dependencies": [
         "E1",
@@ -443,8 +450,14 @@
         "G6"
       ],
       "acceptance_criteria": "Versioned source-bound lessons with expiry, invalidation, consent and measured retrieval benefit.",
-      "remaining_validation": "Release gate for activation, measured retrieval effect and revocation propagation",
+      "remaining_validation": "G4 requires independent held-out effectiveness evidence. Live activation remains subject to the existing release and production gates.",
       "evidence": [
+        {
+          "kind": "local_software_checkpoint",
+          "commit": "d6e6be47744cc6d8a3b3e5300971d262e847fbce",
+          "path": "tests/test_local_benchmarks.py",
+          "verification": "FROZEN_NATIVE_POSTGRESQL_LOOKUP_AND_SAFETY_PASS_EXACT_CI_PASS"
+        },
         {
           "kind": "implementation_status_reference",
           "commit": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
@@ -624,10 +637,15 @@
         "verification": "EXACT_COMMIT_CI_SUCCESS_708_PASSED_29_DESELECTED_80_54_PERCENT_COVERAGE_ALL_10_JOBS_20_NATIVE_PG_TESTS"
       }
     ],
+    "functional_closeout": {
+      "status": "CLOSED_READY_FOR_UI_REDESIGN",
+      "verified_software_commit": "d6e6be47744cc6d8a3b3e5300971d262e847fbce",
+      "workflow_run": 45817385047,
+      "successful_jobs": 10
+    },
     "next_actions": [
-      "Reconcile exact-commit Linux CI for the scoped E4 lookup improvement and frozen comparison.",
-      "Track actual approval, rejection, expiry and conflict announcements as deferred manual UI redesign acceptance. The current software gate uses Playwright.",
-      "Collect independent external evidence for identity, adapter qualification, privacy, multi-host recovery, held-out evaluation, and release governance. G1–G6 remain blocked."
+      "Begin the UI redesign when authorized. Include deferred P2 spoken-output verification in its manual acceptance.",
+      "Collect protected E4 effectiveness evidence and independent identity, adapter qualification, privacy, multi-host recovery and release evidence. G1–G6 remain blocked."
     ]
   }
 }

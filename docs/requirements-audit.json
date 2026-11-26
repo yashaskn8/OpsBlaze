@@ -7,9 +7,17 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "bb96140ddf8da72d2d9018ba6a7742fe6b42fcdb",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45815042699",
+    "commit": "d6e6be47744cc6d8a3b3e5300971d262e847fbce",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45817385047",
     "successful_jobs": 10
+  },
+  "functional_checkpoint": {
+    "local_software_implementation": "CLOSED_READY_FOR_UI_REDESIGN",
+    "locally_actionable_software_defects_found": 0,
+    "automated_acceptance": "PASSED_FOR_VERIFIED_SOFTWARE_BASELINE",
+    "manual_acceptance": "P2-08_SPOKEN_OUTPUT_DEFERRED_UI_REDESIGN",
+    "empirical_effectiveness": "E4-07_INDEPENDENT_EFFECTIVENESS_UNVERIFIED",
+    "external_production_acceptance": "G1_G2_G3_G4_G5_G6_BLOCKED"
   },
   "production_acceptance": "BLOCKED",
   "status_counts": {
@@ -897,24 +905,46 @@
     {
       "order": 1,
       "requirements": [
-        "E4-07"
+        "P2-08"
       ],
-      "execution": "Native and exact Linux CI",
-      "action": "Reconcile exact Linux CI and continue protected G4 effectiveness evaluation. P2 spoken acceptance is deferred to the UI redesign."
+      "execution": "Deferred manual UI redesign acceptance",
+      "action": "Verify actual spoken output for approval, rejection, expiry and conflict during the UI redesign acceptance pass."
     },
     {
       "order": 2,
       "requirements": [
+        "E4-07"
+      ],
+      "execution": "Protected empirical evaluation",
+      "action": "Evaluate memory effectiveness on an independent G4 holdout. The frozen local comparator and lookup improvement have passed automated acceptance."
+    },
+    {
+      "order": 3,
+      "requirements": [
         "B1-06",
+        "B1-08",
+        "B2-07",
+        "B3-07",
         "B4-03",
+        "B4-07",
+        "A1-10",
+        "A2-08",
         "A3-08",
         "A4-06",
+        "P1-17",
+        "P2-08",
+        "S1-08",
+        "E1-09",
+        "E2-08",
         "E5-05",
+        "E5-08",
+        "E6-08",
         "E7-08",
-        "E8-06"
+        "E8-06",
+        "E8-07"
       ],
       "execution": "Externally controlled verification",
-      "action": "Collect independent provider, privacy, held-out evaluation, and multi-host recovery evidence under G1–G6."
+      "action": "Collect independent identity, provider, privacy, held-out evaluation, multi-host recovery and release evidence under G1–G6."
     }
   ],
   "capabilities": [
@@ -4777,10 +4807,12 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Reconcile exact Linux CI. The scoped lookup reduction is measured; improved decisions, probe consumption and recovery efficacy remain unverified. G4 requires protected independent evaluation.",
-          "local_verification": "FROZEN_NATIVE_POSTGRESQL_LOOKUP_AND_SAFETY_PASS_EXACT_CI_PENDING",
+          "remaining": "G4 requires protected independent evaluation. The scoped lookup reduction is measured. Improvement in decisions, probe consumption and recovery efficacy remains unverified.",
+          "local_verification": "FROZEN_NATIVE_POSTGRESQL_LOOKUP_AND_SAFETY_PASS_EXACT_CI_PASS",
           "local_implementation": "COMPLETE_DETERMINISTIC_SIMULATOR_COMPARATOR",
-          "effectiveness": "UNVERIFIED"
+          "software_gate": "SATISFIED",
+          "effectiveness": "UNVERIFIED",
+          "independent_acceptance": "G4_BLOCKED"
         }
       ]
     },
