@@ -274,7 +274,7 @@
         "G6"
       ],
       "acceptance_criteria": "Tenant-scoped complete causal lineage, cross-process traces and privacy review.",
-      "remaining_validation": "Migration 0046 automatically projects new experience edges. Exact-commit Linux CI is required. Incident membership, bounded runtime recovery, other trace kinds, performance, collector and accessibility remain.",
+      "remaining_validation": "Migration 0046 automatically projects new experience edges and passed exact-commit Linux CI. Assess whether incident membership needs persisted edges; bounded runtime recovery, other trace kinds, measured performance, collector-unavailable behavior and accessibility remain. Independent acceptance remains blocked.",
       "evidence": [
         {
           "kind": "implementation_status_reference",
@@ -317,6 +317,12 @@
           "commit": "98936fcc35e85e5badfbc50b24714b916d84fb97",
           "path": "migrations/versions/0045_learning_lineage.py",
           "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+        },
+        {
+          "kind": "implementation_status_reference",
+          "commit": "adac181f34b3d2edeb088767fed3e7588c7d2966",
+          "path": "migrations/versions/0046_experience_edge.py",
+          "verification": "EXACT_COMMIT_CI_SUCCESS_708_PASSED_29_DESELECTED_80_54_PERCENT_COVERAGE_ALL_10_JOBS_20_NATIVE_PG_TESTS"
         }
       ]
     },
@@ -551,7 +557,7 @@
     }
   ],
   "checkpoint": {
-    "base_commit": "98936fcc35e85e5badfbc50b24714b916d84fb97",
+    "base_commit": "adac181f34b3d2edeb088767fed3e7588c7d2966",
     "implemented_changes": [
       {
         "commit": "9310682c08fa6605b09b412347d290163b5c2ae7",
@@ -608,12 +614,20 @@
         "change": "Learning relationship constraints, transactional lesson and failure links, and bounded experience rebuild",
         "workflow_run": 45605792134,
         "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+      },
+      {
+        "commit": "adac181f34b3d2edeb088767fed3e7588c7d2966",
+        "requirement": "P3",
+        "change": "Transactional experience-to-outcome lineage projection without additional projector grants",
+        "workflow_run": 45771310773,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_708_PASSED_29_DESELECTED_80_54_PERCENT_COVERAGE_ALL_10_JOBS_20_NATIVE_PG_TESTS"
       }
     ],
     "next_actions": [
-      "Reconcile exact-commit Linux CI for migration 0046, including restricted projector, migration rollback, and restore checks.",
-      "Assess incident membership projection and bounded runtime recovery against blueprint section 2.11 before implementation.",
-      "Complete remaining trace kinds, workload evidence, independent collector/retention and accessibility; G1–G6 remain blocked."
+      "Local Codex: assess incident membership persistence against section 2.11; implement only justified projection changes with native PostgreSQL and rollback verification.",
+      "Local Codex: bounded runtime reconstruction and crash recovery, remaining recorded span types and database/workflow integration; verify against native services and existing Linux CI.",
+      "Direct GitHub work only when applicable local checks are available: evidence/ledger reconciliation, isolated deterministic helpers and frontend-only changes with actual build/test evidence as required; coordinate one writer on main.",
+      "Measure workload and collector-unavailable behavior, validate accessibility and independent acceptance; G1–G6 remain blocked."
     ]
   }
 }
