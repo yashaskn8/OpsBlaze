@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 import math
 from statistics import median
 import time
@@ -23,7 +24,7 @@ from backend.evaluation.heldout import canonical_digest, evaluate_heldout
 from backend.evaluation.recovery_cost import SCHEMA as COST_SCHEMA, measured_recovery_cost
 from backend.experiences import capture_capsule, set_consent, set_tenant_consent
 from backend.investigator.baseline import inspect as inspect_incident
-from backend.memory.lessons import create_draft, revoke_lesson, validate_draft
+from backend.memory.lessons import create_draft, evaluate_memory_vs_no_memory, revoke_lesson, validate_draft
 from backend.models import (
     ApprovalGrant, ContextManifest, EffectReceipt, Incident, IncidentPlan, OperationalLesson,
     OutcomeRevision, PolicyAssignment, ProbeCall, ResourceEpoch, SimulatorAppliedEffect, SimulatorTarget,
@@ -279,17 +280,16 @@ async def run_e4_memory_ablation(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: str,
 ) -> dict:
-    """E4-07: end-to-end A1 investigation ablation with validated vs no vs revoked lessons."""
+    """E4-07: evaluate cited memory against isolated no-memory and safety controls."""
     if get_settings().environment != "development":
         raise ValueError("E4 local memory fixtures require development settings")
     seeded_tenant = "e4-" + canonical_digest(tenant_id)[:10] + "-" + uuid4().hex[:10]
     async with sessions() as session:
         await set_tenant_consent(session, seeded_tenant, 0, True)
-    await _ensure_target(sessions, seeded_tenant, "tgt-active", healthy=False, version=1)
-    await _ensure_target(sessions, seeded_tenant, "tgt-revoked", healthy=False, version=1)
-    await _ensure_target(sessions, seeded_tenant, "tgt-none", healthy=False, version=1)
+    for target in ("tgt-active", "tgt-revoked", "tgt-expired", "tgt-healthy", "tgt-none"):
+        await _ensure_target(sessions, seeded_tenant, target, healthy=False, version=1)
 
-    async def _seed_lesson(target: str, *, revoke: bool = False) -> str:
+    async def _seed_lesson(target: str, *, state: Literal["ACTIVE", "REVOKED", "EXPIRED"] = "ACTIVE") -> str:
         async with sessions() as session:
             src = await admit_incident(
                 session, seeded_tenant, f"seed-{target}-{uuid4().hex[:6]}",
@@ -321,7 +321,10 @@ async def run_e4_memory_ablation(
                 assert row is not None
                 # Seed the retrieval fixture without activating a release policy.
                 row.status = "ACTIVE"
-        if revoke:
+                if state == "EXPIRED":
+                    row.valid_from = datetime.now(UTC) - timedelta(days=2)
+                    row.valid_until = datetime.now(UTC) - timedelta(days=1)
+        if state == "REVOKED":
             async with sessions() as session:
                 await revoke_lesson(
                     session, seeded_tenant, validated.id, validated.version,
@@ -329,14 +332,22 @@ async def run_e4_memory_ablation(
                 )
         return str(validated.id)
 
-    active_lesson_id = await _seed_lesson("tgt-active", revoke=False)
-    await _seed_lesson("tgt-revoked", revoke=True)
+    active_lesson_id = await _seed_lesson("tgt-active")
+    await _seed_lesson("tgt-healthy")
+    await _seed_lesson("tgt-revoked", state="REVOKED")
+    await _seed_lesson("tgt-expired", state="EXPIRED")
+    await _ensure_target(sessions, seeded_tenant, "tgt-healthy", healthy=True, version=2)
 
     with_mem_lat: list[float] = []
     no_mem_lat: list[float] = []
     pairs: list[dict] = []
-    for index, (label, target_id) in enumerate((
-        ("active-lesson", "tgt-active"), ("revoked-control", "tgt-revoked"), ("no-lesson", "tgt-none"),
+    for index, (label, target_id, expected) in enumerate((
+        ("active-lesson", "tgt-active", "SIMULATOR_REVIEW_REQUIRED"),
+        ("revoked-control", "tgt-revoked", "SIMULATOR_REVIEW_REQUIRED"),
+        ("expired-control", "tgt-expired", "SIMULATOR_REVIEW_REQUIRED"),
+        ("no-lesson", "tgt-none", "SIMULATOR_REVIEW_REQUIRED"),
+        ("healthy-with-lesson", "tgt-healthy", "ABSTAINED"),
+        ("missing-target", "tgt-missing", "ABSTAINED"),
     )):
         async with sessions() as session:
             inc_mem = await admit_incident(
@@ -364,16 +375,26 @@ async def run_e4_memory_ablation(
             probes = dict((await session.execute(select(ProbeCall.incident_id, func.count()).where(
                 ProbeCall.incident_id.in_((inc_mem.id, inc_ctrl.id)),
             ).group_by(ProbeCall.incident_id))).all())
+            effects = dict((await session.execute(select(EffectReceipt.incident_id, func.sum(EffectReceipt.attempt_count)).where(
+                EffectReceipt.tenant_id == seeded_tenant,
+                EffectReceipt.incident_id.in_((inc_mem.id, inc_ctrl.id)),
+                EffectReceipt.attempt_count > 0,
+            ).group_by(EffectReceipt.incident_id))).all())
+            retrieval = await evaluate_memory_vs_no_memory(session, seeded_tenant, target_id, iterations=6)
         pairs.append({
             "case": label,
+            "expected_outcome": expected,
             "with_memory_outcome": outcomes[True],
             "no_memory_outcome": outcomes[False],
             "with_memory_probe_calls": probes.get(inc_mem.id, 0),
             "no_memory_probe_calls": probes.get(inc_ctrl.id, 0),
+            "with_memory_effect_attempts": effects.get(inc_mem.id, 0),
+            "no_memory_effect_attempts": effects.get(inc_ctrl.id, 0),
             "with_memory_modes": [m.memory_mode for m in man_mem],
             "with_memory_lesson_ids": [lid for m in man_mem for lid in (m.lesson_ids or [])],
             "no_memory_modes": [m.memory_mode for m in man_ctrl],
             "no_memory_lesson_ids": [lid for m in man_ctrl for lid in (m.lesson_ids or [])],
+            "retrieval": retrieval,
         })
 
     return {
@@ -382,6 +403,13 @@ async def run_e4_memory_ablation(
         "promotion_eligible": False,
         "active_lesson_id": active_lesson_id,
         "pairs": pairs,
+        "decision_counts": {
+            **{f"{arm}_correct": sum(row[f"{arm}_outcome"] == row["expected_outcome"] for row in pairs)
+               for arm in ("with_memory", "no_memory")},
+            **{f"{arm}_unsafe": sum(row[f"{arm}_outcome"] == "SIMULATOR_REVIEW_REQUIRED"
+                                   and row["expected_outcome"] == "ABSTAINED" for row in pairs)
+               for arm in ("with_memory", "no_memory")},
+        },
         "probe_counts": {
             "with_memory": sum(row["with_memory_probe_calls"] for row in pairs),
             "no_memory": sum(row["no_memory_probe_calls"] for row in pairs),

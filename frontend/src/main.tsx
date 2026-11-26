@@ -136,6 +136,7 @@ function App() {
   const [expiredReview, setExpiredReview] = useState<typeof reviewSnapshot>(null);
   const [reviewStale, setReviewStale] = useState(false);
   const reviewStatus = useRef<HTMLParagraphElement>(null);
+  const revocationControls = useRef<HTMLDivElement>(null);
   const [decisionReason, setDecisionReason] = useState(
     "Reviewed simulator evidence and expected target version"
   );
@@ -214,7 +215,10 @@ function App() {
   useEffect(() => {
     const expiresAt = selectedReview?.expiresAt;
     if (expiresAt == null) return;
-    const timer = window.setTimeout(() => setExpiredReview(selectedReview), expiresAt - performance.now());
+    const timer = window.setTimeout(() => {
+      if (revocationControls.current?.contains(document.activeElement)) reviewStatus.current?.focus();
+      setExpiredReview(selectedReview);
+    }, expiresAt - performance.now());
     return () => window.clearTimeout(timer);
   }, [selectedReview]);
 
@@ -1075,7 +1079,7 @@ function App() {
                 <p className="muted">Scope: {approval.scope}</p>
                 <p className="muted">Expires: {new Date(approval.expires_at).toLocaleString()}</p>
                 <p className="muted">Reason: {approval.reason}</p>
-                {reviewState === "APPROVED" && <>
+                {reviewState === "APPROVED" && <div ref={revocationControls}>
                   <label>Revocation reason
                     <textarea minLength={8} maxLength={256}
                       value={revocationReason}
@@ -1087,7 +1091,7 @@ function App() {
                     onClick={revokeApproval}>
                     Revoke unconsumed approval
                   </button>
-                </>}
+                </div>}
               </div>}
             </div>}
             {evidence.length > 0 && <div className="audit">

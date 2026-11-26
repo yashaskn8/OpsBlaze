@@ -276,6 +276,8 @@ async def evaluate_memory_vs_no_memory(
 ) -> dict:
     """E4-07: lab latency and context comparison against isolated no-memory control."""
     from time import perf_counter
+    from math import ceil
+    from statistics import median
 
     if not 1 <= iterations <= 20:
         raise ValueError("iterations must be 1–20")
@@ -296,17 +298,16 @@ async def evaluate_memory_vs_no_memory(
         no_mem_ms.append((perf_counter() - t1) * 1000.0)
     with_mem_ms.sort()
     no_mem_ms.sort()
-    p50_idx = int(0.5 * (len(with_mem_ms) - 1))
-    p95_idx = int(0.95 * (len(with_mem_ms) - 1))
+    p95_idx = ceil(0.95 * iterations) - 1
     return {
         "scope": "SIMULATOR_LAB_ONLY",
         "iterations": iterations,
         "memory_mode": mem_mode,
         "control_mode": ctrl_mode,
         "cited_lesson_count": len(mem_items),
-        "with_memory_p50_ms": round(with_mem_ms[p50_idx], 3),
+        "with_memory_p50_ms": round(median(with_mem_ms), 3),
         "with_memory_p95_ms": round(with_mem_ms[p95_idx], 3),
-        "no_memory_p50_ms": round(no_mem_ms[p50_idx], 3),
+        "no_memory_p50_ms": round(median(no_mem_ms), 3),
         "no_memory_p95_ms": round(no_mem_ms[p95_idx], 3),
         "latency_overhead_p95_ms": round(max(0.0, with_mem_ms[p95_idx] - no_mem_ms[p95_idx]), 3),
         "measured_ai_comparison": False,

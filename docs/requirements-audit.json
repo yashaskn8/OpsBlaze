@@ -7,8 +7,8 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "5e7a3298d2a2a0003cdf6c414558880cdd69865e",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45811978863",
+    "commit": "7753fd4ad55de52f2bf478f04e3489117acaef2a",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45812657243",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
@@ -368,6 +368,108 @@
           }
         }
       }
+    },
+    "strict_e4_postgresql": {
+      "pairs_per_arm": 6,
+      "decision_counts": {
+        "with_memory_correct": 6,
+        "no_memory_correct": 6,
+        "with_memory_unsafe": 0,
+        "no_memory_unsafe": 0
+      },
+      "probe_counts": {
+        "with_memory": 10,
+        "no_memory": 10
+      },
+      "investigation_elapsed_ms": {
+        "with_memory_p50_ms": 34.979,
+        "with_memory_p95_ms": 316.511,
+        "no_memory_p50_ms": 33.11,
+        "no_memory_p95_ms": 39.913
+      },
+      "retrieval_only": {
+        "active-lesson": {
+          "iterations": 6,
+          "cited_lesson_count": 1,
+          "with_memory_p50_ms": 4.188,
+          "with_memory_p95_ms": 4.426,
+          "no_memory_p50_ms": 0.001,
+          "no_memory_p95_ms": 0.002,
+          "latency_overhead_p95_ms": 4.424
+        },
+        "revoked-control": {
+          "iterations": 6,
+          "cited_lesson_count": 0,
+          "with_memory_p50_ms": 0.627,
+          "with_memory_p95_ms": 0.655,
+          "no_memory_p50_ms": 0.001,
+          "no_memory_p95_ms": 0.001,
+          "latency_overhead_p95_ms": 0.655
+        },
+        "expired-control": {
+          "iterations": 6,
+          "cited_lesson_count": 0,
+          "with_memory_p50_ms": 0.628,
+          "with_memory_p95_ms": 0.757,
+          "no_memory_p50_ms": 0.001,
+          "no_memory_p95_ms": 0.001,
+          "latency_overhead_p95_ms": 0.756
+        },
+        "no-lesson": {
+          "iterations": 6,
+          "cited_lesson_count": 0,
+          "with_memory_p50_ms": 0.577,
+          "with_memory_p95_ms": 0.65,
+          "no_memory_p50_ms": 0.001,
+          "no_memory_p95_ms": 0.001,
+          "latency_overhead_p95_ms": 0.649
+        },
+        "healthy-with-lesson": {
+          "iterations": 6,
+          "cited_lesson_count": 1,
+          "with_memory_p50_ms": 3.265,
+          "with_memory_p95_ms": 3.74,
+          "no_memory_p50_ms": 0.001,
+          "no_memory_p95_ms": 0.001,
+          "latency_overhead_p95_ms": 3.739
+        },
+        "missing-target": {
+          "iterations": 6,
+          "cited_lesson_count": 0,
+          "with_memory_p50_ms": 0.677,
+          "with_memory_p95_ms": 1.416,
+          "no_memory_p50_ms": 0.001,
+          "no_memory_p95_ms": 0.001,
+          "latency_overhead_p95_ms": 1.415
+        }
+      }
+    },
+    "strict_p2": {
+      "viewport_width_px": 390,
+      "isolated_playwright_mcp": "PASS",
+      "checks": [
+        "skip link",
+        "accessible names",
+        "focus order",
+        "keyboard approval and rejection",
+        "expiry and focus when revocation disappears",
+        "409 refresh",
+        "mobile layout"
+      ],
+      "spoken_narrator_verification": "PENDING_HUMAN_LISTENING"
+    },
+    "strict_native_postgresql": {
+      "tests_passed": 28,
+      "migration_head": "0054_evidence_lifecycle",
+      "upgrade_drift_restore_downgrade_and_projector_rollback": "PASS",
+      "additional_focused_e5_dispute_regression": "PASS"
+    },
+    "strict_windows_backend": {
+      "tests_passed": 764,
+      "branch_aware_coverage_pct": 78.73,
+      "documented_linux_only_exclusions": 9,
+      "temporal_restart_and_signal_tests": 6,
+      "pinned_history_replay": "PASS"
     }
   },
   "findings": [
@@ -572,7 +674,7 @@
         "P2-08"
       ],
       "execution": "Native and exact Linux CI",
-      "action": "Reconcile exact CI for repeatable comparisons and review focus. Validate spoken output with a real screen reader."
+      "action": "Reconcile exact Linux CI for the six-case E4 comparator and expiry focus. Listen to Narrator review announcements using the README procedure."
     },
     {
       "order": 2,
@@ -2889,7 +2991,8 @@
           "implementation": [
             "frontend/src/main.tsx",
             "backend/auth.py",
-            "docs/production-acceptance-gates.md"
+            "docs/production-acceptance-gates.md",
+            "README.md"
           ],
           "consumers": [
             "React review controls and server separation policy"
@@ -2898,15 +3001,15 @@
             "tests/test_oidc_auth.py",
             "tests/test_api_contract.py"
           ],
-          "evidence": "Isolated Playwright MCP against FastAPI verified the skip link moves focus, the review controls have accessible names, Tab reaches Approve and Reject in order, and keyboard rejection removes the stale actions at a 390 px viewport. Synthetic issuer tests cover token semantics. After the review buttons disappear, keyboard focus remains on the live Review status that receives the authoritative result.",
+          "evidence": "Isolated Playwright MCP verified keyboard approval and rejection, skip link, named controls, Tab order, and focus on the authoritative result at 390 px. The expiry reproduction lost focus with the revoke button selected. After repair, the button disappears and focus moves to the live expired result. A competing authorized rejection produced a 409 and refreshed the real FastAPI preview.",
           "dependencies": [
             "G1",
             "G5",
             "G6"
           ],
           "defects": [],
-          "remaining": "Verify actual screen-reader announcements. G1 and G6 require external identity and independently authorized release evidence.",
-          "local_verification": "PLAYWRIGHT_MCP_PASS_EXACT_CI_PENDING"
+          "remaining": "Follow the README Windows Narrator procedure and record actual spoken announcements. G1, G5 and G6 require external identity and independently authorized release evidence.",
+          "local_verification": "KEYBOARD_AND_ACCESSIBILITY_TREE_PASS_SPOKEN_OUTPUT_PENDING"
         }
       ]
     },
@@ -4419,17 +4522,19 @@
           "implementation": [
             "backend/memory/lessons.py",
             "backend/evaluation/smoke.py",
-            "backend/evaluation/local_benchmarks.py"
+            "backend/evaluation/local_benchmarks.py",
+            "backend/investigator/baseline.py"
           ],
           "consumers": [
-            "No measured E4 workload entry point evidenced"
+            "A1 inspect retrieves authorized lesson context and records lesson IDs in ContextManifest",
+            "run_e4_memory_ablation executes paired A1 investigations; evaluate_memory_vs_no_memory measures lookup latency"
           ],
           "tests": [
             "tests/test_lessons.py",
             "tests/test_evaluation_smoke.py",
             "tests/test_local_benchmarks.py"
           ],
-          "evidence": "Two consecutive runs in the same disposable SQLite database used distinct fixtures. The eligible arm cited the scoped active lesson and the revoked and missing controls cited none. Both arms used six probe calls and had identical decisions. The seeded outcome is ordinary lab fixture data. It supplies no recovery or independence evidence.",
+          "evidence": "Six non-promoting paired cases use live scoped lookup and investigation on native PostgreSQL. Each arm made six correct decisions, used ten probes, made zero unsafe proposals and attempted no effects. Eligible citations appeared only in the two active cases. Neither arm proposed when the formerly unhealthy target was now healthy. Median investigation was 34.979 ms with memory and 33.110 ms without it. No local efficacy improvement was measured.",
           "dependencies": [
             "A1",
             "E5",
@@ -4438,8 +4543,9 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Reconcile exact Linux CI. G4 requires protected independent memory efficacy evidence; the local sample showed no decision or probe-count improvement.",
-          "local_verification": "FOCUSED_PASS_EXACT_CI_PENDING"
+          "remaining": "Reconcile exact-commit Linux CI. The local comparator is implemented and repeatable. Measurable benefit has not been established; G4 requires independently held-out efficacy evidence.",
+          "local_verification": "NATIVE_POSTGRESQL_PASS_EXACT_CI_PENDING",
+          "local_implementation": "COMPLETE_DETERMINISTIC_SIMULATOR_COMPARATOR"
         }
       ]
     },
@@ -4565,7 +4671,7 @@
             "tests/test_heldout.py",
             "tests/test_local_benchmarks.py"
           ],
-          "evidence": "Native PostgreSQL and Temporal ran 36 paired cases through the deployed approval and simulator contracts using a disposable reviewer fixture. Each arm recorded 36 correct decisions, 22 witnessed recoveries, one real UNKNOWN after a simulated lost acknowledgment, and 13 nonrecoveries. Adaptive used 56 probes and fixed runbook used 64. The modeled totals were 21,953 and 22,648 synthetic microcredits. A proposal alone receives zero recovery credit.",
+          "evidence": "Native PostgreSQL and Temporal ran 36 paired cases through the deployed approval and simulator contracts using a disposable reviewer fixture. Each arm recorded 36 correct decisions, 22 witnessed recoveries, one real UNKNOWN after a simulated lost acknowledgment, and 13 nonrecoveries. Adaptive used 56 probes and fixed runbook used 64. The modeled totals were 21,953 and 22,648 synthetic microcredits. A proposal alone receives zero recovery credit. A native follow-up recorded a reviewer dispute through FastAPI. The scorer returned DISPUTED with no verified witness or recovery credit and retained the one charged dispatch attempt. A native follow-up recorded a reviewer dispute through FastAPI. The scorer returned DISPUTED with no verified witness or recovery credit and retained the one charged dispatch attempt.",
           "dependencies": [
             "E2",
             "E6",
@@ -5287,6 +5393,9 @@
     ".github/workflows/ci.yml": [
       "B1-06"
     ],
+    "README.md": [
+      "P2-08"
+    ],
     "backend/adapters/conformance.py": [
       "B3-03",
       "B3-05",
@@ -5547,6 +5656,7 @@
       "A4-02",
       "A4-04",
       "E4-04",
+      "E4-07",
       "E7-03"
     ],
     "backend/learning/failures.py": [

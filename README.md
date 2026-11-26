@@ -318,6 +318,18 @@ Open `http://127.0.0.1:5173` and supply the **local** API token from your `.env`
 
 The local token is **not** reviewer authentication or a real multi-tenant security system. The API requires signed, issuer- and audience-validated identity-provider bearer tokens when `OPSBLAZE_ENVIRONMENT=production`. **Do not expose this application publicly or connect it to real infrastructure.**
 
+### Verify spoken approval announcements on Windows
+
+Use the isolated simulator setup above with separate disposable local operator and reviewer tokens. Use a fresh simulator target for each review. For the expiry case, start the lab API with `OPSBLAZE_APPROVAL_TTL_SECONDS=30` and stop the lab dispatcher after the incident reaches `AWAITING_APPROVAL`. This holds the decision signal while the approval expires. Leave the API, frontend, and Temporal worker running.
+
+1. Open the loopback workbench in Edge. Start Windows Narrator with **Windows+Ctrl+Enter** and use the keyboard for the entire review. Tab once, listen for “Skip to incident snapshot,” and press Enter. Check that Narrator reads the incident region.
+2. Admit a simulator incident, wait for `AWAITING_APPROVAL`, and activate **Refresh status**. Tab through **Review reason**, **Approve simulator plan**, and **Reject**. Check that each control is named and that the sequence matches the visual order.
+3. On one incident, press Enter on **Reject**. On another, press Enter on **Approve simulator plan**. Listen for the new review status. Check that focus is on the result and Tab cannot reach the old review buttons.
+4. In the held-dispatch expiry case, Tab to **Revoke unconsumed approval** before the deadline. Listen for “Review status: EXPIRED,” check that focus returns to the result, and confirm the revoke controls are gone. Restart the disposable dispatcher after expiry.
+5. To check a conflict, open the same pending review in two loopback tabs and refresh both. Reject in the second tab, then submit the still-visible proposal in the first tab with the old version. Listen for the conflict message and the refreshed rejected status. If the first tab has already refreshed, the stale submission did not occur. Repeat with a fresh incident.
+
+Repeat the review at a narrow viewport and record the commit, Windows and Narrator versions, browser and viewport, words spoken, and focus after each result. An accessibility-tree snapshot verifies the browser's roles and names. Spoken acceptance requires listening to Narrator.
+
 ## Verification
 
 Fast unit tests, native Temporal smoke and JSON-history replay tests, a native PostgreSQL/Temporal end-to-end test and a TypeScript production build run in GitHub Actions on `main` without Docker.

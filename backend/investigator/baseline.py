@@ -236,8 +236,6 @@ async def inspect(
     reuse_legacy_advice: bool = False,
     max_elapsed_seconds: float = DEFAULT_MAX_INVESTIGATION_SECONDS,
     allow_memory: bool = True,
-    lesson_ids: list[str] | None = None,
-    memory_mode: str | None = None,
     strategy: Literal["ADAPTIVE", "FIXED_RUNBOOK", "CHEAPEST_FIRST"] = "ADAPTIVE",
 ) -> str:
     """Choose a second read based on the first observation. Never perform an effect."""
@@ -248,23 +246,18 @@ async def inspect(
         advisory_model = None
         reuse_legacy_advice = False
     started = time.perf_counter()
-    if lesson_ids is None or memory_mode is None:
-        resolved_lessons: list[str] = []
-        resolved_mode = "NO_MEMORY_CONTROL" if not allow_memory else "NO_MEMORY"
-        if allow_memory:
-            async with sessions() as session:
-                target_id = await session.scalar(
-                    select(Incident.target_id).where(
-                        Incident.id == incident_id, Incident.tenant_id == tenant_id,
-                    )
+    lesson_ids: list[str] = []
+    memory_mode = "NO_MEMORY" if allow_memory else "NO_MEMORY_CONTROL"
+    if allow_memory:
+        async with sessions() as session:
+            target_id = await session.scalar(
+                select(Incident.target_id).where(
+                    Incident.id == incident_id, Incident.tenant_id == tenant_id,
                 )
-                if target_id is not None:
-                    cited, resolved_mode = await retrieve_cited_memory_context(
-                        session, tenant_id, target_id, limit=4, allow_memory=allow_memory,
-                    )
-                    resolved_lessons = [item["lesson_id"] for item in cited]
-        lesson_ids = resolved_lessons if lesson_ids is None else lesson_ids
-        memory_mode = resolved_mode if memory_mode is None else memory_mode
+            )
+            if target_id is not None:
+                cited, memory_mode = await retrieve_cited_memory_context(session, tenant_id, target_id)
+                lesson_ids = [item["lesson_id"] for item in cited]
     try:
         health = await invoke_probe(
             sessions, tenant_id, incident_id, 1, "simulator.health"
