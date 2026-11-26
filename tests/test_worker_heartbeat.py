@@ -1,14 +1,100 @@
 """Worker heartbeats are durable and prevent false production readiness."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from backend.api import app
 from backend.database import get_session
 from backend.settings import Settings, get_settings
 from backend.workers.heartbeat import present_workers, record_heartbeat
+
+
+@pytest.mark.asyncio
+async def test_readiness_times_out_a_stalled_database_and_recovers(sessions_fixture, monkeypatch):
+    stall = False
+    query_cancelled = False
+
+    async def session_override():
+        async with sessions_fixture() as session:
+            execute = session.execute
+
+            async def run_query(*args, **kwargs):
+                nonlocal query_cancelled
+                result = await execute(*args, **kwargs)
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    query_cancelled = True
+                return result
+
+            if stall:
+                monkeypatch.setattr(session, "execute", run_query)
+            yield session
+
+    monkeypatch.setitem(app.dependency_overrides, get_session, session_override)
+    monkeypatch.setitem(app.dependency_overrides, get_settings, lambda: Settings())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://api.test") as client:
+        initial = await client.get("/v1/health/ready")
+        assert initial.status_code == 200
+        monkeypatch.setattr(
+            "backend.routers.operations.READINESS_DATABASE_TIMEOUT_SECONDS", 0.15,
+        )
+        stall = True
+        response = await asyncio.wait_for(client.get("/v1/health/ready"), timeout=1)
+        assert response.status_code == 503
+        assert response.json() == {"detail": "database unavailable"}
+        assert query_cancelled
+
+        stall = False
+        response = await client.get("/v1/health/ready")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ready"}
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_readiness_releases_postgres_connection_after_cancelled_probe(monkeypatch):
+    settings = get_settings()
+    assert settings.database_url.startswith("postgresql+asyncpg:")
+    engine = create_async_engine(settings.database_url, pool_size=1, max_overflow=0)
+    sessions = async_sessionmaker(engine)
+    stall = True
+
+    async def session_override():
+        async with sessions() as session:
+            original_execute = session.execute
+
+            async def execute_stalled_probe(*_args, **_kwargs):
+                return await original_execute(text("SELECT pg_sleep(8)"))
+
+            if stall:
+                monkeypatch.setattr(session, "execute", execute_stalled_probe)
+            yield session
+
+    monkeypatch.setattr("backend.routers.operations.READINESS_DATABASE_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setitem(app.dependency_overrides, get_session, session_override)
+    monkeypatch.setitem(app.dependency_overrides, get_settings, lambda: Settings())
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://api.test") as client:
+            response = await asyncio.wait_for(client.get("/v1/health/ready"), timeout=3)
+            assert response.status_code == 503
+            assert response.json() == {"detail": "database unavailable"}
+            assert engine.pool.checkedout() == 0
+
+            stall = False
+            response = await asyncio.wait_for(client.get("/v1/health/ready"), timeout=3)
+            assert response.status_code == 200
+            assert response.json() == {"status": "ready"}
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

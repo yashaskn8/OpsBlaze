@@ -1,5 +1,6 @@
 """Operational readiness and bounded operator maintenance HTTP routes."""
 
+import asyncio
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -9,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.auth import local_operator, local_security_admin, local_tenant
 from backend.database import get_session
 from backend.settings import Settings, get_settings
+
+READINESS_DATABASE_TIMEOUT_SECONDS = 3
+
 
 async def readiness(
     session: AsyncSession = Depends(get_session),
@@ -41,28 +45,29 @@ async def readiness(
             ) from exc
 
     try:
-        await session.execute(text("SELECT 1"))
-        if settings.environment == "production":
-            present = await present_workers(
-                session,
-                max_age_seconds=settings.worker_stale_seconds,
-            )
-            if not REQUIRED_ROLES.issubset(present):
-                raise HTTPException(503, "required worker heartbeat missing or stale")
-            if settings.min_distinct_worker_hosts > 1:
-                host_counts = await present_worker_host_counts(
+        async with asyncio.timeout(READINESS_DATABASE_TIMEOUT_SECONDS):
+            await session.execute(text("SELECT 1"))
+            if settings.environment == "production":
+                present = await present_workers(
                     session,
                     max_age_seconds=settings.worker_stale_seconds,
                 )
-                if any(
-                    host_counts[role] < settings.min_distinct_worker_hosts
-                    for role in MULTIHOST_ROLES
-                ):
-                    raise HTTPException(
-                        503, "configured multi-host worker presence not observed",
+                if not REQUIRED_ROLES.issubset(present):
+                    raise HTTPException(503, "required worker heartbeat missing or stale")
+                if settings.min_distinct_worker_hosts > 1:
+                    host_counts = await present_worker_host_counts(
+                        session,
+                        max_age_seconds=settings.worker_stale_seconds,
                     )
-        # Never hold an active PostgreSQL read transaction over an RPC.
-        await session.rollback()
+                    if any(
+                        host_counts[role] < settings.min_distinct_worker_hosts
+                        for role in MULTIHOST_ROLES
+                    ):
+                        raise HTTPException(
+                            503, "configured multi-host worker presence not observed",
+                        )
+            # Never hold an active PostgreSQL read transaction over an RPC.
+            await session.rollback()
     except HTTPException:
         raise
     except Exception as exc:
