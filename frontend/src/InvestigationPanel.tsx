@@ -19,6 +19,8 @@ export function InvestigationPanel({ report, stale }: { report: Investigation; s
   const witnessTime = recovery?.admission_to_recorded_witness_ms;
   const effect = report.latest_effect_state;
   const unresolved = effect === "UNKNOWN";
+  const pending = !outcome && (report.incident.status_projection === "EXECUTING"
+    || unresolved || effect === "SENT" || effect === "VERIFIED");
   const adverse = outcome === "FAILED" || outcome === "INCONCLUSIVE" || outcome === "DISPUTED";
 
   return <div className="audit" aria-labelledby="investigation-title">
@@ -37,15 +39,29 @@ export function InvestigationPanel({ report, stale }: { report: Investigation; s
       <dt>Assessment</dt><dd>{assessment
         ? `Step ${assessment.step_no}: ${humanize(assessment.outcome)} · ${humanize(assessment.reason)}`
         : "Pending"}</dd>
-      <dt>Outcome</dt><dd>{outcome
-        ? `${humanize(outcome)} · revision ${recovery?.latest_outcome_revision}`
-        : "No outcome recorded"}</dd>
-      {witnessTime != null && <><dt>Simulator witness</dt><dd>{(witnessTime / 1000).toFixed(2)} s after admission</dd></>}
       <dt>Effect receipt</dt><dd>{effect ?? "No effect recorded"}</dd>
     </dl>
-    {(adverse || unresolved) && <p role="status" className="error">
-      {unresolved ? "Effect is UNKNOWN. Independent confirmation is pending." : `Latest outcome: ${humanize(outcome!)}.`}
-    </p>}
+    {unresolved && <p role="status" className="error">Effect is UNKNOWN. Independent confirmation is pending.</p>}
+    <section id="investigation-outcome" tabIndex={-1} aria-labelledby="investigation-outcome-title" className="audit-item">
+      <h4 id="investigation-outcome-title">Outcome record</h4>
+      <p role="status" className={adverse ? "error" : "muted"}>{outcome
+        ? `${humanize(outcome)} · revision ${recovery?.latest_outcome_revision}`
+        : pending ? "Pending independent confirmation" : "No outcome recorded"}</p>
+      {outcome === "DISPUTED" && <p>Review the recorded source and obtain an independent observation before closing the incident.</p>}
+      {recovery?.latest_outcome_id && <dl>
+        <dt>Record ID</dt><dd className="mono">{recovery.latest_outcome_id}</dd>
+        {recovery.latest_outcome_witness_source && <>
+          <dt>Source</dt><dd>{humanize(recovery.latest_outcome_witness_source)}</dd>
+        </>}
+        {recovery.latest_outcome_recorded_at && <>
+          <dt>Recorded</dt><dd>{new Date(recovery.latest_outcome_recorded_at).toLocaleString()}</dd>
+        </>}
+        {recovery.latest_outcome_observed_version != null && <>
+          <dt>Observed target version</dt><dd>{recovery.latest_outcome_observed_version}</dd>
+        </>}
+        {witnessTime != null && <><dt>Simulator witness</dt><dd>{(witnessTime / 1000).toFixed(2)} s after admission</dd></>}
+      </dl>}
+    </section>
     {report.steps.length === 0 && <p className="muted">No investigation steps recorded.</p>}
     {report.steps_truncated && <p className="muted">Showing the latest 20 steps.</p>}
     {report.steps.map(step => <div className="audit-item" key={step.step_no}>

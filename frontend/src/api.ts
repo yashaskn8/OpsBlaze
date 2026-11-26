@@ -25,6 +25,10 @@ export type Investigation = {
   recovery: {
     latest_outcome_revision: number | null;
     latest_outcome_label: string | null;
+    latest_outcome_id: string | null;
+    latest_outcome_witness_source: string | null;
+    latest_outcome_recorded_at: string | null;
+    latest_outcome_observed_version: number | null;
     admission_to_recorded_witness_ms: number | null;
   } | null;
 };

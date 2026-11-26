@@ -88,6 +88,9 @@ async def test_investigation_refresh_bounds_history_and_redacts_foreign_refs(ses
     assert body["latest_assessment"] == {"reason": "TOOL_UNAVAILABLE", "outcome": "ABSTAINED", "step_no": 21}
     assert body["advisory_fallback_reason"] == "PROVIDER_UNAVAILABLE"
     assert body["recovery"]["latest_outcome_label"] == "FAILED"
+    assert body["recovery"]["latest_outcome_witness_source"] == "SIMULATOR_WITNESS"
+    assert body["recovery"]["latest_outcome_id"] is not None
+    assert body["recovery"]["latest_outcome_recorded_at"].endswith("+00:00")
     assert body["recovery"]["admission_to_recorded_witness_ms"] is None
 
 

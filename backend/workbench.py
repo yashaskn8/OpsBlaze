@@ -75,7 +75,7 @@ async def read_investigation(
     latest_effect = await session.scalar(select(EffectReceipt.state).where(
         EffectReceipt.incident_id == incident.id, EffectReceipt.tenant_id == tenant_id,
     ).order_by(EffectReceipt.created_at.desc(), EffectReceipt.id.desc()).limit(1))
-    recovery = await recorded_recovery_timing(session, tenant_id, incident.id)
+    recovery = await recorded_recovery_timing(session, tenant_id, incident.id, include_outcome_source=True)
     return {
         "incident": IncidentView.model_validate(incident),
         "probe_budget": {"used": incident.probe_used, "limit": probe_limit,

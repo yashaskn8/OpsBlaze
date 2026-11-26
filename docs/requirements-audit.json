@@ -7,8 +7,8 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "2dbc46a708f6f8291b854f6a9a28cc4803e8b38a",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45780955016",
+    "commit": "22248e978de7d4cc5951810c62ec124e820e1cc4",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45781551269",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
@@ -17,8 +17,8 @@
     "IMPLEMENTED BUT DISCONNECTED": 1,
     "LOCALLY UNVERIFIED": 3,
     "NOT IMPLEMENTED": 9,
-    "PARTIALLY IMPLEMENTED": 57,
-    "VERIFIED WORKING": 89
+    "PARTIALLY IMPLEMENTED": 55,
+    "VERIFIED WORKING": 91
   },
   "verification": {
     "native_postgresql": {
@@ -139,6 +139,13 @@
       "frontend_node_tests_passed": 14,
       "typescript_vite_build": "PASS",
       "chrome": "The terminal handoff and provider fallback appeared after the server's SSE notification and disappeared immediately on tenant change."
+    },
+    "outcome_workbench": {
+      "focused_windows_backend_tests_passed": 64,
+      "native_postgresql_temporal_tests_passed": 3,
+      "frontend_node_tests_passed": 14,
+      "typescript_vite_build": "PASS",
+      "chrome": "Observed pending, verified, and a reviewer dispute without manual snapshot refresh. Keyboard navigation reached the scoped outcome record after loading the graph and tenant change hid the record."
     }
   },
   "findings": [
@@ -314,6 +321,24 @@
         "Chrome against real FastAPI with competing synthetic reviews"
       ],
       "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45779838912"
+    },
+    {
+      "id": "P1-OUTCOME-DISPUTE-NOTIFICATION",
+      "severity": "MEDIUM",
+      "status": "LOCALLY_REPAIRED_CI_PENDING",
+      "requirements": [
+        "P1-14"
+      ],
+      "reproduction": "Observe a verified outcome in a connected workbench, then use the authorized feedback endpoint to dispute it without changing incident projection state.",
+      "expected": "The workbench refetches the scoped outcome and removes the old verified result.",
+      "observed": "The outcome transaction wrote a revision without a durable event for connected clients.",
+      "root_cause": "Independent witness and reviewer dispute writes did not emit workbench notifications.",
+      "repair": "Commit one scoped UI event alongside each new revision, including when the incident projection version stays unchanged.",
+      "acceptance": [
+        "tests/test_outcomes.py",
+        "tests/test_pg_temporal_e2e.py",
+        "Chrome against real FastAPI with a synthetic reviewer dispute"
+      ]
     }
   ],
   "repair_backlog": [
@@ -348,7 +373,7 @@
         "P3-16"
       ],
       "execution": "Direct GitHub for isolated changes when applicable checks can run; native Codex for browser and runtime verification",
-      "action": "Reconcile exact-commit operator handoff CI, then connect scoped source navigation for pending and disputed outcomes."
+      "action": "Reconcile exact-commit outcome workbench CI, connect remaining scoped graph sources, and progress A1–A3."
     },
     {
       "order": 4,
@@ -1892,7 +1917,7 @@
         {
           "id": "A4-04",
           "requirement": "Separate model failure, genuine model uncertainty, tool failure, and budget exhaustion in operator-visible feedback",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/investigator/advisory.py",
             "backend/investigator/baseline.py",
@@ -1918,9 +1943,10 @@
             "P1"
           ],
           "defects": [],
-          "remaining": "Reconcile exact-commit CI.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
-          "pdf_reference": "Section 2.8.3–2.8.4, PDF pages 39–40"
+          "remaining": "",
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "pdf_reference": "Section 2.8.3–2.8.4, PDF pages 39–40",
+          "commit": "22248e978de7d4cc5951810c62ec124e820e1cc4"
         },
         {
           "id": "A4-05",
@@ -2162,7 +2188,7 @@
         {
           "id": "P1-07",
           "requirement": "Show reason and next steps when investigation hands off.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "frontend/src/main.tsx",
             "backend/api.py",
@@ -2184,9 +2210,10 @@
             "A4"
           ],
           "defects": [],
-          "remaining": "Reconcile exact-commit CI.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
-          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43"
+          "remaining": "",
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
+          "commit": "22248e978de7d4cc5951810c62ec124e820e1cc4"
         },
         {
           "id": "P1-08",
@@ -2333,7 +2360,8 @@
             "frontend/src/main.tsx",
             "backend/api.py",
             "backend/workbench.py",
-            "frontend/src/InvestigationPanel.tsx"
+            "frontend/src/InvestigationPanel.tsx",
+            "backend/outcomes.py"
           ],
           "consumers": [
             "Workbench SSE resynchronization and polling -> GET /v1/incidents/{id}/investigation"
@@ -2342,19 +2370,19 @@
             "tests/test_outcomes.py",
             "tests/test_lineage.py",
             "tests/test_workbench.py",
-            "frontend/tests/api.test.mjs"
+            "frontend/tests/api.test.mjs",
+            "tests/test_pg_temporal_e2e.py"
           ],
-          "evidence": "Chrome rendered an UNKNOWN effect and the newest failed outcome from the actual FastAPI investigation response. Only a verified simulator witness is eligible for recorded duration.",
+          "evidence": "Chrome showed pending confirmation and then a verified outcome. A reviewer disputed the outcome through the real FastAPI endpoint and the workbench rendered the disputed revision, hid the old witness duration, and linked to the scoped record without requiring a refresh for the incident status.",
           "dependencies": [
             "B3",
             "A4",
             "E2"
           ],
           "defects": [],
-          "remaining": "Complete operator navigation and review control behavior for pending and disputed outcomes.",
-          "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
-          "commit": "9b96427761fc2cc84a56d22ddf6083999dff389a"
+          "remaining": "Reconcile exact-commit CI. A review form for authorizing a dispute remains tracked under E2.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43"
         },
         {
           "id": "P1-15",
@@ -3016,21 +3044,26 @@
           "implementation": [
             "backend/lineage.py",
             "backend/api.py",
-            "frontend/src/main.tsx"
+            "frontend/src/main.tsx",
+            "backend/outcomes.py",
+            "frontend/src/InvestigationPanel.tsx"
           ],
           "consumers": [
             "Lineage record page plus existing evidence, effect and plan reads"
           ],
           "tests": [
-            "tests/test_lineage.py"
+            "tests/test_lineage.py",
+            "tests/test_outcomes.py",
+            "tests/test_pg_temporal_e2e.py"
           ],
-          "evidence": "The UI displays status and IDs and contains bounded paging. It lacks end-to-end direct navigation from all graph nodes to the authoritative record.",
+          "evidence": "Chrome verified keyboard navigation from the current outcome node to the scoped record containing its source, version and recorded time. Historical outcome nodes and other graph nodes still require detail views.",
           "dependencies": [
             "B3",
             "E2"
           ],
           "defects": [],
-          "remaining": "Connect and test source drill-down and prominent UNKNOWN or failed results."
+          "remaining": "Connect the remaining graph nodes to their authoritative scoped records and verify incomplete graph behavior.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING"
         },
         {
           "id": "P3-17",
@@ -5293,7 +5326,9 @@
     ],
     "backend/outcomes.py": [
       "B3-04",
+      "P1-14",
       "P3-02",
+      "P3-16",
       "P3-19",
       "E1-01",
       "E2-01",
@@ -5525,7 +5560,8 @@
       "P1-05",
       "P1-06",
       "P1-07",
-      "P1-14"
+      "P1-14",
+      "P3-16"
     ],
     "frontend/src/api.ts": [
       "P2-01",
@@ -5853,6 +5889,7 @@
     ],
     "tests/test_outcomes.py": [
       "P1-14",
+      "P3-16",
       "P3-19",
       "E2-01",
       "E2-02",
@@ -5904,10 +5941,12 @@
       "A3-01",
       "P1-02",
       "P1-12",
+      "P1-14",
       "P2-02",
       "P2-04",
       "P2-05",
       "P2-07",
+      "P3-16",
       "E1-01",
       "E1-03",
       "E2-01",

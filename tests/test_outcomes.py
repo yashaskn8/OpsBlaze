@@ -6,7 +6,7 @@ from backend.adapters.simulator import SimulatorAdapter
 from backend.effects.gateway import execute_simulator_effect
 from backend.effects.reservations import reserve_simulator_target
 from backend.models import (
-    EffectReceipt, OutcomeRevision, ResourceEpoch, SimulatorTarget
+    EffectReceipt, OutcomeRevision, ResourceEpoch, SimulatorTarget, UIEvent
 )
 from backend.outcomes import OutcomeConflict, adjudicate_simulator, dispute_outcome
 from backend.schemas import IncidentCreate
@@ -49,6 +49,35 @@ async def test_independent_witness_and_dispute_revisions(witnessed_effect):
     assert await adjudicate_simulator(sessions, adapter, "a", incident_id, effect_id) == "DISPUTED"
     async with sessions() as session:
         assert len(list((await session.scalars(select(OutcomeRevision))).all())) == 2
+        events = (await session.scalars(select(UIEvent).where(
+            UIEvent.incident_id == incident_id, UIEvent.kind.in_(("OUTCOME_RECORDED", "OUTCOME_DISPUTED")),
+        ).order_by(UIEvent.id))).all()
+        assert [event.kind for event in events] == ["OUTCOME_RECORDED", "OUTCOME_DISPUTED"]
+        assert {event.tenant_id for event in events} == {"a"}
+        assert len({event.projection_version for event in events}) == 1
+
+
+async def test_failed_dispute_leaves_no_revision_or_notification(witnessed_effect, monkeypatch):
+    from backend import outcomes
+
+    sessions, adapter, incident_id, effect_id = witnessed_effect
+    assert await adjudicate_simulator(sessions, adapter, "a", incident_id, effect_id) == "VERIFIED"
+
+    async def unavailable(*args):
+        raise RuntimeError("synthetic invalidation failure")
+
+    async with sessions() as session:
+        first = await session.scalar(select(OutcomeRevision))
+        outcome_id = first.id
+    monkeypatch.setattr(outcomes, "invalidate_outcome_dependents", unavailable)
+    async with sessions() as session:
+        with pytest.raises(RuntimeError, match="synthetic invalidation failure"):
+            await dispute_outcome(session, "a", outcome_id, 1, "independent check disagrees", reviewer_id=REVIEWER)
+    async with sessions() as session:
+        assert (await session.scalars(select(OutcomeRevision.label))).all() == ["VERIFIED"]
+        assert await session.scalar(select(UIEvent.id).where(
+            UIEvent.incident_id == incident_id, UIEvent.kind == "OUTCOME_DISPUTED",
+        )) is None
 
 
 @pytest.mark.asyncio

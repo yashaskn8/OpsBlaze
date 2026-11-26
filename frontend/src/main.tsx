@@ -181,6 +181,8 @@ function App() {
   const authenticated = usingOidc
     ? Boolean(accessToken && identity)
     : Boolean(token && tenant);
+  const activeInvestigation = authenticated && investigation?.scope === authScope
+    && investigation.report.incident.id === incident?.id ? investigation.report : null;
   const canOperate = usingOidc ? Boolean(identity?.roles.includes("operator")) : authenticated;
   const canRedrive = usingOidc && Boolean(
     identity?.roles.includes("security_admin")
@@ -903,10 +905,8 @@ function App() {
                 <button type="button" className="secondary" disabled={busy || !canOperate || connection !== "LIVE"} onClick={() => decide("cancel")}>Request cancellation</button>
               )}
             </div>
-            {authenticated && investigation?.scope === authScope
-              && investigation.report.incident.id === incident.id
-              && <InvestigationPanel report={investigation.report}
-                stale={connection !== "LIVE" || investigation.report.incident.status_version !== incident.status_version} />}
+            {activeInvestigation && <InvestigationPanel report={activeInvestigation}
+              stale={connection !== "LIVE" || activeInvestigation.incident.status_version !== incident.status_version} />}
             {plan && <div className="plan">
               <h3>Proposed simulator plan</h3>
               <p><strong>{plan.action_id}</strong> for {plan.target_id}</p>
@@ -1000,15 +1000,12 @@ function App() {
               {additionalLineagePages.some(page => page.missing_refs.length > 0) &&
                 <p className="error">Additional record pages contain {additionalLineagePages.reduce((n, page) => n + page.missing_refs.length, 0)} out-of-scope or missing references.</p>}
               <div className="trace-scroll">
-                {lineage.nodes.map(node => <div className="trace-node" key={node.id}>
-                  <strong>{node.kind}</strong><span>{node.status}</span>
-                  <code>{node.id.split(":")[1]}</code>
-                </div>)}
-                {(lineagePages.incidentId === incident.id
-                  ? Object.values(lineagePages.pages).flatMap(page => page.nodes)
-                  : []).map(node => <div className="trace-node" key={node.id}>
-                    <strong>{node.kind} (additional)</strong><span>{node.status}</span>
+                {[...lineage.nodes, ...additionalLineagePages.flatMap(page => page.nodes)].map((node, index) =>
+                  <div className="trace-node" key={node.id}>
+                    <strong>{node.kind}{index >= lineage.nodes.length && " (additional)"}</strong><span>{node.status}</span>
                     <code>{node.id.split(":")[1]}</code>
+                    {node.id === "outcome:" + activeInvestigation?.recovery?.latest_outcome_id &&
+                      <a href="#investigation-outcome">View latest outcome record</a>}
                   </div>)}
               </div>
               <h3>Causal links ({allLineageEdges.length})</h3>

@@ -458,7 +458,7 @@ async def test_parallel_outcome_witnesses_and_disputes_serialize_by_incident() -
     from backend.effects.gateway import execute_simulator_effect
     from backend.effects.reservations import reserve_simulator_target
     from backend.models import (
-        EffectReceipt, OutcomeRevision, ResourceEpoch, SimulatorTarget,
+        EffectReceipt, OutcomeRevision, ResourceEpoch, SimulatorTarget, UIEvent,
     )
     from backend.outcomes import (
         OutcomeConflict, adjudicate_simulator, dispute_outcome,
@@ -546,6 +546,10 @@ async def test_parallel_outcome_witnesses_and_disputes_serialize_by_incident() -
                 (1, "SIMULATOR_WITNESS"), (2, "OPERATOR_DISPUTE"),
             ]
             assert [row.reviewer_id for row in rows] == [None, winners[0]]
+            assert (await session.scalars(select(UIEvent.kind).where(
+                UIEvent.tenant_id == tenant_id, UIEvent.incident_id == incident.id,
+                UIEvent.kind.in_(("OUTCOME_RECORDED", "OUTCOME_DISPUTED")),
+            ).order_by(UIEvent.id))).all() == ["OUTCOME_RECORDED", "OUTCOME_DISPUTED"]
     finally:
         await engine.dispose()
 

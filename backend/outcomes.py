@@ -7,7 +7,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import SimulatorAdapter, observed_healthy_at_version, utc
-from backend.models import EffectReceipt, Incident, OutboxEntry, OutcomeRevision
+from backend.models import EffectReceipt, Incident, OutboxEntry, OutcomeRevision, UIEvent
 from backend.learning.invalidation import invalidate_outcome_dependents
 from backend.telemetry import trace_operation
 from backend.lineage_projection import replace_record_edges
@@ -35,12 +35,14 @@ async def latest_outcome(session: AsyncSession, tenant_id: str, incident_id: UUI
 
 async def recorded_recovery_timing(
     session: AsyncSession, tenant_id: str, incident_id: UUID,
+    *, include_outcome_source: bool = False,
 ) -> dict | None:
     """Read the latest scoped outcome; a projection or receipt is not a witness."""
     row = (await session.execute(
         select(
             Incident.created_at, OutcomeRevision.revision, OutcomeRevision.label,
             OutcomeRevision.witness_source, OutcomeRevision.created_at,
+            OutcomeRevision.id, OutcomeRevision.observed_version,
         )
         .outerjoin(OutcomeRevision, and_(
             OutcomeRevision.incident_id == Incident.id,
@@ -51,18 +53,26 @@ async def recorded_recovery_timing(
     )).one_or_none()
     if row is None:
         return None
-    admitted, revision, label, witness, recorded = row
+    admitted, revision, label, witness, recorded, outcome_id, observed_version = row
     duration = None
     if label == "VERIFIED" and witness == "SIMULATOR_WITNESS" and recorded is not None:
         # Database timestamps are UTC, including naive SQLite test timestamps.
         duration = schedule_to_start_ms(utc(admitted), utc(recorded))
-    return {
+    report = {
         "scope": "SIMULATOR_LEDGER_ONLY",
         "latest_outcome_revision": revision,
         "latest_outcome_label": label,
         "admission_to_recorded_witness_ms": duration,
         "production_recovery_certified": False,
     }
+    if include_outcome_source:
+        report.update(
+            latest_outcome_id=str(outcome_id) if outcome_id else None,
+            latest_outcome_witness_source=witness,
+            latest_outcome_recorded_at=utc(recorded).isoformat() if recorded else None,
+            latest_outcome_observed_version=observed_version,
+        )
+    return report
 
 
 async def adjudicate_simulator(
@@ -121,12 +131,12 @@ async def adjudicate_simulator(
         async with session.begin():
             # Lock the stable parent before allocating a new outcome revision.
             # PostgreSQL serializes all witnesses and disputes for this incident.
-            incident = await session.scalar(
-                select(Incident.id)
+            projection_version = await session.scalar(
+                select(Incident.status_version)
                 .where(Incident.id == incident_id, Incident.tenant_id == tenant_id)
                 .with_for_update()
             )
-            if incident is None:
+            if projection_version is None:
                 raise OutcomeConflict("incident missing")
             previous = await latest_outcome(session, tenant_id, incident_id)
             if previous is not None:
@@ -142,6 +152,10 @@ async def adjudicate_simulator(
                 reason="simulator postcondition observed" if verified else "simulator postcondition mismatch",
             )
             session.add(row)
+            session.add(UIEvent(
+                tenant_id=tenant_id, incident_id=incident_id,
+                kind="OUTCOME_RECORDED", projection_version=projection_version,
+            ))
             if label == "VERIFIED":
                 # The verified source revision and its projection intent commit
                 # together. A crash before the projector is replay-safe.
@@ -175,12 +189,12 @@ async def dispute_outcome(
         # The immutable outcome row itself is not a serialization point:
         # new revisions insert a different row. Lock the shared incident
         # first, then recheck the latest revision under that lock.
-        incident = await session.scalar(
-            select(Incident.id)
+        projection_version = await session.scalar(
+            select(Incident.status_version)
             .where(Incident.id == prior.incident_id, Incident.tenant_id == tenant_id)
             .with_for_update()
         )
-        if incident is None:
+        if projection_version is None:
             raise OutcomeConflict("incident missing")
         latest = await latest_outcome(session, tenant_id, prior.incident_id)
         if (
@@ -196,6 +210,10 @@ async def dispute_outcome(
             reviewer_id=reviewer_id,
         )
         session.add(disputed)
+        session.add(UIEvent(
+            tenant_id=tenant_id, incident_id=prior.incident_id,
+            kind="OUTCOME_DISPUTED", projection_version=projection_version,
+        ))
         await session.flush()
         await replace_record_edges(session, tenant_id, prior.incident_id, "outcome", disputed)
         await invalidate_outcome_dependents(session, tenant_id, prior.incident_id)

@@ -78,4 +78,6 @@ The preview repair passed [all ten exact-commit Linux CI jobs](https://github.co
 
 The approval lifecycle passed [all ten exact-commit Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45780955016). The workbench now displays reason-specific guidance on terminal investigation handoff and explains the deterministic fallback when advisory execution fails or is skipped. It reads only the scoped fallback category within the investigation snapshot. Chrome verified the live update and tenant switch against FastAPI. Native PostgreSQL verified that fallback, probe budget, and outcome advance together on the next snapshot read.
 
+The handoff change passed [all ten exact-commit Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45781551269). Outcome revisions and their workbench notifications now commit together. The workbench shows pending confirmation separately from failed and disputed outcomes and links the current lineage outcome to its scoped source record. Chrome observed a reviewer dispute from FastAPI without a page refresh. Native PostgreSQL verified that concurrent duplicate witnesses and disputes emit one notification per committed revision.
+
 The completion definition is **measured acceptance of every relevant test in the PDF**, not the presence of a similarly named file or endpoint.
