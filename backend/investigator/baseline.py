@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from backend.models import ContextManifest, HypothesisStep, Incident
 from backend.lineage_projection import replace_evidence_edges
 from backend.probes.gateway import ProbeDenied, invoke_probe
-from backend.plans import PlanConflict, propose_simulator_plan
+from backend.plan_proposals import PlanConflict, propose_simulator_plan
 from backend.investigator.advisory import advise_after_unhealthy
 from backend.investigator.abstain import assess_decision
 
@@ -234,11 +234,30 @@ async def inspect(
     advisory_model: str | None = None,
     reuse_legacy_advice: bool = False,
     max_elapsed_seconds: float = DEFAULT_MAX_INVESTIGATION_SECONDS,
+    allow_memory: bool = True,
     lesson_ids: list[str] | None = None,
-    memory_mode: str = "NO_MEMORY",
+    memory_mode: str | None = None,
 ) -> str:
     """Choose a second read based on the first observation. Never perform an effect."""
+    from backend.memory.lessons import retrieve_cited_memory_context
+
     started = time.perf_counter()
+    if lesson_ids is None or memory_mode is None:
+        resolved_lessons: list[str] = []
+        resolved_mode = "NO_MEMORY_CONTROL" if not allow_memory else "NO_MEMORY"
+        async with sessions() as session:
+            target_id = await session.scalar(
+                select(Incident.target_id).where(
+                    Incident.id == incident_id, Incident.tenant_id == tenant_id,
+                )
+            )
+            if target_id is not None:
+                cited, resolved_mode = await retrieve_cited_memory_context(
+                    session, tenant_id, target_id, limit=4, allow_memory=allow_memory,
+                )
+                resolved_lessons = [item["lesson_id"] for item in cited]
+        lesson_ids = resolved_lessons if lesson_ids is None else lesson_ids
+        memory_mode = resolved_mode if memory_mode is None else memory_mode
     try:
         health = await invoke_probe(
             sessions, tenant_id, incident_id, 1, "simulator.health"

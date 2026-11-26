@@ -1,5 +1,5 @@
 
-"""Typed simulator plan proposal and persisted operator decision."""
+"""Typed simulator plan proposal, operator decision, and execution boundary."""
 
 import hashlib
 import json
@@ -15,26 +15,14 @@ from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
 from backend.models import ApprovalGrant, ApprovalRevocation, RevokedIdentity, DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, ProbeCall, SimulatorTarget, UIEvent
 from backend.outcomes import adjudicate_simulator
-from backend.lineage_projection import replace_evidence_edges, replace_record_edges
+from backend.lineage_projection import replace_record_edges
+from backend.plan_proposals import (
+    PlanConflict,
+    digest_plan,
+    propose_simulator_plan as propose_simulator_plan,
+)
 from backend.probes.gateway import evidence_links_intact
 from backend.settings import get_settings
-
-
-class PlanConflict(Exception):
-    pass
-
-
-def digest_plan(
-    tenant_id: str, incident_id: UUID, target_id: str,
-    expected_version: int, evidence_ids: list[str],
-) -> str:
-    doc = {
-        "action": "SIMULATOR_MARK_HEALTHY", "tenant": tenant_id,
-        "incident_id": str(incident_id), "target": target_id,
-        "version": expected_version, "evidence_ids": evidence_ids,
-    }
-    raw = json.dumps(doc, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 async def current_plan_evidence_is_intact(
@@ -134,44 +122,6 @@ async def current_plan_evidence_is_intact(
         and observed["simulator.version"]
             == json.dumps({"version": plan.expected_version}, separators=(",", ":"))
     )
-
-
-async def propose_simulator_plan(
-    sessions: async_sessionmaker[AsyncSession],
-    tenant_id: str, incident_id: UUID, expected_version: int,
-    evidence_ids: list[str],
-) -> IncidentPlan:
-    async with sessions() as session:
-        async with session.begin():
-            incident = await session.scalar(
-                select(Incident).where(
-                    Incident.id == incident_id, Incident.tenant_id == tenant_id
-                )
-            )
-            if incident is None:
-                raise PlanConflict("incident not found")
-            digest = digest_plan(
-                tenant_id, incident_id, incident.target_id,
-                expected_version, evidence_ids,
-            )
-            existing = await session.scalar(
-                select(IncidentPlan).where(IncidentPlan.incident_id == incident_id)
-            )
-            if existing is not None:
-                if existing.plan_digest != digest:
-                    raise PlanConflict("incident already has a different plan")
-                return existing
-            plan = IncidentPlan(
-                id=uuid5(NAMESPACE_URL, f"opsblaze/plan/{incident_id}"),
-                tenant_id=tenant_id, incident_id=incident_id,
-                target_id=incident.target_id, action_id="SIMULATOR_MARK_HEALTHY",
-                plan_digest=digest, expected_version=expected_version,
-                evidence_ids=evidence_ids, status="PROPOSED", version=1,
-            )
-            session.add(plan)
-            await session.flush()
-            await replace_evidence_edges(session, tenant_id, incident_id, "plan", plan)
-        return plan
 
 
 async def decide_plan(

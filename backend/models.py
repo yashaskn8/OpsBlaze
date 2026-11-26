@@ -668,6 +668,7 @@ class RouteDecision(Base):
     router_version: Mapped[str | None] = mapped_column(String(32))
     model_id: Mapped[str | None] = mapped_column(String(64))
     model_token_reservation: Mapped[int | None] = mapped_column(Integer)
+    context_features: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

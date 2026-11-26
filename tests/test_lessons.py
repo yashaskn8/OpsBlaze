@@ -237,3 +237,56 @@ async def test_learning_lineage_is_scoped_and_rebuildable_after_consent_revocati
         assert graph["evidence_projection"] == "MATCHED"
         assert any(n["kind"] == "lesson" and n["status"] == "REVOKED" for n in graph["nodes"])
         assert await retrieve_active_lessons(session, "t", "checkout") == []
+
+
+@pytest.mark.asyncio
+async def test_e4_04_a1_investigation_feeds_cited_lower_trust_lessons_with_no_memory_control(
+    lesson_source,
+):
+    """E4-04: bounded cited lower-trust lessons flow into A1 ContextManifest, with explicit no-memory control."""
+    from sqlalchemy import select
+    from backend.investigator.baseline import inspect
+    from backend.models import ContextManifest, SimulatorTarget
+
+    sessions, _source_inc, capsule_id = lesson_source
+    async with sessions() as session:
+        lesson = await create_draft(session, "t", capsule_id, "CHECK_VERSION")
+    async with sessions() as session:
+        async with session.begin():
+            row = await session.get(OperationalLesson, lesson.id)
+            row.status = "ACTIVE"
+            session.add(SimulatorTarget(
+                tenant_id="t", target_id="checkout", version=1, healthy=False, last_fence=0,
+            ))
+
+    async with sessions() as session:
+        inc_mem = await admit_incident(session, "t", "with-mem", IncidentCreate(target_id="checkout"))
+    async with sessions() as session:
+        inc_ctrl = await admit_incident(session, "t", "no-mem", IncidentCreate(target_id="checkout"))
+
+    assert await inspect(sessions, "t", inc_mem.id, allow_memory=True) == "SIMULATOR_REVIEW_REQUIRED"
+    assert await inspect(sessions, "t", inc_ctrl.id, allow_memory=False) == "SIMULATOR_REVIEW_REQUIRED"
+
+    async with sessions() as session:
+        m_mem = (await session.scalars(
+            select(ContextManifest).where(ContextManifest.incident_id == inc_mem.id)
+        )).all()
+        m_ctrl = (await session.scalars(
+            select(ContextManifest).where(ContextManifest.incident_id == inc_ctrl.id)
+        )).all()
+        assert len(m_mem) == 2 and all(m.memory_mode == "VALIDATED_LESSONS" for m in m_mem)
+        assert all(m.lesson_ids == [str(lesson.id)] for m in m_mem)
+        assert len(m_ctrl) == 2 and all(m.memory_mode == "NO_MEMORY_CONTROL" for m in m_ctrl)
+        assert all(m.lesson_ids == [] for m in m_ctrl)
+
+    # Revoking the lesson immediately drops it back to NO_MEMORY for new incidents.
+    async with sessions() as session:
+        await revoke_lesson(session, "t", lesson.id, 1)
+    async with sessions() as session:
+        inc_after = await admit_incident(session, "t", "after-rev", IncidentCreate(target_id="checkout"))
+    assert await inspect(sessions, "t", inc_after.id, allow_memory=True) == "SIMULATOR_REVIEW_REQUIRED"
+    async with sessions() as session:
+        m_after = (await session.scalars(
+            select(ContextManifest).where(ContextManifest.incident_id == inc_after.id)
+        )).all()
+        assert all(m.memory_mode == "NO_MEMORY" and m.lesson_ids == [] for m in m_after)

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, NAMESPACE_URL, uuid5
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.adapters.simulator import utc
@@ -258,3 +259,39 @@ async def retrieve_active_lessons(
         ):
             allowed.append(lesson)
     return allowed
+
+
+async def retrieve_cited_memory_context(
+    session: AsyncSession,
+    tenant_id: str,
+    target_id: str,
+    *,
+    limit: int = 4,
+    allow_memory: bool = True,
+) -> tuple[list[dict], str]:
+    """E4-04: bounded cited lower-trust lesson context with explicit no-memory fallback.
+
+    Lessons are strictly lower-trust advisory context; they never authorize effects,
+    override fresh probe evidence, or expand tool permissions.
+    """
+    if not allow_memory:
+        return [], "NO_MEMORY_CONTROL"
+    try:
+        lessons = await retrieve_active_lessons(session, tenant_id, target_id, limit=limit)
+    except SQLAlchemyError:
+        return [], "MEMORY_FALLBACK_UNAVAILABLE"
+    if not lessons:
+        return [], "NO_MEMORY"
+    cited = [
+        {
+            "lesson_id": str(lesson.id),
+            "rule_id": lesson.rule_id,
+            "version": lesson.version,
+            "summary_redacted": lesson.summary_redacted,
+            "trust_level": "LOWER_TRUST_ADVISORY_ONLY",
+            "source_capsule_id": str(lesson.source_capsule_id),
+            "source_outcome_id": str(lesson.source_outcome_id),
+        }
+        for lesson in lessons
+    ]
+    return cited, "VALIDATED_LESSONS"

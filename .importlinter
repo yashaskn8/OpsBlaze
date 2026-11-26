@@ -1,0 +1,62 @@
+[importlinter]
+root_package = backend
+
+[importlinter:contract:core-foundation-independence]
+name = Core foundation modules never import HTTP, workers, or workflows
+type = forbidden
+source_modules =
+    backend.models
+    backend.lifecycle
+    backend.schemas
+    backend.settings
+forbidden_modules =
+    backend.api
+    backend.routers
+    backend.workers
+    backend.workflows
+
+[importlinter:contract:read-only-investigation-cannot-mutate-effects]
+name = Read-only probes and investigator never import effect dispatchers or HTTP API
+type = forbidden
+source_modules =
+    backend.probes
+    backend.investigator
+forbidden_modules =
+    backend.effects
+    backend.api
+    backend.routers
+    backend.workers
+    backend.workflows
+
+[importlinter:contract:adapters-isolated-from-orchestration]
+name = Runtime adapters never import API, workflows, or effect gateway
+type = forbidden
+source_modules =
+    backend.adapters.simulator
+    backend.adapters.qualification
+forbidden_modules =
+    backend.api
+    backend.routers
+    backend.effects
+    backend.workflows
+
+[importlinter:contract:deterministic-workflow-isolation]
+name = Temporal workflow definition stays deterministic and isolated from I/O layers
+type = forbidden
+source_modules =
+    backend.workflows.incident
+forbidden_modules =
+    backend.api
+    backend.routers
+    backend.database
+    backend.effects
+    backend.adapters
+    backend.models
+
+[importlinter:contract:routers-do-not-import-api]
+name = Modular routers do not depend on backend.api
+type = forbidden
+source_modules =
+    backend.routers
+forbidden_modules =
+    backend.api

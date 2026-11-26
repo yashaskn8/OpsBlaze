@@ -1332,6 +1332,55 @@ async def incident_route(
         "model_id": decision.model_id,
         "model_token_reservation": decision.model_token_reservation,
         "propensity": decision.propensity,
+        "context_digest": decision.context_digest,
+        "context_features": decision.context_features,
+    }
+
+
+@app.post("/v1/incidents/{incident_id}/handoff", status_code=202)
+async def request_operator_handoff(
+    incident_id: UUID,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    operator: str = Depends(local_operator),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+    from backend.lifecycle import ACTIVE_STATES
+    from backend.models import Incident, UIEvent
+
+    raw_version = if_match.strip('"')
+    if not raw_version.isdecimal() or not 0 < len(raw_version) <= 10:
+        raise HTTPException(400, "If-Match must be the integer status_version")
+    expected_version = int(raw_version)
+    async with session.begin():
+        incident = await session.scalar(
+            select(Incident)
+            .where(Incident.id == incident_id, Incident.tenant_id == tenant_id)
+            .with_for_update()
+        )
+        if incident is None:
+            raise HTTPException(404, "incident not found")
+        if incident.status_version != expected_version:
+            raise HTTPException(409, "incident status version changed")
+        if incident.status_projection not in ACTIVE_STATES:
+            raise HTTPException(409, "incident is not in an active state")
+        incident.status_projection = "NEEDS_REVIEW"
+        incident.status_version += 1
+        incident.phase_entered_at = datetime.now(timezone.utc)
+        session.add(UIEvent(
+            tenant_id=tenant_id,
+            incident_id=incident.id,
+            kind="NEEDS_REVIEW",
+            projection_version=incident.status_version,
+        ))
+        status_version = incident.status_version
+    return {
+        "incident_id": str(incident_id),
+        "status_projection": "NEEDS_REVIEW",
+        "status_version": status_version,
+        "handoff_by": operator[:48],
     }
 
 

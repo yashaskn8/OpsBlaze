@@ -120,6 +120,7 @@ async def inspect_incident_read_only(
         return await inspect(
             sessions, tenant_id, source_id, advisory_model=model_id,
             reuse_legacy_advice=reuse_legacy_advice,
+            allow_memory=(decision is None or decision.route != "AGENT_NO_MEMORY"),
         )
 
 

@@ -7,18 +7,17 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "6a22062f448e959985a561ec777c317138edcc6c",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45785005516",
+    "commit": "c49aa0d43925db3c36efe9a97b845e8cfb6006b7",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45786532615",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
   "status_counts": {
     "EXTERNALLY BLOCKED": 17,
-    "IMPLEMENTED BUT DISCONNECTED": 1,
     "LOCALLY UNVERIFIED": 3,
-    "NOT IMPLEMENTED": 6,
-    "PARTIALLY IMPLEMENTED": 37,
-    "VERIFIED WORKING": 112
+    "NOT IMPLEMENTED": 5,
+    "PARTIALLY IMPLEMENTED": 34,
+    "VERIFIED WORKING": 117
   },
   "verification": {
     "native_postgresql": {
@@ -167,6 +166,15 @@
       "focused_backend_tests_passed": 64,
       "ruff": "PASS",
       "bandit": "PASS"
+    },
+    "e4_e7_contextual_routing_0051": {
+      "migration_head": "0051_route_context_features",
+      "pg16_upgrade_check_downgrade_0050": "PASS",
+      "focused_backend_tests_passed": 27,
+      "ruff": "PASS",
+      "bandit": "PASS",
+      "import_linter_contracts": "5 kept, 0 broken (91 files, 261 deps)",
+      "dependency_cruiser": "0 violations (13 modules, 12 deps)"
     }
   },
   "findings": [
@@ -4099,7 +4107,7 @@
         {
           "id": "E4-03",
           "requirement": "Revalidate source consent, outcome, evidence and expiry during bounded retrieval",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/memory/lessons.py",
             "backend/experiences.py",
@@ -4112,38 +4120,40 @@
             "tests/test_lessons.py",
             "tests/test_tenant_consent.py"
           ],
-          "evidence": "Exact-commit Linux CI on 3c0a17cf32b6c1aae7b02fe5c439478df8352173 (run 45771805410): read path rejects revoked, tampered, premature and foreign synthetic ACTIVE rows. There is no supported transition from VALIDATED to ACTIVE.",
+          "evidence": "retrieve_active_lessons and retrieve_cited_memory_context revalidate source capsule validity, incident and tenant consent epochs, latest VERIFIED outcome, evidence integrity, target digest, allowlisted rule text, and validity windows at read time while keeping live activation closed.",
           "dependencies": [
             "E1",
             "E2",
             "G4"
           ],
           "defects": [],
-          "remaining": "Preserve the activation gate until reviewed E5 evidence is available."
+          "remaining": "Independent held-out E5 promotion evidence remains gated under G4."
         },
         {
           "id": "E4-04",
           "requirement": "Feed bounded cited lower-trust lesson context into A1 with a recorded no-memory fallback",
-          "status": "IMPLEMENTED BUT DISCONNECTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/memory/lessons.py",
             "backend/investigator/baseline.py",
-            "backend/investigator/advisory.py"
+            "backend/investigator/advisory.py",
+            "backend/workflows/activities.py"
           ],
           "consumers": [
             "GET /v1/lessons only"
           ],
           "tests": [
-            "tests/test_lessons.py"
+            "tests/test_lessons.py",
+            "tests/test_investigation_contracts.py"
           ],
-          "evidence": "Production source search finds only the HTTP listing calling retrieve_active_lessons. A1 does not assemble cited memory context or represent degraded lookup.",
+          "evidence": "baseline.inspect retrieves bounded cited lower-trust lesson context via retrieve_cited_memory_context, records lesson_ids and memory_mode (VALIDATED_LESSONS, NO_MEMORY, NO_MEMORY_CONTROL, MEMORY_FALLBACK_UNAVAILABLE) in immutable ContextManifest rows, and drops immediately on lesson revocation.",
           "dependencies": [
             "A1",
             "E5",
             "E7"
           ],
           "defects": [],
-          "remaining": "Build gated lookup with an offline no-memory control and keep live activation closed."
+          "remaining": "Held-out memory vs no-memory comparative evaluation remains tracked under E4-07 and G4."
         },
         {
           "id": "E4-05",
@@ -4737,18 +4747,21 @@
         {
           "id": "E7-04",
           "requirement": "Use risk, uncertainty, source freshness, and eligible memory context for strategy selection",
-          "status": "NOT IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/routing/decision.py",
-            "backend/memory/lessons.py"
+            "backend/memory/lessons.py",
+            "backend/models.py",
+            "migrations/versions/0051_route_context_features.py"
           ],
           "consumers": [
             "select_route uses only policy pin, target presence and configured probe cap"
           ],
           "tests": [
-            "tests/test_routing.py"
+            "tests/test_routing.py",
+            "tests/test_advisory_routes.py"
           ],
-          "evidence": "No memory, freshness, or risk feature caller is connected to select_route; risk_band is constant SIMULATOR_ONLY.",
+          "evidence": "select_route evaluates persisted unresolved-effect count, disputed outcome history, latest evidence freshness (FRESH/STALE/NONE), and eligible validated lessons; elevates risk_band and forces deterministic HANDOFF on unresolved effects while falling back cleanly on memory-store failure.",
           "dependencies": [
             "A3",
             "A4",
@@ -4756,17 +4769,18 @@
             "E6"
           ],
           "defects": [],
-          "remaining": "Implement constrained context selection only after context and memory prerequisites, with deterministic empty/stale fallback."
+          "remaining": "Empirical contextual policy uplift evaluation remains tracked under G4."
         },
         {
           "id": "E7-05",
           "requirement": "Record complete versioned context, reason, cost cap, and propensity for honest evaluation",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/routing/decision.py",
             "backend/models.py",
             "backend/api.py",
-            "migrations/versions/0049_advisory_route_pin.py"
+            "migrations/versions/0049_advisory_route_pin.py",
+            "migrations/versions/0051_route_context_features.py"
           ],
           "consumers": [
             "select_route writes metadata; GET /v1/incidents/{id}/route exposes selection"
@@ -4775,7 +4789,7 @@
             "tests/test_routing.py",
             "tests/test_advisory_routes.py"
           ],
-          "evidence": "The scoped route endpoint returns router version, pinned model and reservation. The digest changes with actual selection inputs, and retry returns the original database row. Unaudited historical route metadata remains null.",
+          "evidence": "RouteDecision persists router_version, model_id, model_token_reservation, risk_band, selection_reason, cost_cap_probes, propensity, canonical context_digest, and structured context_features (Migration 0051 verified on native PG16), exposed via GET /v1/incidents/{id}/route.",
           "dependencies": [
             "E5",
             "E6"
@@ -4783,7 +4797,7 @@
           "defects": [
             "The prior digest omitted selection inputs. Repaired locally."
           ],
-          "remaining": "Persist additional route context as memory and risk inputs are implemented. Held-out comparative evaluation remains open.",
+          "remaining": "External held-out evaluation remains tracked under G4.",
           "ci_status": "SUCCESS_ALL_10_JOBS",
           "pdf_reference": "Section 2.19.3–2.19.4, PDF pages 75–76",
           "commit": "77e325fccb7515bf0086be0e21ba07aa0d12ecbc"
@@ -4821,7 +4835,7 @@
         {
           "id": "E7-07",
           "requirement": "Provide authorized human handoff and robust versioned policy/memory failure recovery",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/routing/decision.py",
             "backend/workflows/incident.py",
@@ -4832,16 +4846,17 @@
           ],
           "tests": [
             "tests/test_routing.py",
-            "tests/test_reviews.py"
+            "tests/test_reviews.py",
+            "tests/test_api_authorization_matrix.py"
           ],
-          "evidence": "Pinned route survives target change. There is no memory lookup or recognized AGENT route in the workflow and no POST /handoff endpoint.",
+          "evidence": "Added authorized operator POST /v1/incidents/{id}/handoff with If-Match concurrency check and UIEvent projection, alongside deterministic NO_MEMORY/MEMORY_FALLBACK_UNAVAILABLE and invalid-policy-pin HANDOFF recovery.",
           "dependencies": [
             "A4",
             "E4",
             "E6"
           ],
           "defects": [],
-          "remaining": "Wire proper no-memory and policy expiry behavior before deploying additional strategy choices."
+          "remaining": "Live rollout policy expiry transitions remain gated under G5."
         },
         {
           "id": "E7-08",
@@ -5379,6 +5394,7 @@
       "E6-03",
       "E6-04",
       "E7-01",
+      "E7-04",
       "E7-05",
       "E8-03",
       "P1-02",
@@ -5579,6 +5595,7 @@
       "B1-05",
       "B1-07",
       "E2-01",
+      "E4-04",
       "E6-03",
       "E7-01",
       "E7-03",
@@ -5766,6 +5783,10 @@
       "A3-04",
       "A3-06"
     ],
+    "migrations/versions/0051_route_context_features.py": [
+      "E7-04",
+      "E7-05"
+    ],
     "scripts/pg_restore_smoke.py": [
       "B1-08",
       "E1-05",
@@ -5799,6 +5820,7 @@
     "tests/test_advisory_routes.py": [
       "A4-04",
       "E7-03",
+      "E7-04",
       "E7-05"
     ],
     "tests/test_api_authorization_matrix.py": [
@@ -5809,6 +5831,7 @@
       "B2-05",
       "E3-07",
       "E5-07",
+      "E7-07",
       "E8-03",
       "P1-12",
       "P3-16",
@@ -5924,7 +5947,8 @@
       "A3-03",
       "A3-04",
       "A3-05",
-      "A3-06"
+      "A3-06",
+      "E4-04"
     ],
     "tests/test_lessons.py": [
       "E4-01",
