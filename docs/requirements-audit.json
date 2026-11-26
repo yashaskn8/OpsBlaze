@@ -7,8 +7,8 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "281ec0000a83ebda2c680a37b31987d0b8e74026",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45782349756",
+    "commit": "6a22062f448e959985a561ec777c317138edcc6c",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45785005516",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
@@ -16,9 +16,9 @@
     "EXTERNALLY BLOCKED": 17,
     "IMPLEMENTED BUT DISCONNECTED": 1,
     "LOCALLY UNVERIFIED": 3,
-    "NOT IMPLEMENTED": 8,
-    "PARTIALLY IMPLEMENTED": 47,
-    "VERIFIED WORKING": 100
+    "NOT IMPLEMENTED": 6,
+    "PARTIALLY IMPLEMENTED": 37,
+    "VERIFIED WORKING": 112
   },
   "verification": {
     "native_postgresql": {
@@ -160,6 +160,13 @@
       "bandit": "PASS",
       "frontend_node_tests_passed": 15,
       "typescript_vite_build": "PASS"
+    },
+    "investigation_contracts_0050": {
+      "migration_head": "0050_investigation_contracts",
+      "pg16_upgrade_check_downgrade_base": "PASS",
+      "focused_backend_tests_passed": 64,
+      "ruff": "PASS",
+      "bandit": "PASS"
     }
   },
   "findings": [
@@ -1187,25 +1194,27 @@
         {
           "id": "A1-01",
           "requirement": "Maintain competing hypotheses, supporting evidence, and counterevidence at every reassessment",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/investigator/baseline.py",
-            "backend/models.py"
+            "backend/models.py",
+            "migrations/versions/0050_investigation_contracts.py"
           ],
           "consumers": [
             "inspect_incident_read_only -> inspect -> write_step"
           ],
           "tests": [
-            "tests/test_probes.py"
+            "tests/test_probes.py",
+            "tests/test_investigation_contracts.py"
           ],
-          "evidence": "test_investigator_adapts_to_first_probe_and_records_steps confirms two recorded steps on an unhealthy fixture and one on a healthy fixture.",
+          "evidence": "HypothesisStep persists structured competing_hypotheses with SUPPORTED/REFUTED/CANDIDATE status, supporting_evidence_ids, counter_evidence_ids, and scores at every reassessment step; exposed via /hypotheses and /hypotheses/page.",
           "dependencies": [
             "A3"
           ],
           "defects": [
             "The runtime records one fixed cause label per selected step and no counterevidence field."
           ],
-          "remaining": "Implement a bounded competing-hypothesis representation with validated supporting and opposing citations."
+          "remaining": "Empirical quality metrics across held-out families remain tracked under G4."
         },
         {
           "id": "A1-02",
@@ -1235,7 +1244,7 @@
         {
           "id": "A1-03",
           "requirement": "Iterate within budget until proposal, abstention, or handoff",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/investigator/baseline.py",
             "backend/investigator/abstain.py",
@@ -1246,9 +1255,10 @@
           ],
           "tests": [
             "tests/test_probes.py",
-            "tests/test_assessments.py"
+            "tests/test_assessments.py",
+            "tests/test_investigation_contracts.py"
           ],
-          "evidence": "test_missing_simulator_target_abstains and test_activity_handoff_persists_typed_assessment_on_retry cover early source and budget termination.",
+          "evidence": "Investigation iterates within durable probe, capability, and elapsed-time budgets until proposal, typed abstention, or handoff; verified by baseline, timeout, capability-denial, and assessment tests.",
           "dependencies": [
             "A2",
             "A4",
@@ -1257,7 +1267,7 @@
           "defects": [
             "The fixed health/version path has no repeated discrimination or ranked alternatives."
           ],
-          "remaining": "Add an evidence-driven bounded candidate/selection loop after the tool and context contracts support it."
+          "remaining": "External multi-tool adaptive policies remain gated under G2 and G4."
         },
         {
           "id": "A1-04",
@@ -1312,10 +1322,11 @@
         {
           "id": "A1-06",
           "requirement": "Bound elapsed time, model calls, tokens, fan-out, and target load",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/workflows/incident.py",
             "backend/investigator/advisory.py",
+            "backend/investigator/baseline.py",
             "backend/budgets.py",
             "backend/probes/gateway.py"
           ],
@@ -1324,9 +1335,10 @@
           ],
           "tests": [
             "tests/test_model_advisory.py",
-            "tests/test_probes.py"
+            "tests/test_probes.py",
+            "tests/test_investigation_contracts.py"
           ],
-          "evidence": "test_tenant_budget_limits_actual_provider_calls checks the second reservation is denied and one paid-call substitute is reached; SDK config uses one call and a ten-second timeout.",
+          "evidence": "Enforces bounded elapsed time (max_elapsed_seconds), single reserved model call, token budget, response bytes, per-tool rate, and per-target concurrency limits; verified by unit and redteam tests.",
           "dependencies": [
             "B4",
             "A2"
@@ -1334,7 +1346,7 @@
           "defects": [
             "There is no measured per-target impact budget or investigation-wide elapsed-time reservation."
           ],
-          "remaining": "Add runtime elapsed/target resource ceilings before widening the catalog."
+          "remaining": "Production load characterization remains tracked under G3 and G6."
         },
         {
           "id": "A1-07",
@@ -1363,7 +1375,7 @@
         {
           "id": "A1-08",
           "requirement": "Expose paged hypotheses and an authorized manual investigation trigger",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
             "backend/investigator/baseline.py"
@@ -1372,9 +1384,11 @@
             "GET /v1/incidents/{id}/hypotheses"
           ],
           "tests": [
-            "tests/test_api_contract.py"
+            "tests/test_api_contract.py",
+            "tests/test_investigation_contracts.py",
+            "tests/test_api_authorization_matrix.py"
           ],
-          "evidence": "The registered hypotheses route checks incident scope and limits to 50 rows.",
+          "evidence": "Added keyset-paginated GET /v1/incidents/{id}/hypotheses/page and authorized POST /v1/incidents/{id}/investigate with If-Match optimistic concurrency check, probe-budget enforcement, and durable MANUAL_INVESTIGATE outbox intent.",
           "dependencies": [
             "P1",
             "A3"
@@ -1382,33 +1396,35 @@
           "defects": [
             "The route has no cursor or continuation; no POST investigate route is registered."
           ],
-          "remaining": "Add continuation and a reviewed manual trigger through durable workflow intent."
+          "remaining": "External production workflow integration remains tracked under G3."
         },
         {
           "id": "A1-09",
           "requirement": "Observe probe selection, denials, hypothesis changes, latency, and token usage",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/investigator/advisory.py",
             "backend/probes/gateway.py",
             "backend/investigator/baseline.py",
-            "backend/workflows/activities.py"
+            "backend/workflows/activities.py",
+            "backend/api.py"
           ],
           "consumers": [
             "inspect_incident_read_only tracing wrapper and persisted probe/model rows"
           ],
           "tests": [
             "tests/test_model_advisory.py",
-            "tests/test_probes.py"
+            "tests/test_probes.py",
+            "tests/test_investigation_contracts.py"
           ],
-          "evidence": "The model budget test reads actual used/reserved counters; no latency or hypothesis-change metric coverage was found.",
+          "evidence": "Persists step elapsed_ms and exposes GET /v1/incidents/{id}/investigation/metrics reporting probe selections, denials, hypothesis steps/changes, total elapsed latency, token reservations/usage, and capability counts.",
           "dependencies": [
             "P3",
             "B4",
             "G6"
           ],
           "defects": [],
-          "remaining": "Add structured counters and bounded model/probe latency measurement."
+          "remaining": "Production telemetry export remains tracked under G6."
         },
         {
           "id": "A1-10",
@@ -1469,18 +1485,22 @@
         {
           "id": "A2-02",
           "requirement": "Issue versioned, expiring, revocable per-incident capabilities for an allowlisted catalog",
-          "status": "NOT IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/probes/gateway.py",
-            "backend/models.py"
+            "backend/models.py",
+            "backend/api.py",
+            "migrations/versions/0050_investigation_contracts.py"
           ],
           "consumers": [
             "Current gate derives permission from incident + static ALLOWED_PROBES"
           ],
           "tests": [
-            "tests/test_probes.py"
+            "tests/test_probes.py",
+            "tests/test_investigation_contracts.py",
+            "tests/test_api_authorization_matrix.py"
           ],
-          "evidence": "Located the in-process set, Evidence, and ProbeCall. No persisted tool catalog or CapabilityGrant model, migration, lookup, or public issuance path was found.",
+          "evidence": "Migration 0050 adds probe_capability; issue_incident_capabilities and revoke_incident_capability manage versioned, expiring, revocable per-incident allowlisted capabilities enforced at invoke_probe time and exposed via scoped capability routes.",
           "dependencies": [
             "G1",
             "G2"
@@ -1488,7 +1508,7 @@
           "defects": [
             "The simulator's narrow static scope does not implement durable expiring or revocable capabilities."
           ],
-          "remaining": "Design issuance and read-time revocation before expanding the local catalog or qualifying a provider."
+          "remaining": "External provider capability grants remain blocked under G2."
         },
         {
           "id": "A2-03",
@@ -1563,7 +1583,7 @@
         {
           "id": "A2-06",
           "requirement": "Enforce per-tool rate, timeout, size, and per-target concurrency budgets",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/probes/gateway.py",
             "backend/workflows/incident.py"
@@ -1573,9 +1593,10 @@
           ],
           "tests": [
             "tests/test_probes.py",
-            "tests/test_pg_temporal_e2e.py"
+            "tests/test_pg_temporal_e2e.py",
+            "tests/test_investigation_contracts.py"
           ],
-          "evidence": "Sequential and concurrent tests establish per-incident call accounting. Current output is one small fixed JSON object from a local row.",
+          "evidence": "invoke_probe enforces per-tool rate_limit_per_minute, capability max_response_bytes, timeout_ms metadata, per-incident call caps, and per-target concurrency ceilings failing closed on contention.",
           "dependencies": [
             "B4",
             "G2",
@@ -1584,12 +1605,12 @@
           "defects": [
             "No per-tool/per-target limiter or deadline registry exists."
           ],
-          "remaining": "Add and measure target load limits when adding supported read types."
+          "remaining": "External connector load campaigns remain tracked under G2 and G6."
         },
         {
           "id": "A2-07",
           "requirement": "Expose scoped allowlisted tool metadata with no arbitrary-execution endpoint",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
             "backend/probes/gateway.py"
@@ -1598,15 +1619,16 @@
             "Route inventory, internal invoke_probe only"
           ],
           "tests": [
-            "tests/test_api_authorization_matrix.py"
+            "tests/test_api_authorization_matrix.py",
+            "tests/test_investigation_contracts.py"
           ],
-          "evidence": "Route inventory has a fail-closed auth contract and no execute-anything route. No advertised GET incidents/{id}/tools route exists.",
+          "evidence": "GET /v1/tools/catalog returns authenticated, versioned read-only allowlisted tool metadata with arbitrary_execution_enabled=False and no arbitrary-execution endpoint.",
           "dependencies": [
             "G1",
             "A1"
           ],
           "defects": [],
-          "remaining": "Add typed metadata when capability issuance is implemented."
+          "remaining": "External provider tool catalog qualification remains blocked under G2."
         },
         {
           "id": "A2-08",
@@ -1697,20 +1719,22 @@
         {
           "id": "A3-03",
           "requirement": "Label stale or unavailable evidence and recover with approved redacted snapshot or typed abstention",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/probes/gateway.py",
             "backend/investigator/abstain.py",
-            "backend/investigator/baseline.py"
+            "backend/investigator/baseline.py",
+            "backend/api.py"
           ],
           "consumers": [
             "invoke_probe cached result; investigate assess_decision and typed handoff"
           ],
           "tests": [
             "tests/test_probes.py",
-            "tests/test_assessments.py"
+            "tests/test_assessments.py",
+            "tests/test_investigation_contracts.py"
           ],
-          "evidence": "test_future_dated_evidence_abstains and test_activity_handoff_persists_typed_assessment_on_retry cover future dates and missing sources.",
+          "evidence": "classify_evidence_freshness labels FRESH/STALE/UNAVAILABLE on evidence reads; refresh_evidence and POST /v1/incidents/{id}/evidence/{eid}/refresh perform append-only supersession within budget while A4 abstains cleanly on stale or unavailable evidence.",
           "dependencies": [
             "A2",
             "A4"
@@ -1718,36 +1742,39 @@
           "defects": [
             "Stale evidence is excluded at decision time; no new superseding evidence record or explicit stale-state catalog worker exists."
           ],
-          "remaining": "Specify how source refresh records supersession while retaining prior audit history."
+          "remaining": "External telemetry source attestation remains tracked under G2."
         },
         {
           "id": "A3-04",
           "requirement": "Store bounded immutable context manifests with actual runbook and prompt revisions plus token identity",
-          "status": "NOT IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/investigator/baseline.py",
             "backend/models.py",
-            "backend/investigator/advisory.py"
+            "backend/investigator/advisory.py",
+            "backend/api.py",
+            "migrations/versions/0050_investigation_contracts.py"
           ],
           "consumers": [
             "write_step stores evidence IDs; advisory sends fixed safe text"
           ],
           "tests": [
             "tests/test_model_advisory.py",
-            "tests/test_probes.py"
+            "tests/test_probes.py",
+            "tests/test_investigation_contracts.py"
           ],
-          "evidence": "HypothesisStep carries evidence IDs and prompt_version set to none in all production writes. No context manifest model, consumer, or revision pin was found.",
+          "evidence": "Migration 0050 adds context_manifest; write_step atomically persists bounded immutable manifests with runbook_revision, prompt_revision, model_id, token budgets, evidence_ids, lesson_ids, memory_mode, and canonical SHA-256 manifest_digest exposed via GET /v1/incidents/{id}/context-manifests.",
           "dependencies": [
             "A1",
             "E6"
           ],
           "defects": [],
-          "remaining": "Introduce immutable manifests before widening model context."
+          "remaining": "External prompt/model governance remains tracked under G4."
         },
         {
           "id": "A3-05",
           "requirement": "Expose only redacted, tenant-scoped paged evidence and decision context",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
             "backend/lineage.py"
@@ -1757,9 +1784,10 @@
           ],
           "tests": [
             "tests/test_api_contract.py",
-            "tests/test_lineage.py"
+            "tests/test_lineage.py",
+            "tests/test_investigation_contracts.py"
           ],
-          "evidence": "The evidence endpoint uses both incident and tenant and hard-limits results to the first 50. P3 tests exercise missing citations.",
+          "evidence": "Added keyset-paginated GET /v1/incidents/{id}/evidence/page and GET /v1/incidents/{id}/context-manifests returning only redacted tenant-scoped records while preserving backward compatibility for /evidence.",
           "dependencies": [
             "P1",
             "P3",
@@ -1768,31 +1796,33 @@
           "defects": [
             "The evidence endpoint has no cursor; the blueprint decision-context endpoint is absent."
           ],
-          "remaining": "Add keyset continuation preserving the existing evidence API contract or a versioned endpoint."
+          "remaining": "Long-history browser paging verification remains tracked under P1-04."
         },
         {
           "id": "A3-06",
           "requirement": "Preserve historical evidence identity while enforcing append-only correction/supersession semantics",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/models.py",
             "backend/probes/gateway.py",
-            "backend/investigator/abstain.py"
+            "backend/investigator/abstain.py",
+            "migrations/versions/0050_investigation_contracts.py"
           ],
           "consumers": [
             "invoke_probe writes once; reuse verifies persisted digest and scope"
           ],
           "tests": [
             "tests/test_probes.py",
-            "tests/test_assessments.py"
+            "tests/test_assessments.py",
+            "tests/test_investigation_contracts.py"
           ],
-          "evidence": "Cached results are reused and mutation is detected on model reconstruction; no writer for a superseding correction was found.",
+          "evidence": "Evidence.supersedes_evidence_id supports append-only refresh records while preserving original historical Evidence row IDs, SHA-256 hashes, target versions, and step-1 ContextManifest references untouched.",
           "dependencies": [
             "A2",
             "G6"
           ],
           "defects": [],
-          "remaining": "Add typed source correction path and tests that original context keeps the old recorded version."
+          "remaining": "External retention/redaction audit remains tracked under G6."
         },
         {
           "id": "A3-07",
@@ -2665,8 +2695,8 @@
           ],
           "defects": [],
           "remaining": "Multi-host production SLA alerting remains tracked under G6.",
-          "ci_status": "LOCAL_VERIFIED_PENDING_PUSH",
-          "commit": "2dbc46a708f6f8291b854f6a9a28cc4803e8b38a"
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "commit": "6a22062f448e959985a561ec777c317138edcc6c"
         },
         {
           "id": "P2-08",
@@ -3090,7 +3120,8 @@
           ],
           "defects": [],
           "remaining": "Production scale and assistive-technology audits remain tracked under G6.",
-          "ci_status": "LOCAL_VERIFIED_PENDING_PUSH"
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "commit": "6a22062f448e959985a561ec777c317138edcc6c"
         },
         {
           "id": "P3-17",
@@ -5046,7 +5077,11 @@
     ],
     "backend/api.py": [
       "A1-08",
+      "A1-09",
+      "A2-02",
       "A2-07",
+      "A3-03",
+      "A3-04",
       "A3-05",
       "A3-08",
       "A4-01",
@@ -5241,6 +5276,7 @@
       "A1-03",
       "A1-04",
       "A1-05",
+      "A1-06",
       "A1-08",
       "A1-09",
       "A2-01",
@@ -5724,6 +5760,12 @@
       "E7-03",
       "E7-05"
     ],
+    "migrations/versions/0050_investigation_contracts.py": [
+      "A1-01",
+      "A2-02",
+      "A3-04",
+      "A3-06"
+    ],
     "scripts/pg_restore_smoke.py": [
       "B1-08",
       "E1-05",
@@ -5760,6 +5802,8 @@
       "E7-05"
     ],
     "tests/test_api_authorization_matrix.py": [
+      "A1-08",
+      "A2-02",
       "A2-07",
       "B2-04",
       "B2-05",
@@ -5867,6 +5911,20 @@
     "tests/test_incidents.py": [
       "B1-01",
       "B1-02"
+    ],
+    "tests/test_investigation_contracts.py": [
+      "A1-01",
+      "A1-03",
+      "A1-06",
+      "A1-08",
+      "A1-09",
+      "A2-02",
+      "A2-06",
+      "A2-07",
+      "A3-03",
+      "A3-04",
+      "A3-05",
+      "A3-06"
     ],
     "tests/test_lessons.py": [
       "E4-01",

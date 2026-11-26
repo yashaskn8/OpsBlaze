@@ -277,6 +277,9 @@ class Evidence(Base):
     redacted_excerpt: Mapped[str] = mapped_column(String(512), nullable=False)
     classification: Mapped[str] = mapped_column(String(24), nullable=False)
     validity: Mapped[str] = mapped_column(String(24), nullable=False)
+    supersedes_evidence_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("evidence.id", name="fk_evidence_supersedes"),
+    )
 
 
 class ProbeCall(Base):
@@ -307,7 +310,79 @@ class HypothesisStep(Base):
     decision: Mapped[str] = mapped_column(String(48), nullable=False)
     token_reserved: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     token_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    competing_hypotheses: Mapped[list[dict] | None] = mapped_column(JSON)
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ProbeCapability(Base):
+    """A2: versioned, expiring, revocable per-incident read-only tool capability."""
+
+    __tablename__ = "probe_capability"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "incident_id", "catalog_id", name="uq_probe_capability_scope",
+        ),
+        Index("ix_probe_capability_incident", "tenant_id", "incident_id", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id", ondelete="CASCADE"), nullable=False,
+    )
+    catalog_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    catalog_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1", default=1)
+    max_calls: Mapped[int] = mapped_column(Integer, nullable=False, server_default="2", default=2)
+    used_calls: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0", default=0)
+    max_response_bytes: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="512", default=512,
+    )
+    timeout_ms: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="2000", default=2000,
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_by: Mapped[str | None] = mapped_column(String(48))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class ContextManifest(Base):
+    """A3: bounded immutable investigation context manifest."""
+
+    __tablename__ = "context_manifest"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "incident_id", "step_no", name="uq_context_manifest_step",
+        ),
+        Index("ix_context_manifest_incident", "tenant_id", "incident_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id", ondelete="CASCADE"), nullable=False,
+    )
+    step_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    runbook_revision: Mapped[str] = mapped_column(String(32), nullable=False)
+    prompt_revision: Mapped[str] = mapped_column(String(32), nullable=False)
+    model_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    token_budget_reserved: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0,
+    )
+    token_budget_used: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0,
+    )
+    evidence_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    lesson_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    memory_mode: Mapped[str] = mapped_column(String(24), nullable=False)
+    manifest_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
 
 class IncidentPlan(Base):
     __tablename__ = "incident_plan"

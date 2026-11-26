@@ -202,6 +202,7 @@ async def incident_evidence(
 ) -> list[dict]:
     from sqlalchemy import select
     from backend.models import Evidence
+    from backend.probes.gateway import classify_evidence_freshness
 
     incident = await find_incident(session, tenant_id, incident_id)
     if incident is None:
@@ -215,10 +216,131 @@ async def incident_evidence(
     return [
         {"id": str(row.id), "source": row.source,
          "target_version": row.target_version, "sha256": row.sha256,
-         "validity": row.validity, "redacted_excerpt": row.redacted_excerpt,
+         "validity": row.validity, "freshness": classify_evidence_freshness(row),
+         "supersedes_evidence_id": str(row.supersedes_evidence_id) if row.supersedes_evidence_id else None,
+         "redacted_excerpt": row.redacted_excerpt,
          "captured_at": row.captured_at.isoformat()}
         for row in items
     ]
+
+
+@app.get("/v1/incidents/{incident_id}/evidence/page")
+async def incident_evidence_page(
+    incident_id: UUID,
+    cursor: UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from sqlalchemy import select
+    from backend.models import Evidence
+    from backend.probes.gateway import classify_evidence_freshness
+
+    incident = await find_incident(session, tenant_id, incident_id)
+    if incident is None:
+        raise HTTPException(404, "incident not found")
+    stmt = select(Evidence).where(
+        Evidence.incident_id == incident_id, Evidence.tenant_id == tenant_id,
+    )
+    if cursor is not None:
+        stmt = stmt.where(Evidence.id > cursor)
+    rows = list((await session.scalars(
+        stmt.order_by(Evidence.id).limit(limit + 1)
+    )).all())
+    visible = rows[:limit]
+    return {
+        "items": [
+            {
+                "id": str(row.id),
+                "source": row.source,
+                "source_version": row.source_version,
+                "target_version": row.target_version,
+                "sha256": row.sha256,
+                "validity": row.validity,
+                "freshness": classify_evidence_freshness(row),
+                "supersedes_evidence_id": (
+                    str(row.supersedes_evidence_id) if row.supersedes_evidence_id else None
+                ),
+                "redacted_excerpt": row.redacted_excerpt,
+                "captured_at": row.captured_at.isoformat(),
+            }
+            for row in visible
+        ],
+        "next_cursor": str(visible[-1].id) if len(rows) > limit else None,
+    }
+
+
+@app.post("/v1/incidents/{incident_id}/evidence/{evidence_id}/refresh", status_code=201)
+async def refresh_incident_evidence(
+    incident_id: UUID,
+    evidence_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    _operator: str = Depends(local_operator),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.database import get_session_maker
+    from backend.probes.gateway import ProbeDenied, refresh_evidence
+
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    try:
+        result = await refresh_evidence(
+            get_session_maker(), tenant_id, incident_id, evidence_id,
+        )
+    except ProbeDenied as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "outcome": result.outcome,
+        "evidence_id": str(result.evidence_id) if result.evidence_id else None,
+        "supersedes_evidence_id": str(evidence_id),
+        "redacted_excerpt": result.excerpt,
+    }
+
+
+@app.get("/v1/incidents/{incident_id}/context-manifests")
+async def incident_context_manifests(
+    incident_id: UUID,
+    after_step: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from sqlalchemy import select
+    from backend.models import ContextManifest
+
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    rows = list((await session.scalars(
+        select(ContextManifest)
+        .where(
+            ContextManifest.tenant_id == tenant_id,
+            ContextManifest.incident_id == incident_id,
+            ContextManifest.step_no > after_step,
+        )
+        .order_by(ContextManifest.step_no)
+        .limit(limit + 1)
+    )).all())
+    visible = rows[:limit]
+    return {
+        "manifests": [
+            {
+                "id": str(row.id),
+                "step_no": row.step_no,
+                "runbook_revision": row.runbook_revision,
+                "prompt_revision": row.prompt_revision,
+                "model_id": row.model_id,
+                "token_budget_reserved": row.token_budget_reserved,
+                "token_budget_used": row.token_budget_used,
+                "evidence_ids": row.evidence_ids,
+                "lesson_ids": row.lesson_ids,
+                "memory_mode": row.memory_mode,
+                "manifest_digest": row.manifest_digest,
+                "created_at": row.created_at.isoformat(),
+            }
+            for row in visible
+        ],
+        "next_after_step": visible[-1].step_no if len(rows) > limit else None,
+    }
 
 
 @app.get("/v1/incidents/{incident_id}/hypotheses")
@@ -242,9 +364,205 @@ async def incident_hypotheses(
     return [
         {"step_no": row.step_no, "decision": row.decision,
          "probe_id": row.probe_id, "model_id": row.model_id,
-         "evidence_ids": row.evidence_ids, "cause_scores": row.cause_scores}
+         "evidence_ids": row.evidence_ids, "cause_scores": row.cause_scores,
+         "competing_hypotheses": row.competing_hypotheses or [],
+         "elapsed_ms": row.elapsed_ms}
         for row in items
     ]
+
+
+@app.get("/v1/incidents/{incident_id}/hypotheses/page")
+async def incident_hypotheses_page(
+    incident_id: UUID,
+    after_step: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from sqlalchemy import select
+    from backend.models import HypothesisStep
+
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    rows = list((await session.scalars(
+        select(HypothesisStep)
+        .where(
+            HypothesisStep.incident_id == incident_id,
+            HypothesisStep.step_no > after_step,
+        )
+        .order_by(HypothesisStep.step_no)
+        .limit(limit + 1)
+    )).all())
+    visible = rows[:limit]
+    return {
+        "items": [
+            {
+                "step_no": row.step_no,
+                "decision": row.decision,
+                "probe_id": row.probe_id,
+                "model_id": row.model_id,
+                "evidence_ids": row.evidence_ids,
+                "cause_scores": row.cause_scores,
+                "competing_hypotheses": row.competing_hypotheses or [],
+                "elapsed_ms": row.elapsed_ms,
+                "token_reserved": row.token_reserved,
+                "token_used": row.token_used,
+            }
+            for row in visible
+        ],
+        "next_after_step": visible[-1].step_no if len(rows) > limit else None,
+    }
+
+
+@app.get("/v1/incidents/{incident_id}/investigation/metrics")
+async def incident_investigation_metrics(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from collections import Counter
+    from sqlalchemy import select
+    from backend.models import HypothesisStep, ProbeCall, ProbeCapability
+
+    incident = await find_incident(session, tenant_id, incident_id)
+    if incident is None:
+        raise HTTPException(404, "incident not found")
+    probes = (await session.scalars(
+        select(ProbeCall).where(ProbeCall.incident_id == incident_id).order_by(ProbeCall.step_no)
+    )).all()
+    steps = (await session.scalars(
+        select(HypothesisStep).where(HypothesisStep.incident_id == incident_id).order_by(HypothesisStep.step_no)
+    )).all()
+    caps = (await session.scalars(
+        select(ProbeCapability).where(
+            ProbeCapability.tenant_id == tenant_id, ProbeCapability.incident_id == incident_id,
+        )
+    )).all()
+    probe_counts = Counter(p.catalog_id for p in probes)
+    denied_count = sum(1 for p in probes if p.outcome == "DENIED")
+    leading_causes = [
+        max(s.cause_scores.items(), key=lambda kv: kv[1])[0]
+        if isinstance(s.cause_scores, dict) and s.cause_scores else None
+        for s in steps
+    ]
+    hypothesis_changes = sum(
+        1 for prev, curr in zip(leading_causes, leading_causes[1:]) if prev != curr
+    )
+    return {
+        "incident_id": str(incident_id),
+        "probe_calls_total": len(probes),
+        "probe_selections": dict(probe_counts),
+        "probe_denials": denied_count,
+        "hypothesis_steps": len(steps),
+        "hypothesis_changes": hypothesis_changes,
+        "total_elapsed_ms": sum(s.elapsed_ms or 0 for s in steps),
+        "tokens_reserved": sum(s.token_reserved for s in steps),
+        "tokens_used": sum(s.token_used for s in steps),
+        "capabilities_issued": len(caps),
+        "capabilities_revoked": sum(1 for c in caps if c.revoked_at is not None),
+    }
+
+
+@app.post("/v1/incidents/{incident_id}/investigate", status_code=202)
+async def trigger_manual_investigation(
+    incident_id: UUID,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    operator: str = Depends(local_operator),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    from sqlalchemy import select
+    from backend.models import Incident, OutboxEntry, UIEvent
+
+    raw_version = if_match.strip('"')
+    if not raw_version.isdecimal() or not 0 < len(raw_version) <= 10:
+        raise HTTPException(400, "If-Match must be the integer status_version")
+    expected_version = int(raw_version)
+    async with session.begin():
+        incident = await session.scalar(
+            select(Incident)
+            .where(Incident.id == incident_id, Incident.tenant_id == tenant_id)
+            .with_for_update()
+        )
+        if incident is None:
+            raise HTTPException(404, "incident not found")
+        if incident.status_version != expected_version:
+            raise HTTPException(409, "incident status version changed")
+        if incident.status_projection not in {"DISPATCH_PENDING", "NEEDS_REVIEW"}:
+            raise HTTPException(409, "incident cannot accept a manual investigation trigger in its current state")
+        if incident.probe_used >= settings.max_probe_calls_per_incident:
+            raise HTTPException(409, "durable probe budget exhausted")
+        incident.status_version += 1
+        intent = OutboxEntry(
+            incident_id=incident.id,
+            kind="MANUAL_INVESTIGATE",
+            payload={"requested_by": operator[:48], "status_version": incident.status_version},
+        )
+        session.add(intent)
+        session.add(UIEvent(
+            tenant_id=tenant_id,
+            incident_id=incident.id,
+            kind="MANUAL_INVESTIGATION_REQUESTED",
+            projection_version=incident.status_version,
+        ))
+        await session.flush()
+        intent_id = intent.id
+        status_version = incident.status_version
+    return {
+        "incident_id": str(incident_id),
+        "intent_id": intent_id,
+        "status_version": status_version,
+        "kind": "MANUAL_INVESTIGATE",
+    }
+
+
+@app.get("/v1/tools/catalog")
+async def read_tool_catalog(
+    _tenant_id: str = Depends(local_tenant),
+) -> dict:
+    from backend.probes.gateway import CATALOG_VERSION, catalog_metadata
+
+    return {
+        "catalog_version": CATALOG_VERSION,
+        "arbitrary_execution_enabled": False,
+        "tools": catalog_metadata(),
+    }
+
+
+@app.get("/v1/incidents/{incident_id}/capabilities")
+async def get_incident_capabilities(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.probes.gateway import list_incident_capabilities
+
+    caps = await list_incident_capabilities(session, tenant_id, incident_id)
+    if caps is None:
+        raise HTTPException(404, "incident not found")
+    return {"incident_id": str(incident_id), "capabilities": caps}
+
+
+@app.post("/v1/incidents/{incident_id}/capabilities/{catalog_id}/revoke", status_code=200)
+async def revoke_capability(
+    incident_id: UUID,
+    catalog_id: Literal["simulator.health", "simulator.version"],
+    tenant_id: str = Depends(local_tenant),
+    operator: str = Depends(local_operator),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.probes.gateway import revoke_incident_capability
+
+    cap = await revoke_incident_capability(session, tenant_id, incident_id, catalog_id, operator)
+    if cap is None:
+        raise HTTPException(404, "capability not found")
+    return {
+        "id": str(cap.id),
+        "catalog_id": cap.catalog_id,
+        "version": cap.version,
+        "revoked_at": cap.revoked_at.isoformat() if cap.revoked_at else None,
+    }
 
 
 @app.get("/v1/incidents/{incident_id}/effects")
