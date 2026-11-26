@@ -14,8 +14,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio.client import Client
 
+from backend.adapters.simulator import SimulatorAdapter
 from backend.database import get_session_maker
-from backend.models import Incident, OutboxEntry
+from backend.effects.gateway import reconcile_effect
+from backend.lifecycle import UNRESOLVED_EFFECT_STATES
+from backend.models import EffectReceipt, Incident, OutboxEntry
 from backend.settings import get_settings
 from backend.temporal_connection import connect_temporal
 from backend.workers.dispatcher import workflow_id
@@ -84,15 +87,73 @@ async def compare_temporal_projection(
     return issues
 
 
+async def reconcile_unresolved_effects(
+    sessions: async_sessionmaker[AsyncSession],
+    adapter: SimulatorAdapter,
+    *,
+    limit: int = 20,
+) -> dict:
+    """B3-06: bounded read-only reconciliation poller for unresolved receipts."""
+    if not 1 <= limit <= 100:
+        raise ValueError("scan bounds must be positive and limited")
+    async with sessions() as session:
+        effect_ids = list((await session.scalars(
+            select(EffectReceipt.id)
+            .where(EffectReceipt.state.in_(UNRESOLVED_EFFECT_STATES))
+            .order_by(EffectReceipt.updated_at, EffectReceipt.id)
+            .limit(limit)
+        )).all())
+
+    reconciled_verified = 0
+    still_unresolved = 0
+    needs_review = 0
+    errors = 0
+    for effect_id in effect_ids:
+        try:
+            outcome = await reconcile_effect(sessions, adapter, effect_id)
+        except Exception as exc:
+            errors += 1
+            log.warning(
+                "Effect reconciliation deferred: effect_id=%s class=%s",
+                effect_id, type(exc).__name__,
+            )
+            continue
+        if outcome == "VERIFIED":
+            reconciled_verified += 1
+        elif outcome == "NEEDS_REVIEW":
+            needs_review += 1
+        else:
+            still_unresolved += 1
+
+    return {
+        "scanned": len(effect_ids),
+        "reconciled_verified": reconciled_verified,
+        "still_unresolved": still_unresolved,
+        "needs_review": needs_review,
+        "errors": errors,
+        "provider_success_claimed": False,
+    }
+
+
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Read-only Temporal projection audit")
+    parser = argparse.ArgumentParser(
+        description="Read-only Temporal projection audit and bounded effect reconciliation"
+    )
+    parser.add_argument("--mode", choices=("temporal", "effects"), default="temporal")
     parser.add_argument("--stale-seconds", type=int, default=300)
     parser.add_argument("--limit", type=int, default=20)
     args = parser.parse_args()
     settings = get_settings()
+    sessions = get_session_maker()
+    if args.mode == "effects":
+        summary = await reconcile_unresolved_effects(
+            sessions, SimulatorAdapter(sessions), limit=args.limit,
+        )
+        print(json.dumps(summary, indent=2))
+        return
     client = await connect_temporal(settings)
     issues = await compare_temporal_projection(
-        get_session_maker(), client,
+        sessions, client,
         stale_seconds=args.stale_seconds, limit=args.limit,
     )
     print(json.dumps({"issues": issues, "count": len(issues)}, indent=2))

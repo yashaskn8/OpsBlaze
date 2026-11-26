@@ -52,3 +52,58 @@ async def test_review_requires_current_state_and_version(sessions_fixture) -> No
     async with sessions_fixture() as session:
         with pytest.raises(VersionConflict):
             await acknowledge_review(session, "a", incident.id, 2)
+
+
+@pytest.mark.asyncio
+async def test_operator_typed_handoff_endpoint_cites_evidence_and_next_steps(
+    sessions_fixture,
+):
+    from httpx import ASGITransport, AsyncClient
+    from backend.api import app
+    from backend.database import get_session
+    from backend.models import SimulatorTarget
+    from backend.probes.gateway import invoke_probe
+    from backend.settings import Settings, get_settings
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(SimulatorTarget(
+                tenant_id="handoff-t", target_id="checkout", version=1, healthy=False, last_fence=0,
+            ))
+        incident = await admit_incident(
+            session, "handoff-t", "handoff-1", IncidentCreate(target_id="checkout")
+        )
+    probe = await invoke_probe(sessions_fixture, "handoff-t", incident.id, 1, "simulator.health")
+
+    async def override_session():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(local_token="handoff-token")
+    try:
+        headers = {"X-Tenant-Id": "handoff-t", "X-OpsBlaze-Token": "handoff-token"}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.post(
+                f"/v1/incidents/{incident.id}/handoff",
+                json={
+                    "reason_code": "LOW_CONFIDENCE",
+                    "note": "Model confidence below threshold for automated proposal",
+                    "next_steps": ["Verify replica lag", "Approve manual restart"],
+                },
+                headers={**headers, "If-Match": "1"},
+            )
+            assert res.status_code == 202, res.text
+            body = res.json()
+            assert body["status_projection"] == "NEEDS_REVIEW"
+            assert body["status_version"] == 2
+            assert body["reason_code"] == "LOW_CONFIDENCE"
+            assert body["next_steps"] == ["Verify replica lag", "Approve manual restart"]
+            assert body["evidence_ids"] == [str(probe.evidence_id)]
+            stale = await client.post(
+                f"/v1/incidents/{incident.id}/handoff",
+                headers={**headers, "If-Match": "1"},
+            )
+            assert stale.status_code == 409
+    finally:
+        app.dependency_overrides.clear()

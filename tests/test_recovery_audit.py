@@ -852,3 +852,8 @@ async def test_terminal_projection_timing_is_observed_and_identity_bound(
     assert finding["terminal_projection_lag_ms"] == expected_lag
     assert finding["safe_action"] == "INSPECT_ONLY"
     assert not report["recovery_certified"]
+    assert "timing_summary" in report
+    summary = report["timing_summary"]
+    assert summary["lagged_count"] == (1 if expected_lag is not None else 0)
+    assert summary["max_projection_lag_ms"] == expected_lag
+    assert summary["max_workflow_runtime_ms"] == expected_runtime

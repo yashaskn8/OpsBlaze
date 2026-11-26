@@ -5,6 +5,7 @@ import importlib
 import os
 import sys
 from collections import Counter
+from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -121,3 +122,73 @@ async def test_worker_restart_replays_approval_signal_without_duplicate_actions(
         assert calls["inspect"] == 1
         assert calls["apply"] == int(case == "approve")
         assert applied_plans == (["fixture-plan"] if case == "approve" else [])
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interrupt_phase", ["INVESTIGATING", "EXECUTING"])
+async def test_worker_restart_during_investigating_and_executing_states(
+    interrupt_phase,
+):
+    entered_phase = asyncio.Event()
+    resume_worker_two = False
+    calls: Counter[str] = Counter()
+    states: list[str] = []
+
+    @activity.defn(name="project_incident_status")
+    async def project(tenant_id: str, incident_id: str, state: str) -> None:
+        states.append(state)
+
+    @activity.defn(name="select_incident_route")
+    async def route(tenant_id: str, incident_id: str) -> str:
+        calls["route"] += 1
+        return "RUNBOOK"
+
+    @activity.defn(name="inspect_incident_read_only")
+    async def inspect(tenant_id: str, incident_id: str) -> str:
+        calls["inspect"] += 1
+        if interrupt_phase == "INVESTIGATING" and not resume_worker_two:
+            entered_phase.set()
+            raise RuntimeError("simulated worker interruption during investigating")
+        return "SIMULATOR_REVIEW_REQUIRED"
+
+    @activity.defn(name="apply_approved_simulator_plan")
+    async def apply(tenant_id: str, incident_id: str, plan_id: str) -> str:
+        calls["apply"] += 1
+        if interrupt_phase == "EXECUTING" and not resume_worker_two:
+            entered_phase.set()
+            raise RuntimeError("simulated worker interruption during executing")
+        return "VERIFIED"
+
+    async with await WorkflowEnvironment.start_local() as env:
+        queue = f"opsblaze-phase-restart-{uuid4()}"
+        worker_config = dict(
+            client=env.client,
+            task_queue=queue,
+            activities=[project, route, inspect, apply],
+            workflows=[IncidentWorkflow],
+            graceful_shutdown_timeout=timedelta(milliseconds=100),
+        )
+        async with Worker(**worker_config):
+            handle = await env.client.start_workflow(
+                IncidentWorkflow.run,
+                args=["tenant", str(uuid4())],
+                id=f"phase-restart-{uuid4()}",
+                task_queue=queue,
+            )
+            if interrupt_phase == "EXECUTING":
+                await asyncio.sleep(0.3)
+                await handle.signal(IncidentWorkflow.plan_decided, args=["plan-1", True])
+            await asyncio.wait_for(entered_phase.wait(), timeout=15)
+            original_run = (await handle.describe()).run_id
+
+        resume_worker_two = True
+        async with Worker(**worker_config):
+            if interrupt_phase == "INVESTIGATING":
+                await handle.signal(IncidentWorkflow.plan_decided, args=["plan-1", True])
+            assert await asyncio.wait_for(handle.result(), timeout=15) == "VERIFIED"
+        assert (await handle.describe()).run_id == original_run
+        assert calls["route"] == 1
+        if interrupt_phase == "EXECUTING":
+            assert calls["inspect"] == 1
+        assert states[-1] == "VERIFIED"

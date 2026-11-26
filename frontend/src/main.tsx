@@ -8,10 +8,10 @@ import { InvestigationPanel } from "./InvestigationPanel";
 import { emptyDiagnostics, snapshotAgeSeconds, type ClientDiagnostics } from "./clientDiagnostics";
 import {
   detail, fetchQueueHealth, fetchDeadLetters, fetchEvidencePage,
-  fetchInvestigation, fetchLineageRecordDetail, finishReview,
-  type EvidenceItem, type Incident, type Investigation, type LineageDiagnostics,
-  type LineageRecordDetail, type QueueHealth, type ExperienceDeadLetter,
-  type ExperienceDeadLetterPage,
+  fetchInvestigation, fetchLineageRecordDetail, finishReview, handoffIncident,
+  type EvidenceItem, type HandoffReasonCode, type Incident, type Investigation,
+  type LineageDiagnostics, type LineageRecordDetail, type QueueHealth,
+  type ExperienceDeadLetter, type ExperienceDeadLetterPage,
 } from "./api";
 
 type AuthIdentity = {
@@ -184,6 +184,8 @@ function App() {
   const [replayBusy, setReplayBusy] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [handoffReason, setHandoffReason] = useState<HandoffReasonCode>("OPERATOR_REQUESTED");
+  const [handoffInfo, setHandoffInfo] = useState<{ reason_code: string; next_steps: string[] } | null>(null);
 
   const headers = (): Record<string, string> => usingOidc
     ? { Authorization: "Bearer " + accessToken }
@@ -328,6 +330,7 @@ function App() {
       setLineage(null);
       setLineagePages({ incidentId: "", pages: {} });
       setEvents([]);
+      setHandoffInfo(null);
       setClientDiag(emptyDiagnostics());
     } catch (cause) {
       setClientDiag(prev => ({ ...prev, clientErrors: prev.clientErrors + 1 }));
@@ -825,6 +828,31 @@ function App() {
   }
 
 
+  async function escalateHandoff() {
+    if (!incident || !canOperate || connection !== "LIVE") return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await handoffIncident(
+        incident.id,
+        incident.status_version,
+        handoffReason,
+        `Operator escalation (${handoffReason})`,
+        headers(),
+      );
+      setIncident({
+        ...incident,
+        status_projection: result.status_projection,
+        status_version: result.status_version,
+      });
+      setHandoffInfo({ reason_code: result.reason_code, next_steps: result.next_steps });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Handoff failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function decidePlan(choice: "APPROVE" | "REJECT") {
     if (!plan || !incident || !canReview || reviewStale || connection !== "LIVE") return;
     if (choice === "APPROVE" && (!plan.policy_id || !plan.postcondition)) return;
@@ -988,9 +1016,25 @@ function App() {
                 </>
               )}
               {["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL"].includes(incident.status_projection) && (
-                <button type="button" className="secondary" disabled={busy || !canOperate || connection !== "LIVE"} onClick={() => decide("cancel")}>Request cancellation</button>
+                <>
+                  <button type="button" className="secondary" disabled={busy || !canOperate || connection !== "LIVE"} onClick={() => decide("cancel")}>Request cancellation</button>
+                  <label aria-label="Handoff reason">
+                    <select value={handoffReason} onChange={e => setHandoffReason(e.target.value as HandoffReasonCode)}>
+                      <option value="OPERATOR_REQUESTED">Operator requested</option>
+                      <option value="LOW_CONFIDENCE">Low confidence</option>
+                      <option value="STALE_EVIDENCE">Stale evidence</option>
+                      <option value="UNRESOLVED_EFFECT">Unresolved effect</option>
+                      <option value="POLICY_BOUNDARY">Policy boundary</option>
+                    </select>
+                  </label>
+                  <button type="button" className="secondary" disabled={busy || !canOperate || connection !== "LIVE"} onClick={() => escalateHandoff()}>Escalate handoff</button>
+                </>
               )}
             </div>
+            {handoffInfo && <div className="audit" role="status">
+              <strong>Handoff reason: {handoffInfo.reason_code}</strong>
+              <p className="muted">Next steps: {handoffInfo.next_steps.join(" · ")}</p>
+            </div>}
             {activeInvestigation && <InvestigationPanel report={activeInvestigation}
               stale={connection !== "LIVE" || activeInvestigation.incident.status_version !== incident.status_version} />}
             {plan && <div className="plan">

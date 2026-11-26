@@ -19,14 +19,18 @@ OutboxDomain = Literal["temporal", "experience"]
 Claim = tuple[int, str, str, str, dict | None, int]
 
 
-async def claim_intent(
+async def claim_intent_batch(
     sessions: async_sessionmaker[AsyncSession],
     tenant_filter: str | None = None,
     *,
     domain: OutboxDomain = "temporal",
-) -> Claim | None:
+    limit: int = 10,
+) -> list[Claim]:
+    """Claim up to `limit` causally ready outbox intents across distinct incidents."""
     if domain not in ("temporal", "experience"):
         raise ValueError("unrecognized outbox consumer domain")
+    if not 1 <= limit <= 20:
+        raise ValueError("outbox claim batch limit must be between 1 and 20")
     now = datetime.now(timezone.utc)
     start = aliased(OutboxEntry)
     older = aliased(OutboxEntry)
@@ -80,23 +84,44 @@ async def claim_intent(
                     ordering_guard,
                 )
                 .order_by(OutboxEntry.id)
-                .limit(1)
+                .limit(min(limit * 4, 50))
                 .with_for_update(of=OutboxEntry, skip_locked=True)
             )
             if tenant_filter is not None:
                 stmt = stmt.where(Incident.tenant_id == tenant_filter)
-            result = (await session.execute(stmt)).first()
-            if result is None:
-                return None
-            entry, tenant_id = result
-            entry.attempt += 1
-            entry.available_at = now + timedelta(
-                seconds=min(300, 2 ** min(entry.attempt, 8))
-            )
-            return (
-                entry.id, tenant_id, str(entry.incident_id),
-                entry.kind, entry.payload, entry.attempt,
-            )
+            rows = (await session.execute(stmt)).all()
+            if not rows:
+                return []
+            claims: list[Claim] = []
+            seen_incidents: set[UUID] = set()
+            for entry, tenant_id in rows:
+                # Preserve causal per-incident ordering: at most one intent per incident.
+                if entry.incident_id in seen_incidents:
+                    continue
+                seen_incidents.add(entry.incident_id)
+                entry.attempt += 1
+                entry.available_at = now + timedelta(
+                    seconds=min(300, 2 ** min(entry.attempt, 8))
+                )
+                claims.append((
+                    entry.id, tenant_id, str(entry.incident_id),
+                    entry.kind, entry.payload, entry.attempt,
+                ))
+                if len(claims) >= limit:
+                    break
+            return claims
+
+
+async def claim_intent(
+    sessions: async_sessionmaker[AsyncSession],
+    tenant_filter: str | None = None,
+    *,
+    domain: OutboxDomain = "temporal",
+) -> Claim | None:
+    batch = await claim_intent_batch(
+        sessions, tenant_filter=tenant_filter, domain=domain, limit=1,
+    )
+    return batch[0] if batch else None
 
 
 async def acknowledge_claim(

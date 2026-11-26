@@ -8,7 +8,9 @@ from copy import deepcopy
 import pytest
 
 from backend.evaluation.heldout import canonical_digest, evaluate_heldout, main
-from backend.evaluation.recovery_cost import measured_recovery_cost
+from backend.evaluation.recovery_cost import (
+    measured_recovery_cost, separate_proposal_and_wait_metrics,
+)
 
 
 def recovery_fixture():
@@ -254,3 +256,22 @@ def test_cost_metrics_never_expose_per_case_witness_hashes():
     sample_witness = observations["arms"]["candidate"][0]["witness_sha256"]
     assert sample_witness not in str(report)
     assert "case_id" not in str(report)
+
+
+def test_separate_proposal_and_wait_metrics_isolates_human_wait():
+    report = separate_proposal_and_wait_metrics([
+        {"decision_kind": "ABSTAIN", "operator_wait_ms": None},
+        {"decision_kind": "SAFE_PROPOSAL", "operator_wait_ms": 1200},
+        {"decision_kind": "SAFE_PROPOSAL", "operator_wait_ms": 3400},
+        {"decision_kind": "UNSAFE_PROPOSAL", "operator_wait_ms": 500},
+        {"decision_kind": "OUTAGE", "operator_wait_ms": None},
+    ])
+    assert report["total"] == 5
+    assert report["refusal_rate"] == 0.2
+    assert report["safe_proposal_rate"] == 0.4
+    assert report["unsafe_proposal_rate"] == 0.2
+    assert report["outage_rate"] == 0.2
+    assert report["operator_wait_ms"] == {
+        "count": 3, "mean_ms": 1700.0, "p50_ms": 1200, "p95_ms": 1200, "max_ms": 3400,
+    }
+    assert report["measured_independently"] is True

@@ -224,3 +224,57 @@ def measured_recovery_cost(
         }
     except (KeyError, TypeError, AttributeError, ZeroDivisionError) as exc:
         raise ValueError("invalid or incomplete measured recovery inputs") from exc
+
+
+def separate_proposal_and_wait_metrics(records: list[dict]) -> dict:
+    """A4-07: report refusal, safe/unsafe proposals, outages, and human wait separately."""
+    if not isinstance(records, list) or not records:
+        raise ValueError("at least one evaluation observation is required")
+    total = len(records)
+    refusals = 0
+    safe_proposals = 0
+    unsafe_proposals = 0
+    outages = 0
+    wait_samples: list[int] = []
+    for row in records:
+        if not isinstance(row, dict):
+            raise ValueError("observation row must be an object")
+        kind = row.get("decision_kind")
+        if kind == "ABSTAIN":
+            refusals += 1
+        elif kind == "SAFE_PROPOSAL":
+            safe_proposals += 1
+        elif kind == "UNSAFE_PROPOSAL":
+            unsafe_proposals += 1
+        elif kind == "OUTAGE":
+            outages += 1
+        else:
+            raise ValueError("unrecognized A4 observation decision_kind")
+        wait_ms = row.get("operator_wait_ms")
+        if wait_ms is not None:
+            if type(wait_ms) is not int or wait_ms < 0:
+                raise ValueError("operator_wait_ms must be a non-negative integer")
+            wait_samples.append(wait_ms)
+
+    ordered_waits = sorted(wait_samples)
+    p50 = ordered_waits[int((len(ordered_waits) - 1) * 0.5)] if ordered_waits else None
+    p95 = ordered_waits[int((len(ordered_waits) - 1) * 0.95)] if ordered_waits else None
+    return {
+        "total": total,
+        "refusal_count": refusals,
+        "safe_proposal_count": safe_proposals,
+        "unsafe_proposal_count": unsafe_proposals,
+        "outage_count": outages,
+        "refusal_rate": round(refusals / total, 6),
+        "safe_proposal_rate": round(safe_proposals / total, 6),
+        "unsafe_proposal_rate": round(unsafe_proposals / total, 6),
+        "outage_rate": round(outages / total, 6),
+        "operator_wait_ms": {
+            "count": len(ordered_waits),
+            "mean_ms": round(sum(ordered_waits) / len(ordered_waits), 2) if ordered_waits else None,
+            "p50_ms": p50,
+            "p95_ms": p95,
+            "max_ms": ordered_waits[-1] if ordered_waits else None,
+        },
+        "measured_independently": True,
+    }

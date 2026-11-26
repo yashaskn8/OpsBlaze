@@ -114,3 +114,32 @@ async def test_tenant_budget_limits_actual_provider_calls(sessions_fixture, monk
         assert window.reserved_tokens == 512
         assert window.used_tokens == 37
         assert (await session.get(ModelAdvisory, second.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_advisory_budget_and_structured_contract_survive_session_restart(
+    sessions_fixture, monkeypatch,
+):
+    from pydantic import ValidationError
+
+    monkeypatch.setattr(
+        "backend.investigator.advisory.get_settings",
+        lambda: Settings(ai_advisory_enabled=True, ai_advisory_model="test-model"),
+    )
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "t-restart", "k-restart", IncidentCreate(target_id="checkout")
+        )
+    # Invalid / unallowlisted choice or inconsistent reason code must fail validation.
+    with pytest.raises(ValidationError):
+        ReadOnlyAdvice.model_validate({"next_probe": "shell.exec", "reason_code": "NEED_VERSION"})
+    bad = SimpleNamespace(responses=FakeResponses(
+        SimpleNamespace(next_probe="ABSTAIN", reason_code="NEED_VERSION")
+    ))
+    assert await advise_after_unhealthy(sessions_fixture, "t-restart", incident.id, bad) is None
+    # Verify failed reservation state persists across a fresh session without re-calling provider.
+    async with sessions_fixture() as session:
+        row = await session.get(ModelAdvisory, incident.id)
+        assert row is not None and row.state == "FAILED" and row.tokens_reserved == 512
+    assert await advise_after_unhealthy(sessions_fixture, "t-restart", incident.id, bad) is None
+    assert bad.responses.calls == 1

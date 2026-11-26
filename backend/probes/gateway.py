@@ -210,6 +210,88 @@ async def list_incident_capabilities(
     ]
 
 
+async def reserve_external_probe_intent(
+    sessions: async_sessionmaker[AsyncSession],
+    tenant_id: str,
+    incident_id: UUID,
+    step_no: int,
+    catalog_id: str,
+    *,
+    now: datetime | None = None,
+) -> UUID:
+    """A2-04: commit durable ProbeCall identity and budget reservation before I/O."""
+    if step_no < 1:
+        raise ProbeDenied("step must be positive")
+    if catalog_id not in ALLOWED_PROBES:
+        raise ProbeDenied("probe catalog is not allowlisted")
+    observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    meta = PROBE_CATALOG[catalog_id]
+    probe_limit = get_settings().max_probe_calls_per_incident
+    async with sessions() as session:
+        async with session.begin():
+            incident = await session.scalar(
+                select(Incident)
+                .where(Incident.id == incident_id, Incident.tenant_id == tenant_id)
+                .with_for_update()
+            )
+            if incident is None:
+                raise ProbeDenied("incident not found in tenant")
+            existing = await session.scalar(
+                select(ProbeCall).where(
+                    ProbeCall.incident_id == incident_id, ProbeCall.step_no == step_no
+                )
+            )
+            if existing is not None:
+                raise ProbeDenied("probe call step is already recorded")
+            if step_no != incident.probe_used + 1:
+                raise ProbeDenied("new probes must use the next sequential step")
+            if incident.probe_used >= probe_limit:
+                raise ProbeDenied("durable probe budget exhausted")
+            cap = await session.scalar(
+                select(ProbeCapability).where(
+                    ProbeCapability.tenant_id == tenant_id,
+                    ProbeCapability.incident_id == incident_id,
+                    ProbeCapability.catalog_id == catalog_id,
+                ).with_for_update()
+            )
+            if cap is None:
+                cap = ProbeCapability(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    incident_id=incident_id,
+                    catalog_id=catalog_id,
+                    catalog_version=CATALOG_VERSION,
+                    version=1,
+                    max_calls=max(meta["max_calls_per_incident"], probe_limit),
+                    used_calls=0,
+                    max_response_bytes=meta["max_response_bytes"],
+                    timeout_ms=meta["timeout_ms"],
+                    expires_at=observed + timedelta(seconds=300),
+                )
+                session.add(cap)
+                await session.flush()
+            if (
+                cap.revoked_at is not None
+                or utc(cap.expires_at) <= observed
+                or cap.used_calls >= cap.max_calls
+            ):
+                raise ProbeDenied("probe capability expired, revoked, or exhausted")
+            incident.probe_used += 1
+            cap.used_calls += 1
+            call_id = uuid4()
+            session.add(
+                ProbeCall(
+                    id=call_id,
+                    incident_id=incident_id,
+                    step_no=step_no,
+                    catalog_id=catalog_id,
+                    outcome="RESERVED",
+                    evidence_id=None,
+                )
+            )
+            return call_id
+
+
 async def invoke_probe(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: str,

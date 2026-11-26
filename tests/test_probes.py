@@ -4,9 +4,9 @@ from sqlalchemy import select
 
 from backend.investigator.baseline import inspect
 from backend.models import (
-    Evidence, HypothesisStep, Incident, ProbeCall, SimulatorTarget
+    Evidence, HypothesisStep, Incident, ProbeCall, ProbeCapability, SimulatorTarget
 )
-from backend.probes.gateway import ProbeDenied, invoke_probe
+from backend.probes.gateway import ProbeDenied, invoke_probe, reserve_external_probe_intent
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 
@@ -151,3 +151,35 @@ async def test_replay_rejects_cross_incident_evidence_link(sessions_fixture):
             row.evidence_id = other_result.evidence_id
     with pytest.raises(ProbeDenied, match="integrity"):
         await invoke_probe(sessions_fixture, "t", first.id, 1, "simulator.health")
+
+
+@pytest.mark.asyncio
+async def test_external_probe_intent_commits_reservation_before_read_and_survives_restart(
+    sessions_fixture,
+):
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "t-ext", "ext-reserve-1", IncidentCreate(target_id="checkout")
+        )
+    call_id = await reserve_external_probe_intent(
+        sessions_fixture, "t-ext", incident.id, 1, "simulator.health"
+    )
+    # Re-open a clean session to simulate a process restart.
+    async with sessions_fixture() as session:
+        row = await session.get(ProbeCall, call_id)
+        assert row is not None
+        assert row.outcome == "RESERVED"
+        assert row.evidence_id is None
+        inc_row = await session.get(Incident, incident.id)
+        assert inc_row.probe_used == 1
+        cap = await session.scalar(
+            select(ProbeCapability).where(
+                ProbeCapability.incident_id == incident.id,
+                ProbeCapability.catalog_id == "simulator.health",
+            )
+        )
+        assert cap is not None and cap.used_calls == 1
+    with pytest.raises(ProbeDenied, match="already recorded"):
+        await reserve_external_probe_intent(
+            sessions_fixture, "t-ext", incident.id, 1, "simulator.health"
+        )

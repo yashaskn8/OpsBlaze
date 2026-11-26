@@ -17,7 +17,9 @@ from backend.temporal_connection import connect_temporal
 from backend.workflows.incident import IncidentWorkflow
 from backend.workers.heartbeat import heartbeat_loop
 from backend.workers.lineage_recovery import lineage_recovery_loop
-from backend.workers.outbox import acknowledge_claim, claim_intent
+from backend.workers.outbox import (
+    Claim, acknowledge_claim, claim_intent, claim_intent_batch,
+)
 
 log = logging.getLogger(__name__)
 
@@ -71,22 +73,9 @@ async def deliver_intent(client: Client, intent: tuple[int, str, str, str, dict 
         raise ValueError("unsupported outbox kind")
 
 
-async def dispatch_once(
-    client: Client, sessions: async_sessionmaker[AsyncSession],
-    *, tenant_filter: str | None = None,
-) -> bool:
-    try:
-        intent = await claim_intent(sessions, tenant_filter=tenant_filter)
-    except Exception as exc:
-        # PostgreSQL may be temporarily unreachable. A claim failure must
-        # not terminate the dispatcher or invent a successful delivery.
-        log.warning(
-            "Temporal outbox claim deferred: class=%s",
-            type(exc).__name__,
-        )
-        return False
-    if intent is None:
-        return False
+async def _deliver_and_ack(
+    client: Client, sessions: async_sessionmaker[AsyncSession], intent: Claim,
+) -> None:
     entry_id = intent[0]
     try:
         incident_id = UUID(intent[2])
@@ -107,7 +96,7 @@ async def dispatch_once(
             entry_id, type(exc).__name__,
         )
         # Preserve the leased intent for durable retry; no false ACK.
-        return True
+        return
     try:
         await acknowledge_claim(sessions, intent)
     except Exception as exc:
@@ -117,7 +106,45 @@ async def dispatch_once(
             "Temporal outbox acknowledgment deferred: intent_id=%s class=%s",
             entry_id, type(exc).__name__,
         )
+
+
+async def dispatch_once(
+    client: Client, sessions: async_sessionmaker[AsyncSession],
+    *, tenant_filter: str | None = None,
+) -> bool:
+    try:
+        intent = await claim_intent(sessions, tenant_filter=tenant_filter)
+    except Exception as exc:
+        # PostgreSQL may be temporarily unreachable. A claim failure must
+        # not terminate the dispatcher or invent a successful delivery.
+        log.warning(
+            "Temporal outbox claim deferred: class=%s",
+            type(exc).__name__,
+        )
+        return False
+    if intent is None:
+        return False
+    await _deliver_and_ack(client, sessions, intent)
     return True
+
+
+async def dispatch_batch(
+    client: Client, sessions: async_sessionmaker[AsyncSession],
+    *, tenant_filter: str | None = None, limit: int = 10,
+) -> int:
+    try:
+        intents = await claim_intent_batch(
+            sessions, tenant_filter=tenant_filter, limit=limit,
+        )
+    except Exception as exc:
+        log.warning(
+            "Temporal outbox batch claim deferred: class=%s",
+            type(exc).__name__,
+        )
+        return 0
+    for intent in intents:
+        await _deliver_and_ack(client, sessions, intent)
+    return len(intents)
 
 
 async def main() -> None:
@@ -130,8 +157,8 @@ async def main() -> None:
         tasks.create_task(heartbeat_loop("dispatcher"))
         tasks.create_task(lineage_recovery_loop(sessions))
         while True:
-            found = await dispatch_once(client, sessions)
-            if not found:
+            claimed = await dispatch_batch(client, sessions, limit=10)
+            if claimed == 0:
                 await asyncio.sleep(1)
 
 

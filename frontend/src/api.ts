@@ -190,3 +190,33 @@ export function fetchEvidencePage(
     headers,
   );
 }
+
+export type HandoffReasonCode =
+  | "LOW_CONFIDENCE"
+  | "STALE_EVIDENCE"
+  | "UNRESOLVED_EFFECT"
+  | "POLICY_BOUNDARY"
+  | "OPERATOR_REQUESTED";
+
+export async function handoffIncident(
+  incidentId: string,
+  version: number,
+  reasonCode: HandoffReasonCode,
+  note: string,
+  headers: Record<string, string>,
+): Promise<Incident & { reason_code: HandoffReasonCode; next_steps: string[]; evidence_ids: string[] }> {
+  const response = await fetch(`/v1/incidents/${encodeURIComponent(incidentId)}/handoff`, {
+    method: "POST",
+    headers: {
+      ...headers,
+      "Content-Type": "application/json",
+      "If-Match": String(version),
+    },
+    body: JSON.stringify({ reason_code: reasonCode, note }),
+  });
+  const body = (await response.json()) as Record<string, unknown>;
+  if (!response.ok) {
+    throw new Error(typeof body.detail === "string" ? body.detail : `Request failed (${response.status})`);
+  }
+  return body as Incident & { reason_code: HandoffReasonCode; next_steps: string[]; evidence_ids: string[] };
+}

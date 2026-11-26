@@ -1337,10 +1337,34 @@ async def incident_route(
     }
 
 
+class HandoffRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason_code: Literal[
+        "LOW_CONFIDENCE", "STALE_EVIDENCE", "UNRESOLVED_EFFECT",
+        "POLICY_BOUNDARY", "OPERATOR_REQUESTED",
+    ] = "OPERATOR_REQUESTED"
+    note: str = Field(
+        default="Operator escalation requested",
+        min_length=8,
+        max_length=256,
+    )
+    next_steps: list[str] = Field(default_factory=list, max_length=5)
+
+
+_DEFAULT_HANDOFF_STEPS: dict[str, list[str]] = {
+    "LOW_CONFIDENCE": ["Inspect cited probe evidence", "Trigger manual simulator verification"],
+    "STALE_EVIDENCE": ["Refresh read-only probes", "Confirm target version before approving"],
+    "UNRESOLVED_EFFECT": ["Run read-only effect reconciliation", "Review simulator ledger state"],
+    "POLICY_BOUNDARY": ["Review pinned policy scope", "Obtain secondary reviewer approval"],
+    "OPERATOR_REQUESTED": ["Inspect current evidence & plan preview", "Decide approve or cancel"],
+}
+
+
 @app.post("/v1/incidents/{incident_id}/handoff", status_code=202)
 async def request_operator_handoff(
     incident_id: UUID,
     if_match: Annotated[str, Header()],
+    payload: HandoffRequest | None = None,
     tenant_id: str = Depends(local_tenant),
     operator: str = Depends(local_operator),
     session: AsyncSession = Depends(get_session),
@@ -1348,12 +1372,19 @@ async def request_operator_handoff(
     from datetime import datetime, timezone
     from sqlalchemy import select
     from backend.lifecycle import ACTIVE_STATES
-    from backend.models import Incident, UIEvent
+    from backend.models import Evidence, Incident, UIEvent
 
     raw_version = if_match.strip('"')
     if not raw_version.isdecimal() or not 0 < len(raw_version) <= 10:
         raise HTTPException(400, "If-Match must be the integer status_version")
     expected_version = int(raw_version)
+    body = payload or HandoffRequest()
+    note = body.note.strip()
+    if len(note) < 8:
+        raise HTTPException(422, "handoff note must contain at least 8 non-space characters")
+    steps = [s.strip()[:160] for s in body.next_steps if isinstance(s, str) and s.strip()]
+    if not steps:
+        steps = list(_DEFAULT_HANDOFF_STEPS[body.reason_code])
     async with session.begin():
         incident = await session.scalar(
             select(Incident)
@@ -1366,6 +1397,16 @@ async def request_operator_handoff(
             raise HTTPException(409, "incident status version changed")
         if incident.status_projection not in ACTIVE_STATES:
             raise HTTPException(409, "incident is not in an active state")
+        cited_evidence = (await session.scalars(
+            select(Evidence.id)
+            .where(
+                Evidence.tenant_id == tenant_id,
+                Evidence.incident_id == incident_id,
+                Evidence.validity == "VALID",
+            )
+            .order_by(Evidence.captured_at.desc(), Evidence.id)
+            .limit(10)
+        )).all()
         incident.status_projection = "NEEDS_REVIEW"
         incident.status_version += 1
         incident.phase_entered_at = datetime.now(timezone.utc)
@@ -1381,6 +1422,10 @@ async def request_operator_handoff(
         "status_projection": "NEEDS_REVIEW",
         "status_version": status_version,
         "handoff_by": operator[:48],
+        "reason_code": body.reason_code,
+        "note": note,
+        "next_steps": steps,
+        "evidence_ids": [str(eid) for eid in cited_evidence],
     }
 
 

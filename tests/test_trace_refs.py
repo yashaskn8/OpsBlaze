@@ -230,3 +230,57 @@ async def test_collector_outage_and_recovery_keep_authoritative_lineage_usable(
     finally:
         app.dependency_overrides.clear()
         provider.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cross_process_trace_continuity_links_admission_outbox_and_outcome(
+    sessions_fixture, spans, monkeypatch,
+):
+    from backend.adapters.simulator import SimulatorAdapter
+    from backend.effects.gateway import execute_simulator_effect
+    from backend.effects.reservations import reserve_simulator_target
+    from backend.models import ResourceEpoch, SimulatorTarget
+    from backend.outcomes import adjudicate_simulator
+    from backend.workers.dispatcher import dispatch_once
+
+    enabled_settings = Settings(
+        local_token="trace-continuity",
+        otel_traces_endpoint="http://127.0.0.1:4318",
+    )
+    monkeypatch.setattr("backend.services.get_settings", lambda: enabled_settings)
+    monkeypatch.setattr("backend.workers.dispatcher.get_settings", lambda: enabled_settings)
+    monkeypatch.setattr("backend.outcomes.get_settings", lambda: enabled_settings)
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(SimulatorTarget(tenant_id="tc", target_id="checkout", version=1, healthy=False, last_fence=0))
+            session.add(ResourceEpoch(tenant_id="tc", target_id="checkout", latest_fence=0, version_seen=1))
+        incident = await admit_incident(session, "tc", "cont-1", IncidentCreate(target_id="checkout"))
+
+    class StubTemporal:
+        async def start_workflow(self, *args, **kwargs):
+            return None
+
+    assert await dispatch_once(StubTemporal(), sessions_fixture, tenant_filter="tc")
+    permit = await reserve_simulator_target(sessions_fixture, "tc", "checkout", incident.id, "c" * 64)
+    adapter = SimulatorAdapter(sessions_fixture)
+    assert await execute_simulator_effect(sessions_fixture, adapter, permit) == "VERIFIED"
+    async with sessions_fixture() as session:
+        from backend.models import EffectReceipt
+        receipt = await session.scalar(select(EffectReceipt).where(EffectReceipt.incident_id == incident.id))
+    assert await adjudicate_simulator(sessions_fixture, adapter, "tc", incident.id, receipt.id) == "VERIFIED"
+
+    async with sessions_fixture() as session:
+        refs = (await session.scalars(select(TraceRef).where(TraceRef.incident_id == incident.id))).all()
+        assert {r.record_type for r in refs} == {"incident", "outcome"}
+        assert len({r.trace_id for r in refs}) == 1
+        trace_id = refs[0].trace_id
+        trace_doc = await read_trace(session, "tc", incident.id, trace_id)
+        assert len(trace_doc["references"]) == 2
+    finished = spans.get_finished_spans()
+    trace_ids = {f"{s.context.trace_id:032x}" for s in finished}
+    assert trace_id in trace_ids
+    names = [s.name for s in finished]
+    assert "opsblaze.incident.admit" in names
+    assert "opsblaze.outbox.deliver" in names
+    assert "opsblaze.outcome.observe" in names

@@ -86,6 +86,14 @@ def check_receipt(
     return None
 
 
+def _percentile_ms(values: list[int], pct: float) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, int((len(ordered) - 1) * pct)))
+    return ordered[index]
+
+
 async def _temporal_description(
     client: Client, wid: str,
 ) -> tuple[str, bool, datetime | None, datetime | None]:
@@ -297,6 +305,14 @@ async def audit_recovery_consistency(
 
     if selected:
         results = list(await asyncio.gather(*(inspect(row) for row in selected)))
+    lags = [
+        r["terminal_projection_lag_ms"] for r in results
+        if r["terminal_projection_lag_ms"] is not None
+    ]
+    runtimes = [
+        r["terminal_workflow_runtime_ms"] for r in results
+        if r["terminal_workflow_runtime_ms"] is not None
+    ]
     return {
         "status": "AUDIT_ONLY",
         "observed_at": observed.astimezone(timezone.utc).isoformat(),
@@ -306,6 +322,14 @@ async def audit_recovery_consistency(
         "through_id": through_id,
         "next_after_id": selected[-1][3] if len(starts) > limit else None,
         "receipt_scan_truncated": receipt_overflow,
+        "timing_summary": {
+            "lagged_count": len(lags),
+            "max_projection_lag_ms": max(lags) if lags else None,
+            "p95_projection_lag_ms": _percentile_ms(lags, 0.95),
+            "measured_runtime_count": len(runtimes),
+            "max_workflow_runtime_ms": max(runtimes) if runtimes else None,
+            "p95_workflow_runtime_ms": _percentile_ms(runtimes, 0.95),
+        },
         "findings": results,
         "external_effects_enabled": False,
         "recovery_certified": False,
