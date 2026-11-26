@@ -95,6 +95,20 @@ export type LineageRecordDetail = {
   trace_refs: { node_id: string; trace_id: string; span_id: string; collector_verified: false }[];
 };
 
+export type EvidenceItem = {
+  id: string;
+  source: string;
+  validity: string;
+  freshness?: string;
+  supersedes_evidence_id?: string | null;
+  redacted_excerpt: string;
+};
+
+export type EvidencePage = {
+  items: EvidenceItem[];
+  next_cursor: string | null;
+};
+
 export function detail(value: unknown): string {
   if (value && typeof value === "object" && "detail" in value) {
     const message = (value as { detail: unknown }).detail;
@@ -161,4 +175,18 @@ export async function fetchLineageRecordDetail(
     throw new Error("Lineage record detail did not match the selected node");
   }
   return record;
+}
+
+export function fetchEvidencePage(
+  incidentId: string,
+  headers: Record<string, string>,
+  cursor?: string | null,
+  limit = 25,
+): Promise<EvidencePage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  return readJson<EvidencePage>(
+    `/v1/incidents/${encodeURIComponent(incidentId)}/evidence/page?` + params.toString(),
+    headers,
+  );
 }

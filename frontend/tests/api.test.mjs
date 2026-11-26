@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation,
-  fetchLineageRecordDetail, finishReview,
+  detail, fetchQueueHealth, fetchDeadLetters, fetchEvidencePage,
+  fetchInvestigation, fetchLineageRecordDetail, finishReview,
 } from "../src/api.ts";
+import { emptyDiagnostics, snapshotAgeSeconds } from "../src/clientDiagnostics.ts";
 import { consumeIncidentStream } from "../src/incidentStream.ts";
 import { advisoryFallbackMessage, handoffGuidance } from "../src/investigationGuidance.ts";
 
@@ -151,4 +152,21 @@ test("lineage record detail enforces exact incident and node scope", async (t) =
     fetchLineageRecordDetail("other-inc", "hypothesis", "rec-1", headers),
     /selected node/,
   );
+});
+
+test("evidence paging preserves cursor and non-sensitive client diagnostics stay bounded", async (t) => {
+  const headers = { "X-Tenant-Id": "synthetic", "X-OpsBlaze-Token": "secret-tok" };
+  const page = { items: [{ id: "ev-1", source: "simulator.health", validity: "VALID", redacted_excerpt: '{"healthy":false}' }], next_cursor: "ev-1" };
+  const fetch = t.mock.method(globalThis, "fetch", async () => Response.json(page));
+  assert.deepEqual(await fetchEvidencePage("inc-1", headers, "ev-0", 25), page);
+  assert.deepEqual(fetch.mock.calls[0].arguments, [
+    "/v1/incidents/inc-1/evidence/page?limit=25&cursor=ev-0", { headers },
+  ]);
+
+  const diag = emptyDiagnostics();
+  assert.equal(snapshotAgeSeconds(diag, 10_000), null);
+  diag.lastSnapshotAtMs = 4_000;
+  assert.equal(snapshotAgeSeconds(diag, 11_500), 7);
+  assert.equal(snapshotAgeSeconds(diag, 1_000), 0);
+  assert.equal("secret-tok" in diag, false);
 });

@@ -23,7 +23,7 @@ module.exports = {
       severity: "error",
       comment: "Leaf API/stream/auth/guidance helpers must not import UI components or main.tsx.",
       from: {
-        path: "^frontend/src/(api|auth|incidentStream|investigationGuidance|lineagePages)\\.ts$",
+        path: "^frontend/src/(api|auth|clientDiagnostics|incidentStream|investigationGuidance|lineagePages)\\.ts$",
       },
       to: {
         path: "^frontend/src/(main|InvestigationPanel)\\.tsx$",

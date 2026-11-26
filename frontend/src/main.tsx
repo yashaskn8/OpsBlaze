@@ -5,10 +5,13 @@ import { evidenceProjectionWarning, replaceLineagePage, type EvidenceProjectionS
 import { authManager, oidcConfigError, usingOidc } from "./auth";
 import { consumeIncidentStream } from "./incidentStream";
 import { InvestigationPanel } from "./InvestigationPanel";
+import { emptyDiagnostics, snapshotAgeSeconds, type ClientDiagnostics } from "./clientDiagnostics";
 import {
-  detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation, fetchLineageRecordDetail, finishReview,
-  type Incident, type Investigation, type LineageDiagnostics, type LineageRecordDetail,
-  type QueueHealth, type ExperienceDeadLetter, type ExperienceDeadLetterPage,
+  detail, fetchQueueHealth, fetchDeadLetters, fetchEvidencePage,
+  fetchInvestigation, fetchLineageRecordDetail, finishReview,
+  type EvidenceItem, type Incident, type Investigation, type LineageDiagnostics,
+  type LineageRecordDetail, type QueueHealth, type ExperienceDeadLetter,
+  type ExperienceDeadLetterPage,
 } from "./api";
 
 type AuthIdentity = {
@@ -52,12 +55,7 @@ type PlanDetail = Plan & {
   postcondition: { healthy: boolean; version: number } | null;
 };
 
-type Evidence = {
-  id: string;
-  source: string;
-  validity: string;
-  redacted_excerpt: string;
-};
+type Evidence = EvidenceItem;
 
 type Effect = {
   id: string;
@@ -143,7 +141,11 @@ function App() {
     "Reviewer withdrew permission before simulator dispatch"
   );
   const [evidence, setEvidence] = useState<Evidence[]>([]);
+  const [evidenceCursor, setEvidenceCursor] = useState<string | null>(null);
+  const [evidencePaging, setEvidencePaging] = useState(false);
   const [effects, setEffects] = useState<Effect[]>([]);
+  const [clientDiag, setClientDiag] = useState<ClientDiagnostics>(emptyDiagnostics);
+  const [diagNowMs, setDiagNowMs] = useState(() => Date.now());
   const [lineage, setLineage] = useState<Lineage | null>(null);
   const [lineagePages, setLineagePages] = useState<{
     incidentId: string; pages: Record<string, LineagePage>;
@@ -321,11 +323,14 @@ function App() {
       setReviewSnapshot(null);
       setReviewStale(false);
       setEvidence([]);
+      setEvidenceCursor(null);
       setEffects([]);
       setLineage(null);
       setLineagePages({ incidentId: "", pages: {} });
       setEvents([]);
+      setClientDiag(emptyDiagnostics());
     } catch (cause) {
+      setClientDiag(prev => ({ ...prev, clientErrors: prev.clientErrors + 1 }));
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
       setBusy(false);
@@ -351,9 +356,9 @@ function App() {
         if (!res.ok) throw new Error(detail(body));
         return body as T[];
       };
-      const [plans, proof, receipts] = await Promise.all([
+      const [plans, proofPage, receipts] = await Promise.all([
         getList<Plan>("plans"),
-        getList<Evidence>("evidence"),
+        fetchEvidencePage(incident.id, headers()),
         getList<Effect>("effects")
       ]);
       let preview: PlanDetail | null = null;
@@ -376,7 +381,8 @@ function App() {
       }
       setReviewSnapshot({ scope: authScope, incidentId: incident.id, plan: preview, expiresAt });
       setReviewStale(false);
-      setEvidence(proof);
+      setEvidence(proofPage.items);
+      setEvidenceCursor(proofPage.next_cursor);
       setEffects(receipts);
       const lineageResponse = await fetch(
         "/v1/incidents/" + incident.id + "/lineage", { headers: headers() }
@@ -385,10 +391,32 @@ function App() {
       if (!lineageResponse.ok) throw new Error(detail(lineageBody));
       setLineage(lineageBody as Lineage);
       setLineagePages({ incidentId: "", pages: {} });
+      setClientDiag(prev => ({ ...prev, lastSnapshotAtMs: Date.now() }));
     } catch (cause) {
+      setClientDiag(prev => ({ ...prev, clientErrors: prev.clientErrors + 1 }));
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function loadMoreEvidence() {
+    if (!incident || !authenticated || !evidenceCursor || evidencePaging) return;
+    setEvidencePaging(true);
+    setError("");
+    try {
+      const page = await fetchEvidencePage(incident.id, headers(), evidenceCursor);
+      setEvidence(previous => {
+        const seen = new Set(previous.map(item => item.id));
+        const merged = [...previous, ...page.items.filter(item => !seen.has(item.id))];
+        return merged.slice(-100);
+      });
+      setEvidenceCursor(page.next_cursor);
+    } catch (cause) {
+      setClientDiag(prev => ({ ...prev, clientErrors: prev.clientErrors + 1 }));
+      setError(cause instanceof Error ? cause.message : "Could not load evidence page");
+    } finally {
+      setEvidencePaging(false);
     }
   }
 
@@ -619,13 +647,20 @@ function App() {
     setReviewSnapshot(null);
     setReviewStale(false);
     setEvidence([]);
+    setEvidenceCursor(null);
     setEffects([]);
     setLineage(null);
     setLineagePages({ incidentId: "", pages: {} });
     setEvents([]);
+    setClientDiag(emptyDiagnostics());
     setConnection("SYNCING");
   }
 
+  useEffect(() => {
+    if (!incident?.id || clientDiag.lastSnapshotAtMs === null) return;
+    const timer = window.setInterval(() => setDiagNowMs(Date.now()), 5000);
+    return () => window.clearInterval(timer);
+  }, [incident?.id, clientDiag.lastSnapshotAtMs]);
 
   useEffect(() => {
     const selectedId = incident?.id;
@@ -637,10 +672,13 @@ function App() {
     const url = "/v1/incidents/" + selectedId;
     let cursor = 0;
     setConnection("SYNCING");
+    setClientDiag(emptyDiagnostics());
 
     async function refreshSnapshot() {
       const snapshot = await fetchInvestigation(incidentId, auth, controller.signal);
       if (controller.signal.aborted) return;
+      setClientDiag(prev => ({ ...prev, lastSnapshotAtMs: Date.now() }));
+      setDiagNowMs(Date.now());
       const incoming = snapshot.incident;
       setIncident(previous =>
         previous?.id === incoming.id && previous.status_version <= incoming.status_version
@@ -672,6 +710,7 @@ function App() {
       if (!Number.isSafeInteger(minimum) || minimum === undefined || minimum < 0) {
         throw new Error("invalid event retention watermark");
       }
+      setClientDiag(prev => ({ ...prev, eventGaps: prev.eventGaps + 1 }));
       setConnection("SYNCING");
       await refreshSnapshot();
       if (controller.signal.aborted) return true;
@@ -719,6 +758,7 @@ function App() {
                 if (!Number.isSafeInteger(gap.min_after_id) || gap.min_after_id < 0) {
                   throw new Error("invalid gap notification");
                 }
+                setClientDiag(prev => ({ ...prev, eventGaps: prev.eventGaps + 1 }));
                 setConnection("SYNCING");
                 await refreshSnapshot();
                 if (controller.signal.aborted) return;
@@ -731,15 +771,24 @@ function App() {
                 }
               }
             },
-            onClose() { setConnection("STALE"); },
+            onClose() {
+              setClientDiag(prev => ({ ...prev, disconnects: prev.disconnects + 1 }));
+              setConnection("STALE");
+            },
           });
         } catch {
           if (controller.signal.aborted) break;
+          setClientDiag(prev => ({
+            ...prev,
+            disconnects: prev.disconnects + 1,
+            clientErrors: prev.clientErrors + 1,
+          }));
           setConnection("STALE");
           try {
             await pollFallback();
           } catch {
             if (controller.signal.aborted) break;
+            setClientDiag(prev => ({ ...prev, clientErrors: prev.clientErrors + 1 }));
             setConnection("STALE");
           }
         }
@@ -919,6 +968,9 @@ function App() {
               : connection === "STALE" ? "Connection stale — action controls disabled"
               : "Synchronizing incident events"}
           </p>
+          {incident && <p className="muted" aria-label="Client stream diagnostics">
+            Client signals: {clientDiag.disconnects} disconnect(s) · {clientDiag.eventGaps} event gap(s) · snapshot age {snapshotAgeSeconds(clientDiag, diagNowMs) ?? "pending"}s · {clientDiag.clientErrors} client error(s)
+          </p>}
           {error && <p className="error" role="alert">{error}</p>}
           {incident ? <>
             <span className="status">{incident.status_projection.replaceAll("_", " ")}</span>
@@ -993,9 +1045,13 @@ function App() {
             {evidence.length > 0 && <div className="audit">
               <h3>Evidence ({evidence.length})</h3>
               {evidence.map(item => <div className="audit-item" key={item.id}>
-                <strong>{item.source}</strong><span>{item.validity}</span>
+                <strong>{item.source}</strong><span>{item.validity}{item.freshness ? ` · ${item.freshness}` : ""}</span>
                 <code>{item.redacted_excerpt}</code>
               </div>)}
+              {evidenceCursor && <button type="button" className="secondary" disabled={evidencePaging}
+                onClick={() => void loadMoreEvidence()}>
+                {evidencePaging ? "Loading evidence..." : "Load more evidence"}
+              </button>}
             </div>}
             {lineage && <div className="audit">
               <h3>Evidence-to-effect trace</h3>

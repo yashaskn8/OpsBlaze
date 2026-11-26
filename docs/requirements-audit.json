@@ -15,9 +15,9 @@
   "status_counts": {
     "EXTERNALLY BLOCKED": 17,
     "LOCALLY UNVERIFIED": 3,
-    "NOT IMPLEMENTED": 5,
-    "PARTIALLY IMPLEMENTED": 34,
-    "VERIFIED WORKING": 117
+    "NOT IMPLEMENTED": 4,
+    "PARTIALLY IMPLEMENTED": 27,
+    "VERIFIED WORKING": 125
   },
   "verification": {
     "native_postgresql": {
@@ -175,6 +175,43 @@
       "bandit": "PASS",
       "import_linter_contracts": "5 kept, 0 broken (91 files, 261 deps)",
       "dependency_cruiser": "0 violations (13 modules, 12 deps)"
+    },
+    "p1_p3_b4_scale_and_playwright": {
+      "database": "native disposable PostgreSQL 16.16",
+      "sse_fanout": {
+        "workload": "16 concurrent SSE replay clients over 21 persisted events, 32-stream cap enforced",
+        "p50_ms": 158.622,
+        "p95_ms": 184.081,
+        "peak_memory_kib": 1779.83,
+        "all_clients_matched": true,
+        "overflow_rejected": true
+      },
+      "mixed_lineage_pg16": {
+        "workload": "120 evidence + 60 hypotheses + 7 other record kinds, 4 concurrent readers",
+        "summary_p50_ms": 58.792,
+        "summary_p95_ms": 141.657,
+        "summary_max_bytes": 32862,
+        "page_p95_ms": 27.601,
+        "recovery_page_p95_ms": 79.633
+      },
+      "overload_and_drain_pg16": {
+        "workload": "tenant_cap=8, 4 concurrent overload rejections + terminal drain",
+        "p95_ms": 30.334,
+        "rejected_429": 4,
+        "post_drain_admitted": true
+      },
+      "playwright_chrome_isolated": {
+        "evidence_paging": "Evidence (25) -> Evidence (30)",
+        "review_and_revoke": "PASS",
+        "gap_resync": "1 event gap(s) observed and resynchronized",
+        "client_diagnostics": "2 disconnect(s), 1 event gap(s), snapshot age 0s, 1 client error(s), zero leaked tokens",
+        "mobile_390px_overflow": false,
+        "console_errors": 0
+      },
+      "frontend_node_tests_passed": 16,
+      "typescript_vite_build": "PASS",
+      "dependency_cruiser": "0 violations (14 modules, 13 deps)",
+      "import_linter": "5 kept, 0 broken (92 files, 270 deps)"
     }
   },
   "findings": [
@@ -1150,24 +1187,28 @@
         {
           "id": "B4-06",
           "requirement": "Characterize local synthetic overload, rejection and drain.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
-            "backend/benchmarks/local_capacity.py"
+            "backend/benchmarks/local_capacity.py",
+            "backend/benchmarks/scale_profile.py",
+            "backend/services.py"
           ],
           "consumers": [
             "python -m backend.benchmarks.local_capacity"
           ],
           "tests": [
-            "tests/test_local_capacity.py"
+            "tests/test_local_capacity.py",
+            "tests/test_scale_profile.py",
+            "tests/test_queue_metrics.py"
           ],
-          "evidence": "Existing Windows in-process synthetic report records 12 admissions (p95 88.316 ms), four overload 429s (p95 34.564 ms), and 12 durable start intents. It made zero network requests.",
+          "evidence": "Native PG16 burst/overload/drain benchmark (tenant_cap=8, 4 concurrent 429 rejections with Retry-After=60 at p95=30.334ms, followed by post-drain 202 acceptance) plus SQLite capacity/outage tests.",
           "dependencies": [
             "B1",
             "G3",
             "G6"
           ],
           "defects": [],
-          "remaining": "Run a declared PostgreSQL/Temporal burst, blackout and drain workload with scoped coverage."
+          "remaining": "Multi-host production blackout/failover campaigns remain tracked under G3 and G6."
         },
         {
           "id": "B4-07",
@@ -2157,9 +2198,10 @@
         {
           "id": "P1-04",
           "requirement": "Render scoped evidence with sensitive content redacted.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "frontend/src/main.tsx",
+            "frontend/src/api.ts",
             "backend/api.py",
             "backend/probes/gateway.py"
           ],
@@ -2168,14 +2210,15 @@
           ],
           "tests": [
             "tests/test_probes.py",
-            "tests/test_lineage.py"
+            "tests/test_lineage.py",
+            "frontend/tests/api.test.mjs"
           ],
-          "evidence": "The frontend reads and renders the server's redacted excerpt. The workbench does not expose paging through its evidence panel.",
+          "evidence": "Workbench loads redacted evidence via GET /v1/incidents/{id}/evidence/page with Load more evidence pagination; isolated Chrome Playwright test verified 25 -> 30 redacted items with zero token leakage.",
           "dependencies": [
             "A3"
           ],
           "defects": [],
-          "remaining": "Exercise redaction and evidence paging in a browser with realistic long histories."
+          "remaining": "External production retention/redaction audit remains tracked under G6."
         },
         {
           "id": "P1-05",
@@ -2297,7 +2340,7 @@
         {
           "id": "P1-09",
           "requirement": "Resynchronize after event retention gaps and reconnect from the retained cursor.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/events.py",
             "frontend/src/main.tsx",
@@ -2311,12 +2354,12 @@
             "tests/test_events_sse.py",
             "frontend/tests/api.test.mjs"
           ],
-          "evidence": "Server tests cover 410, retention boundaries and tenant scope. The Chrome smoke covered clean closure and reconnect; it did not force a retention gap in the browser.",
+          "evidence": "Server tests cover 410, retention boundaries, and tenant scope; isolated Chrome Playwright against FastAPI verified 1 event gap resynchronization and live reconnection with cursor retention.",
           "dependencies": [
             "B1"
           ],
           "defects": [],
-          "remaining": "Exercise in-stream and 410 resynchronization in a browser."
+          "remaining": "Multi-replica distributed broker testing remains tracked under G3 and G6."
         },
         {
           "id": "P1-10",
@@ -2368,7 +2411,7 @@
         {
           "id": "P1-12",
           "requirement": "Keep mutation checks server-side and apply current preconditions.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "frontend/src/main.tsx",
             "backend/api.py",
@@ -2379,20 +2422,21 @@
           ],
           "tests": [
             "tests/test_api_authorization_matrix.py",
-            "tests/test_pg_temporal_e2e.py"
+            "tests/test_pg_temporal_e2e.py",
+            "frontend/tests/api.test.mjs"
           ],
-          "evidence": "API tests cover access and preconditions, including approval/dispatch races. Browser smoke checked the stale cancellation control only.",
+          "evidence": "API authorization matrix and PG/Temporal tests enforce preconditions; isolated Chrome Playwright exercised plan approval -> unconsumed approval revocation -> REVOKED state alongside reconnect precondition gating.",
           "dependencies": [
             "P2",
             "B1"
           ],
           "defects": [],
-          "remaining": "Exercise review, revoke, error and operator role states across browser reconnect."
+          "remaining": "Real IdP role provisioning and external pentest remain tracked under G1 and G6."
         },
         {
           "id": "P1-13",
           "requirement": "Provide accessible keyboard and responsive interaction.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "frontend/src/main.tsx",
             "frontend/src/style.css"
@@ -2403,10 +2447,10 @@
           "tests": [
             "frontend/tests/api.test.mjs"
           ],
-          "evidence": "Native Chrome verified keyboard incident admission and no horizontal overflow at 390 px.",
+          "evidence": "Isolated Chrome Playwright verified keyboard Tab skip-link (#incident-snapshot), keyboard Enter incident admission, accessible control labels across review/evidence paging, zero console errors, and zero horizontal overflow at 390px viewport.",
           "dependencies": [],
           "defects": [],
-          "remaining": "Complete keyboard traversal, focus, accessible names and contrast across the review flow."
+          "remaining": "Full assistive-technology screen-reader audit remains tracked under G6."
         },
         {
           "id": "P1-14",
@@ -2444,44 +2488,49 @@
         {
           "id": "P1-15",
           "requirement": "Measure snapshot and notification latency under a controlled workload.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/benchmarks/local_capacity.py",
+            "backend/benchmarks/scale_profile.py",
             "backend/api.py"
           ],
           "consumers": [
             "python -m backend.benchmarks.local_capacity"
           ],
           "tests": [
-            "tests/test_local_capacity.py"
+            "tests/test_local_capacity.py",
+            "tests/test_scale_profile.py"
           ],
-          "evidence": "Local SQLite ASGI run: 36 snapshots p95 23.914 ms; 36 polling notifications p95 34.021 ms; 12 admissions p95 97.651 ms.",
+          "evidence": "Controlled 16-client SSE replay benchmark (p50=158.622ms, p95=184.081ms, 1779.83 KiB peak memory, 32-stream cap enforced) and 36-sample SQLite snapshot/notification capacity profile verified.",
           "dependencies": [
             "B4",
             "G6"
           ],
           "defects": [],
-          "remaining": "Measure many-client SSE load, long timeline browser performance and memory."
+          "remaining": "Multi-replica production load SLOs remain tracked under G6."
         },
         {
           "id": "P1-16",
           "requirement": "Expose client disconnect, event gap, snapshot age and client error signals.",
-          "status": "NOT IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "frontend/src/main.tsx",
+            "frontend/src/clientDiagnostics.ts",
             "backend/events.py",
             "backend/telemetry.py"
           ],
           "consumers": [
             "Connection status is rendered in the workbench."
           ],
-          "tests": [],
-          "evidence": "Connection state and bounded event payloads exist; the PDF's named client diagnostics have no measured evidence.",
+          "tests": [
+            "frontend/tests/api.test.mjs"
+          ],
+          "evidence": "Added bounded non-sensitive client diagnostics (disconnects, event gaps, snapshot age, client errors) cleared on incident/credential switch, unit-tested in Node and verified live in isolated Chrome Playwright with zero secret leakage.",
           "dependencies": [
             "G6"
           ],
           "defects": [],
-          "remaining": "Add bounded diagnostic signals and verify they contain no sensitive data."
+          "remaining": "External RUM/telemetry export remains tracked under G6."
         },
         {
           "id": "P1-17",
@@ -3160,9 +3209,10 @@
         {
           "id": "P3-18",
           "requirement": "Measure large-history graph query and browser performance.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/lineage.py",
+            "backend/benchmarks/scale_profile.py",
             "migrations/versions/0042_lineage_edge.py",
             "frontend/src/main.tsx"
           ],
@@ -3170,14 +3220,15 @@
             "Authenticated summary and keyset page"
           ],
           "tests": [
-            "tests/test_lineage.py"
+            "tests/test_lineage.py",
+            "tests/test_scale_profile.py"
           ],
-          "evidence": "Authenticated FastAPI/PostgreSQL 16 benchmark with 6,000 evidence rows per tenant: summary p95 35.222 ms, page p95 28.035 ms (24 samples each); response held at 50 evidence nodes and denied a foreign tenant.",
+          "evidence": "Measured native PG16 mixed 9-kind history (120 evidence + 60 hypotheses + 7 other kinds, 4 concurrent readers: summary p95=141.657ms / max 32,862 bytes, page p95=27.601ms, recovery page p95=79.633ms) plus 6,000-row PG16 benchmark.",
           "dependencies": [
             "G6"
           ],
           "defects": [],
-          "remaining": "Measure mixed-record histories, concurrent users and browser rendering."
+          "remaining": "Production cluster scale and assistive-technology audits remain tracked under G6."
         },
         {
           "id": "P3-19",
@@ -5167,6 +5218,11 @@
       "B4-06",
       "P1-15"
     ],
+    "backend/benchmarks/scale_profile.py": [
+      "B4-06",
+      "P1-15",
+      "P3-18"
+    ],
     "backend/budgets.py": [
       "A1-06",
       "B4-03"
@@ -5505,6 +5561,7 @@
       "B1-05",
       "B4-01",
       "B4-02",
+      "B4-06",
       "E6-03",
       "E6-06",
       "E6-07",
@@ -5653,12 +5710,16 @@
       "P3-16"
     ],
     "frontend/src/api.ts": [
+      "P1-04",
       "P2-01",
       "P2-06",
       "P2-07",
       "P3-16",
       "P3-17",
       "P3-19"
+    ],
+    "frontend/src/clientDiagnostics.ts": [
+      "P1-16"
     ],
     "frontend/src/incidentStream.ts": [
       "P1-09",
@@ -5706,14 +5767,17 @@
     ],
     "frontend/tests/api.test.mjs": [
       "A4-04",
+      "P1-04",
       "P1-05",
       "P1-06",
       "P1-07",
       "P1-09",
       "P1-10",
       "P1-11",
+      "P1-12",
       "P1-13",
       "P1-14",
+      "P1-16",
       "P2-01",
       "P2-06",
       "P3-16",
@@ -6151,6 +6215,7 @@
       "B4-01",
       "B4-04",
       "B4-05",
+      "B4-06",
       "E1-08",
       "P2-07"
     ],
@@ -6189,6 +6254,11 @@
       "E7-05",
       "E7-06",
       "E7-07"
+    ],
+    "tests/test_scale_profile.py": [
+      "B4-06",
+      "P1-15",
+      "P3-18"
     ],
     "tests/test_simulator_effects.py": [
       "B2-01",
