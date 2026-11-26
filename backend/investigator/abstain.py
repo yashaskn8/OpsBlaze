@@ -4,6 +4,7 @@
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -86,9 +87,12 @@ async def assess_decision(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: str, incident_id: UUID,
     step_no: int, evidence_ids: list[str],
+    *, probe_failure: Literal["TOOL_BLOCKED", "TOOL_UNAVAILABLE"] | None = None,
 ) -> DecisionAssessment | None:
     if step_no < 1:
         raise ValueError("assessment step must be positive")
+    if probe_failure is not None and probe_failure not in {"TOOL_BLOCKED", "TOOL_UNAVAILABLE"}:
+        raise ValueError("invalid assessment probe failure")
     canonical = json.dumps(evidence_ids, separators=(",", ":"), sort_keys=False)
     digest = hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -113,14 +117,24 @@ async def assess_decision(
                 # Keep the durable assessment immutable; the caller must abstain.
                 if existing.evidence_digest != digest:
                     return None
-                if existing.outcome == "PROPOSED" and not await accepted_snapshot_is_still_safe(
-                    session, incident, tenant_id, evidence_ids,
+                if existing.outcome == "PROPOSED" and (
+                    probe_failure is not None or not await accepted_snapshot_is_still_safe(
+                        session, incident, tenant_id, evidence_ids,
+                    )
                 ):
                     return None
                 return existing
 
             reason = "ACCEPTED"
-            if len(evidence_ids) != 2 or len(set(evidence_ids)) != 2:
+            if probe_failure is not None:
+                reason = probe_failure
+                if (
+                    probe_failure == "TOOL_BLOCKED"
+                    and step_no == incident.probe_used + 1
+                    and incident.probe_used >= get_settings().max_probe_calls_per_incident
+                ):
+                    reason = "BUDGET_EXHAUSTED"
+            elif len(evidence_ids) != 2 or len(set(evidence_ids)) != 2:
                 reason = "MISSING_EVIDENCE"
             elif incident.probe_used > get_settings().max_probe_calls_per_incident:
                 reason = "BUDGET_EXHAUSTED"
@@ -186,6 +200,8 @@ async def assess_decision(
                                 or any(row.target_id != incident.target_id for row in evidence)
                             ):
                                 reason = "VERSION_CHANGED"
+                            elif target.healthy:
+                                reason = "TARGET_ALREADY_HEALTHY"
                             else:
                                 observations = {
                                     row.source: row.redacted_excerpt for row in evidence

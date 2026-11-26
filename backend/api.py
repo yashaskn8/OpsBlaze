@@ -360,7 +360,7 @@ async def incident_outcomes(
             OutcomeRevision.tenant_id == tenant_id,
             OutcomeRevision.incident_id == incident_id,
         )
-        .order_by(OutcomeRevision.revision)
+        .order_by(OutcomeRevision.revision.desc())
         .limit(50)
     )).all()
     return [
@@ -368,7 +368,7 @@ async def incident_outcomes(
          "label": row.label, "witness_source": row.witness_source,
          "observed_version": row.observed_version, "reason": row.reason,
          "created_at": row.created_at.isoformat()}
-        for row in rows
+        for row in reversed(rows)
     ]
 
 
@@ -402,7 +402,8 @@ async def report_outcome_dispute(
         raise HTTPException(400, "If-Match must be the outcome revision")
     try:
         row = await dispute_outcome(
-            session, tenant_id, outcome_id, int(revision), payload.reason
+            session, tenant_id, outcome_id, int(revision), payload.reason,
+            reviewer_id=reviewer_identity,
         )
     except OutcomeConflict as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -1278,6 +1279,7 @@ async def review_failure(
         case = await review_classification(
             session, tenant_id, case_id, int(version),
             payload.corrected_code, payload.first_bad_step, payload.reason,
+            reviewer_id=reviewer_identity,
         )
     except FailureConflict as exc:
         raise HTTPException(409, str(exc)) from exc

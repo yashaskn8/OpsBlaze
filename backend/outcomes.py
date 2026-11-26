@@ -160,7 +160,7 @@ async def adjudicate_simulator(
 
 async def dispute_outcome(
     session: AsyncSession, tenant_id: str, outcome_id: UUID,
-    expected_revision: int, reason: str,
+    expected_revision: int, reason: str, *, reviewer_id: str,
 ) -> OutcomeRevision | None:
     if len(reason.strip()) < 8 or len(reason) > 256:
         raise OutcomeConflict("reason must contain 8 to 256 characters")
@@ -193,6 +193,7 @@ async def dispute_outcome(
             effect_id=prior.effect_id, revision=prior.revision + 1,
             label="DISPUTED", witness_source="OPERATOR_DISPUTE",
             observed_version=prior.observed_version, reason=reason.strip(),
+            reviewer_id=reviewer_id,
         )
         session.add(disputed)
         await session.flush()

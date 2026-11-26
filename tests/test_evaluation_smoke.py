@@ -1,27 +1,30 @@
-
+import asyncio
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import delete, func, select, text, update
 
+from backend.api import app
+from backend.database import get_engine, get_session_maker
 from backend.evaluation.fixtures import (
     FIXTURES, candidate_config, evaluate_strategy, oracle_expected,
 )
-from backend.evaluation.smoke import freeze, report, run_smoke
+from backend.evaluation.smoke import EvaluationConflict, freeze, report, run_smoke
 from backend.evaluation.stats import paired_smoke_statistics
 from backend.models import (
-    EvaluationTrial, FailureCluster, ImprovementCandidate,
+    EvaluationManifest, EvaluationTrial, FailureCluster, ImprovementCandidate,
 )
+from backend.settings import get_settings
 
 
-@pytest.fixture
-async def candidate_lab(sessions_fixture):
+async def seed_candidates(sessions, tenant_id):
     cluster_id = uuid4()
-    async with sessions_fixture() as session:
+    async with sessions() as session:
         async with session.begin():
             session.add(
                 FailureCluster(
-                    id=cluster_id, tenant_id="t", signature="EFFECT_FAILED:fixture",
+                    id=cluster_id, tenant_id=tenant_id, signature="EFFECT_FAILED:fixture",
                     version=1, case_count=1, quarantined=False,
                 )
             )
@@ -33,7 +36,7 @@ async def candidate_lab(sessions_fixture):
             ):
                 session.add(
                     ImprovementCandidate(
-                        id=candidate_id, tenant_id="t", source_cluster_id=cluster_id,
+                        id=candidate_id, tenant_id=tenant_id, source_cluster_id=cluster_id,
                         kind="CONTEXT_LIMIT", base_policy_id="deterministic-v1",
                         change_spec=spec, hypothesis="bounded probe context",
                         risk="LOW", evaluation_manifest_id="fixed-smoke-v1",
@@ -41,7 +44,104 @@ async def candidate_lab(sessions_fixture):
                         created_by="local_operator",
                     )
                 )
+    return good_id, bad_id
+
+
+@pytest.fixture
+async def candidate_lab(sessions_fixture):
+    good_id, bad_id = await seed_candidates(sessions_fixture, "t")
     return sessions_fixture, good_id, bad_id
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_parallel_postgres_evaluation_registration_returns_one_frozen_manifest():
+    settings = get_settings()
+    assert settings.database_url.startswith("postgresql+asyncpg:")
+    engine = get_engine()
+    sessions = get_session_maker()
+    tenant = f"eval-race-{uuid4().hex}"
+    requests = []
+    try:
+        candidate_id, _ = await seed_candidates(sessions, tenant)
+        headers = {"X-Tenant-Id": tenant, "X-OpsBlaze-Token": settings.local_token}
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+        ) as client:
+            # Allow both transactions to read before either can insert.
+            async with engine.begin() as blocker:
+                await blocker.execute(text("LOCK TABLE evaluation_manifest IN SHARE MODE"))
+                requests = [asyncio.create_task(client.post(
+                    "/v1/evaluations", headers=headers, json={"candidate_id": str(candidate_id)},
+                )) for _ in range(2)]
+                pending_inserts = text("""
+                    SELECT count(*) FROM pg_locks
+                    WHERE relation = 'evaluation_manifest'::regclass
+                      AND mode = 'RowExclusiveLock' AND NOT granted
+                """)
+                async with asyncio.timeout(10):
+                    while await blocker.scalar(pending_inserts) < 2:
+                        await asyncio.sleep(0.01)
+            results = await asyncio.wait_for(asyncio.gather(*requests), 10)
+
+        assert [result.status_code for result in results] == [201, 201]
+        manifest = results[0].json()
+        assert results[1].json() == manifest
+        assert manifest["state"] == "FROZEN"
+        async with sessions() as session:
+            assert await session.scalar(select(func.count()).select_from(EvaluationManifest).where(
+                EvaluationManifest.tenant_id == tenant,
+            )) == 1
+    finally:
+        for request in requests:
+            request.cancel()
+        await asyncio.gather(*requests, return_exceptions=True)
+        await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+async def test_postgres_registration_waits_for_candidate_invalidation():
+    settings = get_settings()
+    assert settings.database_url.startswith("postgresql+asyncpg:")
+    engine = get_engine()
+    sessions = get_session_maker()
+    tenant = f"eval-invalidation-{uuid4().hex}"
+    request = None
+    try:
+        candidate_id, _ = await seed_candidates(sessions, tenant)
+        headers = {"X-Tenant-Id": tenant, "X-OpsBlaze-Token": settings.local_token}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with engine.begin() as invalidation:
+                await invalidation.execute(update(ImprovementCandidate).where(
+                    ImprovementCandidate.tenant_id == tenant, ImprovementCandidate.id == candidate_id,
+                ).values(state="INVALID", version=3))
+                request = asyncio.create_task(client.post(
+                    "/v1/evaluations", headers=headers, json={"candidate_id": str(candidate_id)},
+                ))
+                # Let the request reach the scoped candidate read before committing invalidation.
+                waiting = text("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_locks
+                        WHERE locktype = 'transactionid' AND NOT granted
+                          AND transactionid = pg_current_xact_id()::xid
+                    )
+                """)
+                async with asyncio.timeout(10):
+                    while not request.done() and not await invalidation.scalar(waiting):
+                        await asyncio.sleep(0.01)
+            result = await asyncio.wait_for(request, 10)
+        assert result.status_code == 409, result.text
+        async with sessions() as session:
+            assert await session.scalar(select(EvaluationManifest.id).where(
+                EvaluationManifest.tenant_id == tenant,
+            )) is None
+    finally:
+        if request is not None:
+            request.cancel()
+            await asyncio.gather(request, return_exceptions=True)
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -68,6 +168,26 @@ async def test_frozen_manifest_idempotent_and_good_smoke(candidate_lab):
         assert data["statistics"]["conservative_95pct_interval"] == [-1.0, 1.0]
         assert data["promotion_eligible"] is False
         assert await report(session, "another-tenant", first.id) is None
+
+
+@pytest.mark.asyncio
+async def test_changed_payload_at_same_version_preserves_the_frozen_manifest(candidate_lab):
+    sessions, candidate_id, _ = candidate_lab
+    async with sessions() as session:
+        original = await freeze(session, "t", candidate_id)
+
+    async with sessions() as session:
+        async with session.begin():
+            candidate = await session.get(ImprovementCandidate, candidate_id)
+            candidate.change_spec = {"max_context_tokens": 64}
+
+    async with sessions() as session:
+        with pytest.raises(EvaluationConflict, match="candidate version"):
+            await freeze(session, "t", candidate_id)
+        frozen = (await session.scalars(select(EvaluationManifest))).one()
+        assert frozen.id == original.id
+        assert frozen.candidate_digest == original.candidate_digest
+        assert frozen.state == "FROZEN"
 
 
 @pytest.mark.asyncio

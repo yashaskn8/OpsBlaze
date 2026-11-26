@@ -557,6 +557,7 @@
     }
   ],
   "checkpoint": {
+    "functionality_audit": "docs/requirements-audit.json",
     "base_commit": "adac181f34b3d2edeb088767fed3e7588c7d2966",
     "implemented_changes": [
       {

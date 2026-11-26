@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./style.css";
 import { evidenceProjectionWarning, replaceLineagePage, type EvidenceProjectionStatus } from "./lineagePages";
 import { authManager, oidcConfigError, usingOidc } from "./auth";
+import { consumeIncidentStream } from "./incidentStream";
 import {
   detail, fetchQueueHealth, fetchDeadLetters,
   type QueueHealth, type ExperienceDeadLetter, type ExperienceDeadLetterPage,
@@ -635,22 +636,13 @@ function App() {
           });
           if (await resyncAfterGap(response)) continue;
           if (!response.ok || !response.body) throw new Error("stream unavailable");
-          setConnection("SYNCING");
-          await refreshSnapshot();
-          if (controller.signal.aborted) break;
-          setConnection("LIVE");
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let pending = "";
-          while (!controller.signal.aborted) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            pending += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n");
-            let boundary = pending.indexOf("\n\n");
-            while (boundary !== -1) {
-              const frame = pending.slice(0, boundary);
-              pending = pending.slice(boundary + 2);
-              const lines = frame.split("\n");
+          await consumeIncidentStream(response.body, controller.signal, {
+            async onOpen() {
+              setConnection("SYNCING");
+              await refreshSnapshot();
+              if (!controller.signal.aborted) setConnection("LIVE");
+            },
+            async onFrame(lines) {
               const data = lines.find(line => line.startsWith("data: "));
               if (data && lines.includes("event: gap")) {
                 const gap = JSON.parse(data.slice(6)) as { min_after_id: number };
@@ -668,11 +660,9 @@ function App() {
                   await recordEvents([event]);
                 }
               }
-              boundary = pending.indexOf("\n\n");
-            }
-            // A malformed or oversized frame must not consume unbounded memory.
-            if (pending.length > 16384) throw new Error("invalid event stream");
-          }
+            },
+            onClose() { setConnection("STALE"); },
+          });
         } catch {
           if (controller.signal.aborted) break;
           setConnection("STALE");

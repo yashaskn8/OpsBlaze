@@ -37,8 +37,10 @@ async def freeze(
             select(ImprovementCandidate).where(
                 ImprovementCandidate.id == candidate_id,
                 ImprovementCandidate.tenant_id == tenant_id,
-            )
+            ).with_for_update(read=True)
         )
+        # Source invalidation updates the candidate before scanning its manifests.
+        # A shared lock keeps that update ordered with registration.
         if candidate is None or candidate.state != "EVALUATION_READY":
             raise EvaluationConflict("candidate is not evaluation-ready")
         validate_change(candidate.kind, candidate.change_spec)
@@ -49,17 +51,28 @@ async def freeze(
             NAMESPACE_URL,
             f"opsblaze/eval/{tenant_id}/{candidate_id}/{candidate.version}/{digest}/{fixed}",
         )
-        manifest = await session.get(EvaluationManifest, manifest_id)
-        if manifest is not None:
-            return manifest
-        manifest = EvaluationManifest(
-            id=manifest_id, tenant_id=tenant_id,
-            candidate_id=candidate_id, candidate_version=candidate.version,
-            candidate_digest=digest, incumbent_id="deterministic-v1",
-            fixture_digest=fixed, oracle_version=ORACLE_VERSION,
-            trial_budget=len(FIXTURES) * 2, state="FROZEN",
+        if session.bind.dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+        elif session.bind.dialect.name == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert
+        else:
+            raise RuntimeError("unsupported evaluation database")
+
+        await session.execute(
+            insert(EvaluationManifest)
+            .values(
+                id=manifest_id, tenant_id=tenant_id,
+                candidate_id=candidate_id, candidate_version=candidate.version,
+                candidate_digest=digest, incumbent_id="deterministic-v1",
+                fixture_digest=fixed, oracle_version=ORACLE_VERSION,
+                trial_budget=len(FIXTURES) * 2, state="FROZEN",
+            )
+            # Equal registrations can collide on both the natural key and the UUID.
+            .on_conflict_do_nothing()
         )
-        session.add(manifest)
+        manifest = await session.get(EvaluationManifest, manifest_id)
+        if manifest is None:
+            raise EvaluationConflict("frozen manifest does not match this candidate version")
     return manifest
 
 

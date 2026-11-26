@@ -60,6 +60,40 @@ def test_change_validator_rejects_permission_or_code_edits():
         with pytest.raises(FailureConflict):
             validate_change(kind, spec)
     validate_change("PROBE_ORDER", {"order": ["simulator.health"]})
+    validate_change("ROUTE_SWITCH", {"strategy": "no_memory"})
+
+
+@pytest.mark.parametrize("strategy", [[], {}], ids=["array", "object"])
+@pytest.mark.asyncio
+async def test_improvement_draft_rejects_non_string_strategy(sessions_fixture, strategy):
+    from httpx import ASGITransport, AsyncClient
+
+    from backend.api import app
+    from backend.database import get_session
+    from backend.settings import Settings, get_settings
+
+    async def override_session():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_settings] = lambda: Settings(local_token="draft-test-token")
+    app.dependency_overrides[get_session] = override_session
+    try:
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/v1/improvements/draft", headers={
+                "X-Tenant-Id": "t", "X-OpsBlaze-Token": "draft-test-token",
+            }, json={
+                "source_cluster_id": str(uuid4()), "kind": "ROUTE_SWITCH",
+                "base_policy_id": "baseline-v1", "change_spec": {"strategy": strategy},
+                "hypothesis": "reduce irrelevant context", "risk": "LOW",
+                "evaluation_manifest_id": "fixture-v1",
+            })
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "change class or content is not allowlisted"}
 
 
 @pytest.mark.asyncio

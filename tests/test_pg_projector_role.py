@@ -86,6 +86,7 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
                 ("incident", "request_sha256", False),
                 ("outcome_revision", "label", True),
                 ("outcome_revision", "reason", False),
+                ("outcome_revision", "reviewer_id", False),
                 ("outcome_revision", "witness_source", False),
                 ("evidence", "id", True),
                 ("evidence", "redacted_excerpt", False),

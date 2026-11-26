@@ -139,6 +139,7 @@ def validate_change(kind: str, spec: dict) -> None:
         ),
         "ROUTE_SWITCH": lambda: (
             set(spec) == {"strategy"}
+            and isinstance(spec["strategy"], str)
             and spec["strategy"] in {"deterministic", "no_memory"}
         ),
     }
@@ -243,7 +244,7 @@ async def review_classification(
     session: AsyncSession,
     tenant_id: str, case_id: UUID, expected_version: int,
     corrected_code: str, first_bad_step: int | None,
-    reason: str,
+    reason: str, *, reviewer_id: str,
 ) -> FailureCase | None:
     """Fact-bound correction. Invalidate candidates derived from old signatures."""
     if not 8 <= len(reason.strip()) <= 256:
@@ -415,7 +416,7 @@ async def review_classification(
                 id=uuid4(), tenant_id=tenant_id, case_id=case.id,
                 revision=case.classification_version,
                 previous_code=previous_code, corrected_code=corrected_code,
-                reason=reason.strip(),
+                reason=reason.strip(), reviewer_id=reviewer_id,
             )
         )
     return case

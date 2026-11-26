@@ -13,6 +13,9 @@ from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 
 
+REVIEWER = "DEV_REVIEWER_CREDENTIAL"
+
+
 @pytest.fixture
 async def witnessed_effect(sessions_fixture):
     async with sessions_fixture() as session:
@@ -39,7 +42,9 @@ async def test_independent_witness_and_dispute_revisions(witnessed_effect):
         assert len(outcomes) == 1
         first = outcomes[0]
     async with sessions() as session:
-        disputed = await dispute_outcome(session, "a", first.id, 1, "independent check disagrees")
+        disputed = await dispute_outcome(
+            session, "a", first.id, 1, "independent check disagrees", reviewer_id=REVIEWER,
+        )
         assert disputed.label == "DISPUTED" and disputed.revision == 2
     assert await adjudicate_simulator(sessions, adapter, "a", incident_id, effect_id) == "DISPUTED"
     async with sessions() as session:
@@ -53,10 +58,12 @@ async def test_stale_revision_and_tenant_scope(witnessed_effect):
     async with sessions() as session:
         first = await session.scalar(select(OutcomeRevision))
     async with sessions() as session:
-        assert await dispute_outcome(session, "b", first.id, 1, "tenant mismatch") is None
+        assert await dispute_outcome(
+            session, "b", first.id, 1, "tenant mismatch", reviewer_id=REVIEWER,
+        ) is None
     async with sessions() as session:
         with pytest.raises(OutcomeConflict):
-            await dispute_outcome(session, "a", first.id, 5, "stale revision")
+            await dispute_outcome(session, "a", first.id, 5, "stale revision", reviewer_id=REVIEWER)
 
 
 @pytest.mark.asyncio
@@ -80,7 +87,7 @@ async def test_disputing_verified_outcome_quarantines_capsules_and_lessons(witne
         first = await session.scalar(select(OutcomeRevision))
     async with sessions() as session:
         await dispute_outcome(
-            session, "a", first.id, 1, "witness was later independently disputed"
+            session, "a", first.id, 1, "witness was later independently disputed", reviewer_id=REVIEWER,
         )
     async with sessions() as session:
         assert await list_capsules(session, "a") == []
@@ -142,7 +149,9 @@ async def test_outcome_reversal_invalidates_dependent_policy_lineage(witnessed_e
             ))
         outcome_id = first.id
     async with sessions() as session:
-        await dispute_outcome(session, "a", outcome_id, 1, "oracle no longer supports result")
+        await dispute_outcome(
+            session, "a", outcome_id, 1, "oracle no longer supports result", reviewer_id=REVIEWER,
+        )
     async with sessions() as session:
         assert (await session.get(FailureCluster, cluster_id)).quarantined
         assert (await session.get(ImprovementCandidate, candidate_id)).state == "INVALID"
@@ -244,7 +253,7 @@ async def test_recorded_recovery_latency_uses_latest_witness_not_projection(witn
             "production_recovery_certified": False,
         }
     async with sessions() as session:
-        await dispute_outcome(session, "a", outcome_id, 1, "witness disputed in lab")
+        await dispute_outcome(session, "a", outcome_id, 1, "witness disputed in lab", reviewer_id=REVIEWER)
     async with sessions() as session:
         report = await recorded_recovery_timing(session, "a", incident_id)
         assert report["latest_outcome_revision"] == 2
@@ -281,6 +290,48 @@ async def test_recorded_recovery_timing_rejects_wrong_witness_and_negative_durat
     async with sessions() as session:
         report = await recorded_recovery_timing(session, "a", incident_id)
         assert report["admission_to_recorded_witness_ms"] is None
+
+
+@pytest.mark.asyncio
+async def test_outcome_history_includes_latest_dispute_after_page_limit(sessions_fixture):
+    from uuid import uuid4
+
+    from httpx import ASGITransport, AsyncClient
+
+    from backend.api import app
+    from backend.database import get_session
+    from backend.settings import Settings, get_settings
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "a", "long-outcome-history", IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture.begin() as session:
+        for revision in range(1, 52):
+            session.add(OutcomeRevision(
+                id=uuid4(), tenant_id="a", incident_id=incident.id, revision=revision,
+                label="DISPUTED" if revision == 51 else "VERIFIED",
+                witness_source="SIMULATOR_WITNESS", reason="synthetic witness history",
+            ))
+
+    async def override_session():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_settings] = lambda: Settings(local_token="history-test-token")
+    app.dependency_overrides[get_session] = override_session
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(f"/v1/incidents/{incident.id}/outcomes", headers={
+                "X-Tenant-Id": "a", "X-OpsBlaze-Token": "history-test-token",
+            })
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    history = response.json()
+    assert [row["revision"] for row in history] == list(range(2, 52))
+    assert history[-1]["label"] == "DISPUTED"
 
 
 @pytest.mark.asyncio
@@ -355,7 +406,9 @@ async def test_outcome_projection_preserves_both_revisions_and_rebuilds(witnesse
     async with sessions() as session:
         first_id = await session.scalar(select(OutcomeRevision.id))
     async with sessions() as session:
-        await dispute_outcome(session, "a", first_id, 1, "synthetic observation disagrees")
+        await dispute_outcome(
+            session, "a", first_id, 1, "synthetic observation disagrees", reviewer_id=REVIEWER,
+        )
     async with sessions() as session:
         rows = (await session.scalars(select(LineageEdge).where(LineageEdge.from_type == "outcome"))).all()
         source_ids = set((await session.scalars(select(OutcomeRevision.id))).all())

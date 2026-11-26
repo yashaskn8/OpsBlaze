@@ -62,10 +62,15 @@ async def inspect(
             sessions, tenant_id, incident_id, 1, "simulator.health"
         )
     except ProbeDenied:
+        await assess_decision(sessions, tenant_id, incident_id, 1, [], probe_failure="TOOL_BLOCKED")
         return "ABSTAINED"
 
     ids = [str(health.evidence_id)] if health.evidence_id else []
     if health.outcome != "OK":
+        await assess_decision(
+            sessions, tenant_id, incident_id, 1, ids,
+            probe_failure="TOOL_BLOCKED" if health.outcome == "DENIED" else "TOOL_UNAVAILABLE",
+        )
         await write_step(sessions, incident_id, 1, ids, "ABSTAINED_NO_SOURCE",
                          {}, "simulator.health")
         return "ABSTAINED"
@@ -100,11 +105,16 @@ async def inspect(
             sessions, tenant_id, incident_id, 2, "simulator.version"
         )
     except ProbeDenied:
+        await assess_decision(sessions, tenant_id, incident_id, 2, ids, probe_failure="TOOL_BLOCKED")
         return "ABSTAINED"
     if version.evidence_id:
         ids.append(str(version.evidence_id))
     assessment = await assess_decision(
-        sessions, tenant_id, incident_id, 2, ids
+        sessions, tenant_id, incident_id, 2, ids,
+        probe_failure=(
+            None if version.outcome == "OK" else
+            "TOOL_BLOCKED" if version.outcome == "DENIED" else "TOOL_UNAVAILABLE"
+        ),
     )
     permitted = (
         version.outcome == "OK"

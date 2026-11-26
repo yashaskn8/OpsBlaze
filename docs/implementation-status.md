@@ -64,4 +64,6 @@ Exact-commit Linux CI for `adac181f34b3d2edeb088767fed3e7588c7d2966` passed [all
 
 The [machine-readable requirements ledger](requirements-ledger.json) tracks the initial 20-capability inventory, prerequisites, acceptance criteria, evidence references and resumable implementation checkpoint. It is feature-level, not an exhaustive atomic acceptance claim.
 
+The [functionality audit matrix](requirements-audit.json) maps requirements across all 20 capability sections to runtime consumers, test evidence and remaining work. This audit repaired stale controls on SSE closure, missing probe handoff reasons, an incorrect plan assessment for a now-healthy target, the missing latest outcome in long histories, malformed draft validation and race conditions in evaluation registration. Migration 0047 records authenticated E2 and E3 reviewer pseudonyms on new reviews. Earlier rows retain unknown attribution. The matrix includes the measured workloads, native and browser check results, Windows exclusions, and prioritized backlog. Production acceptance remains blocked.
+
 The completion definition is **measured acceptance of every relevant test in the PDF**, not the presence of a similarly named file or endpoint.

@@ -15,6 +15,9 @@ from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 
 
+REVIEWER = "DEV_REVIEWER_CREDENTIAL"
+
+
 @pytest.fixture
 async def disputed_probe(sessions_fixture):
     async with sessions_fixture() as session:
@@ -47,12 +50,12 @@ async def test_review_requires_durable_fact_and_cas(disputed_probe):
         with pytest.raises(FailureConflict):
             await review_classification(
                 session, "t", case_id, 1, "EFFECT_FAILED", None,
-                "no effect receipt supports this",
+                "no effect receipt supports this", reviewer_id=REVIEWER,
             )
     async with sessions() as session:
         corrected = await review_classification(
             session, "t", case_id, 1, "PROBE_DENIED", 1,
-            "denied read-only tool was recorded",
+            "denied read-only tool was recorded", reviewer_id=REVIEWER,
         )
         assert corrected.classification_version == 2
         assert corrected.cluster_id != old_cluster_id
@@ -60,7 +63,7 @@ async def test_review_requires_durable_fact_and_cas(disputed_probe):
         with pytest.raises(FailureConflict):
             await review_classification(
                 session, "t", case_id, 1, "PROBE_DENIED", 1,
-                "stale reviewer decision",
+                "stale reviewer decision", reviewer_id=REVIEWER,
             )
     async with sessions() as session:
         reviews = (await session.scalars(select(FailureReview))).all()
@@ -75,7 +78,7 @@ async def test_reviewed_classification_allows_bounded_draft(disputed_probe):
     async with sessions() as session:
         corrected = await review_classification(
             session, "t", case_id, 1, "PROBE_DENIED", 1,
-            "confirmed denied probe",
+            "confirmed denied probe", reviewer_id=REVIEWER,
         )
         cluster_id = corrected.cluster_id
     async with sessions() as session:
@@ -125,7 +128,7 @@ async def test_review_correction_invalidates_evaluated_policy_draft(disputed_pro
     async with sessions() as session:
         corrected = await review_classification(
             session, "t", case_id, 1, "PROBE_DENIED", 1,
-            "verified denied probe means stale original classification",
+            "verified denied probe means stale original classification", reviewer_id=REVIEWER,
         )
         assert corrected.origin_code == "PROBE_DENIED"
 

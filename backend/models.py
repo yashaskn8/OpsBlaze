@@ -361,6 +361,7 @@ class OutcomeRevision(Base):
     witness_source: Mapped[str] = mapped_column(String(32), nullable=False)
     observed_version: Mapped[int | None] = mapped_column(BigInteger)
     reason: Mapped[str] = mapped_column(String(256), nullable=False)
+    reviewer_id: Mapped[str | None] = mapped_column(String(48))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
@@ -733,6 +734,7 @@ class FailureReview(Base):
     previous_code: Mapped[str] = mapped_column(String(32), nullable=False)
     corrected_code: Mapped[str] = mapped_column(String(32), nullable=False)
     reason: Mapped[str] = mapped_column(String(256), nullable=False)
+    reviewer_id: Mapped[str | None] = mapped_column(String(48))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

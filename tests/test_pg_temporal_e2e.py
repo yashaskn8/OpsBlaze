@@ -502,21 +502,24 @@ async def test_parallel_outcome_witnesses_and_disputes_serialize_by_incident() -
             assert outcome.revision == 1
             outcome_id = outcome.id
 
-        async def dispute(index: int) -> str:
+        async def dispute(index: int) -> str | None:
+            reviewer_id = f"oidc:{index:032x}"
             async with sessions() as session:
                 try:
                     row = await dispute_outcome(
                         session, tenant_id, outcome_id, 1,
                         f"reviewer {index} found contradictory independent evidence",
+                        reviewer_id=reviewer_id,
                     )
                     assert row is not None
-                    return "DISPUTED"
+                    assert row.label == "DISPUTED"
+                    return reviewer_id
                 except OutcomeConflict:
-                    return "STALE"
+                    return None
 
         disputes = await asyncio.gather(*(dispute(i) for i in range(6)))
-        assert disputes.count("DISPUTED") == 1
-        assert disputes.count("STALE") == 5
+        winners = [reviewer_id for reviewer_id in disputes if reviewer_id is not None]
+        assert len(winners) == 1
         assert await adjudicate_simulator(
             sessions, adapter, tenant_id, incident.id, effect_id,
         ) == "DISPUTED"
@@ -530,6 +533,7 @@ async def test_parallel_outcome_witnesses_and_disputes_serialize_by_incident() -
             assert [(row.revision, row.witness_source) for row in rows] == [
                 (1, "SIMULATOR_WITNESS"), (2, "OPERATOR_DISPUTE"),
             ]
+            assert [row.reviewer_id for row in rows] == [None, winners[0]]
     finally:
         await engine.dispose()
 
@@ -582,6 +586,7 @@ async def test_capture_cannot_remain_eligible_when_outcome_disputed_concurrently
                 return await dispute_outcome(
                     session, tenant, initial.id, 1,
                     "independent reviewer disputes the simulated witness",
+                    reviewer_id="DEV_REVIEWER_CREDENTIAL",
                 )
 
         captured, disputed = await asyncio.gather(capture(), dispute())
@@ -728,6 +733,7 @@ async def test_failure_case_not_trusted_after_concurrent_outcome_dispute():
                 return await dispute_outcome(
                     session, tenant, initial_id, 1,
                     "reviewer confirmed source evidence was superseded",
+                    reviewer_id="DEV_REVIEWER_CREDENTIAL",
                 )
 
         classified, disputed = await asyncio.gather(
@@ -802,6 +808,7 @@ async def test_failure_review_serializes_with_outcome_dispute():
                         session, tenant, original.id, 1,
                         "EFFECT_UNKNOWN", None,
                         "reviewed the unresolved simulator effect receipt",
+                        reviewer_id="DEV_REVIEWER_CREDENTIAL",
                     )
                 except FailureConflict:
                     return None
@@ -811,6 +818,7 @@ async def test_failure_review_serializes_with_outcome_dispute():
                 return await dispute_outcome(
                     session, tenant, outcome_id, 1,
                     "new independent feedback invalidates prior classification",
+                    reviewer_id="DEV_REVIEWER_CREDENTIAL",
                 )
 
         correction, revision = await asyncio.gather(review(), reverse())
@@ -1097,6 +1105,7 @@ async def test_lesson_validation_cannot_outlive_concurrent_outcome_reversal():
                 return await dispute_outcome(
                     session, tenant, source_id, 1,
                     "independent source contradicted validated memory",
+                    reviewer_id="DEV_REVIEWER_CREDENTIAL",
                 )
 
         validated, disputed = await asyncio.gather(validate(), reverse())

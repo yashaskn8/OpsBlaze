@@ -87,6 +87,78 @@ def bearer(token: str, *, tenant: str = "alpha") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant}
 
 
+@pytest.mark.asyncio
+async def test_outcome_and_failure_reviews_store_their_authenticated_pseudonyms(
+    sessions_fixture, signer, production_client,
+):
+    from sqlalchemy import select
+
+    from backend.models import FailureReview, OutcomeRevision, ProbeCall
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    operator = bearer(signer(roles=("operator",)))
+    outcome_token = signer(subject="outcome-reviewer@example.test", roles=("reviewer",))
+    failure_token = signer(subject="failure-reviewer@example.test", roles=("reviewer",))
+    outcome_headers = {**bearer(outcome_token), "If-Match": "1"}
+    failure_headers = {**bearer(failure_token), "If-Match": "1"}
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "attributed-reviews", IncidentCreate(target_id="checkout"),
+        )
+    outcome_id = uuid4()
+    async with sessions_fixture.begin() as session:
+        session.add(OutcomeRevision(
+            id=outcome_id, incident_id=incident.id, tenant_id="alpha", revision=1,
+            label="VERIFIED", witness_source="SIMULATOR_WITNESS", reason="synthetic witness",
+        ))
+        session.add(ProbeCall(
+            id=uuid4(), incident_id=incident.id, step_no=1, catalog_id="simulator.health",
+            outcome="DENIED", evidence_id=None,
+        ))
+
+    feedback_url = f"/v1/outcomes/{outcome_id}/feedback"
+    feedback = {"reason": "independent evidence differs"}
+    denied = await production_client.post(
+        feedback_url, json=feedback, headers={**operator, "If-Match": "1"},
+    )
+    assert denied.status_code == 403
+    disputed = await production_client.post(feedback_url, json=feedback, headers=outcome_headers)
+    assert disputed.status_code == 202, disputed.text
+    revised = disputed.json()
+    assert revised == {"id": revised["id"], "revision": 2, "label": "DISPUTED"}
+
+    classified = await production_client.post(
+        f"/v1/failures/classify/{revised['id']}", headers=operator,
+    )
+    assert classified.status_code == 201, classified.text
+    review_url = f"/v1/failures/{classified.json()['id']}/review"
+    review = {
+        "corrected_code": "PROBE_DENIED", "first_bad_step": 1,
+        "reason": "probe denial was recorded",
+    }
+    spoofed = await production_client.post(
+        review_url, json={**review, "reviewer_id": "claimed-by-client"}, headers=failure_headers,
+    )
+    assert spoofed.status_code == 422
+    corrected = await production_client.post(review_url, json=review, headers=failure_headers)
+    assert corrected.status_code == 202, corrected.text
+    assert corrected.json()["classification_version"] == 2
+    assert "reviewer_id" not in corrected.json()
+
+    async with sessions_fixture() as session:
+        history = (await session.scalars(select(OutcomeRevision).where(
+            OutcomeRevision.incident_id == incident.id,
+        ).order_by(OutcomeRevision.revision))).all()
+        reviews = (await session.scalars(select(FailureReview))).all()
+    assert len(reviews) == 1
+    assert [row.reviewer_id for row in history] == [
+        None, verify_bearer(outcome_token, AUTH_SETTINGS).subject,
+    ]
+    assert reviews[0].reviewer_id == verify_bearer(failure_token, AUTH_SETTINGS).subject
+
+
 def test_signed_claims_create_stable_pseudonym_not_raw_subject(signer):
     signed = signer(subject="sensitive@example.test")
     first = verify_bearer(signed, AUTH_SETTINGS)
