@@ -7,19 +7,18 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "573c74a9f61d0a4975d320fd4180bc0376e158bb",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45775483667",
+    "commit": "97c0f42125fd0a2063f8255368f0e14d3ce20754",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45776947852",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
   "status_counts": {
-    "DEFECTIVE": 1,
     "EXTERNALLY BLOCKED": 17,
     "IMPLEMENTED BUT DISCONNECTED": 1,
     "LOCALLY UNVERIFIED": 3,
     "NOT IMPLEMENTED": 11,
     "PARTIALLY IMPLEMENTED": 59,
-    "VERIFIED WORKING": 84
+    "VERIFIED WORKING": 85
   },
   "verification": {
     "native_postgresql": {
@@ -104,6 +103,13 @@
       "native_suite_tests_passed": 23,
       "focused_final_native_tests_passed": 2,
       "focused_windows_tests_passed": 61,
+      "migration_upgrade_schema_drift_downgrade_restore": "PASS"
+    },
+    "advisory_route_0049": {
+      "native_postgresql_tests_passed": 24,
+      "native_temporal_tests_passed": 9,
+      "focused_windows_tests_passed": 69,
+      "pinned_history_replay": "PASS",
       "migration_upgrade_schema_drift_downgrade_restore": "PASS"
     }
   },
@@ -225,7 +231,7 @@
     {
       "id": "E7-DEVELOPMENT-ADVISORY",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "LOCALLY_REPAIRED_CI_PENDING",
       "requirements": [
         "E7-03",
         "E7-05"
@@ -234,10 +240,11 @@
       "expected": "Route evidence identifies the approved strategy and the resources it uses.",
       "observed": "A RUNBOOK-labelled run invoked the opted-in provider and recorded token use.",
       "root_cause": "The development advisory override is outside the versioned route identity.",
-      "repair": "Design a separate explicitly opted-in advisory route with versioned replay and pinned cost context.",
+      "repair": "Pin model and reservation to a separately selected development route. Keep RUNBOOK deterministic and replay settled legacy advice without new spending.",
       "acceptance": [
-        "tests/test_routing.py",
-        "tests/test_model_advisory.py"
+        "tests/test_advisory_routes.py",
+        "tests/test_model_advisory.py",
+        "tests/test_temporal_history_replay.py"
       ]
     },
     {
@@ -268,7 +275,7 @@
         "P3-14"
       ],
       "execution": "Native Codex",
-      "action": "Reconcile exact-commit CI for bounded recovery, then verify incident membership parity for all supported record kinds."
+      "action": "Verify incident membership parity for all supported record kinds. Continue with trace references, collector-outage and measured recovery load."
     },
     {
       "order": 2,
@@ -278,7 +285,7 @@
         "A4-04"
       ],
       "execution": "Native Codex",
-      "action": "Pin the documented opt-in advisory route and cost input, and preserve optional-model handoff provenance in activity replay tests."
+      "action": "Reconcile exact-commit CI for the locally repaired advisory route and typed optional-model handoff."
     },
     {
       "order": 3,
@@ -1848,9 +1855,10 @@
           ],
           "tests": [
             "tests/test_model_advisory.py",
-            "tests/test_assessments.py"
+            "tests/test_assessments.py",
+            "tests/test_advisory_routes.py"
           ],
-          "evidence": "Provider failure is persisted as FAILED without another spend; the A4 probe regression asserts independent reason codes.",
+          "evidence": "Native workflow returns NEEDS_REVIEW and stores MODEL_UNCERTAINTY at the probe step without creating a plan. Provider failures and denied reservations have distinct advisory reasons. Healthy targets persist a separate typed abstention.",
           "dependencies": [
             "A1",
             "P1"
@@ -1858,7 +1866,9 @@
           "defects": [
             "Optional model uncertainty and healthy-source abstention do not populate the A4 assessment route. Optional provider failure falls back to the deterministic path."
           ],
-          "remaining": "Expose distinct reason types for all handoff paths while keeping the documented safe optional advisory fallback."
+          "remaining": "Reconcile exact-commit Linux CI. Held-out review and production policy approval remain separate.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.8.3–2.8.4, PDF pages 39–40"
         },
         {
           "id": "A4-05",
@@ -2852,7 +2862,7 @@
         {
           "id": "P3-14",
           "requirement": "Resume bounded projection recovery automatically after a crash.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/lineage_projection.py",
             "backend/workers/lineage_recovery.py",
@@ -2872,14 +2882,15 @@
             "G3"
           ],
           "defects": [],
-          "remaining": "Reconcile exact-commit Linux CI. Larger concurrent sweep workload and production recovery evidence remain under P3-18 and G3.",
+          "remaining": "Production and higher-scale recovery evidence are tracked under P3-18 and G3.",
           "acceptance_criteria": [
             "Bound each source and orphan page to 20 items or fewer.",
             "Commit the page and its cursor atomically and retry the same page after rollback.",
             "Keep recovered edges tenant-scoped and leave source rows authoritative."
           ],
           "pdf_reference": "Section 2.11.4–2.11.5, PDF pages 48–49",
-          "ci_status": "EXACT_COMMIT_CI_PENDING"
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "commit": "97c0f42125fd0a2063f8255368f0e14d3ce20754"
         },
         {
           "id": "P3-15",
@@ -4498,31 +4509,40 @@
         {
           "id": "E7-03",
           "requirement": "Bind the actual executed strategy, model selection, and total budget to the persisted route",
-          "status": "DEFECTIVE",
+          "status": "PARTIALLY IMPLEMENTED",
           "implementation": [
             "backend/routing/decision.py",
             "backend/workflows/incident.py",
             "backend/workflows/activities.py",
             "backend/investigator/baseline.py",
-            "backend/investigator/advisory.py"
+            "backend/investigator/advisory.py",
+            "migrations/versions/0049_advisory_route_pin.py"
           ],
           "consumers": [
-            "RUNBOOK -> inspect_incident_read_only -> optional advise_after_unhealthy"
+            "AGENT_NO_MEMORY -> inspect_incident_read_only -> pinned development model"
           ],
           "tests": [
             "tests/test_routing.py",
-            "tests/test_model_advisory.py"
+            "tests/test_model_advisory.py",
+            "tests/test_advisory_routes.py"
           ],
-          "evidence": "Executed registered activity path using a disposable DB and a counting provider with no network. RUNBOOK reserved 512 advisory tokens, recorded 37 used, called the provider once, and accepted abstention. The route test checks only metadata.",
+          "evidence": "Native PostgreSQL and Temporal worker used the original pinned test model after its ambient configuration changed, persisted one request with 37 used tokens, and replayed without another call. RUNBOOK continued without a provider call after enablement changed.",
           "dependencies": [
             "A1",
             "B4",
             "E6"
           ],
           "defects": [
-            "The approved simulator baseline metadata cannot distinguish deterministic execution from documented opt-in development advice."
+            "Previously the opt-in advisory ran under RUNBOOK. Repaired locally."
           ],
-          "remaining": "Preserve the documented opt-in. Design a separately pinned, replay-safe development advisory strategy and record its model/budget before calling it."
+          "remaining": "Reconcile exact-commit Linux CI. Held-out review and production policy approval remain separate.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.19.3–2.19.4, PDF pages 75–76",
+          "acceptance_criteria": [
+            "Persist strategy, model and token reservation before the provider call.",
+            "Do not reselect on retry or arm the provider on an existing RUNBOOK.",
+            "Keep the route under development authorization and the existing tool and approval guards."
+          ]
         },
         {
           "id": "E7-04",
@@ -4555,23 +4575,27 @@
           "implementation": [
             "backend/routing/decision.py",
             "backend/models.py",
-            "backend/api.py"
+            "backend/api.py",
+            "migrations/versions/0049_advisory_route_pin.py"
           ],
           "consumers": [
             "select_route writes metadata; GET /v1/incidents/{id}/route exposes selection"
           ],
           "tests": [
-            "tests/test_routing.py"
+            "tests/test_routing.py",
+            "tests/test_advisory_routes.py"
           ],
-          "evidence": "Test asserts propensity 1 and two-probe budget for RUNBOOK; context SHA-256 includes only tenant, target and incumbent policy identity.",
+          "evidence": "The scoped route endpoint returns router version, pinned model and reservation. The digest changes with actual selection inputs, and retry returns the original database row. Unaudited historical route metadata remains null.",
           "dependencies": [
             "E5",
             "E6"
           ],
           "defects": [
-            "The digest omits features that determine selection, including budget and target availability. No model identity is pinned."
+            "The prior digest omitted selection inputs. Repaired locally."
           ],
-          "remaining": "Include the inputs and strategy version in the durable selection record before using it for comparisons."
+          "remaining": "Reconcile exact-commit Linux CI. Held-out review and production policy approval remain separate.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.19.3–2.19.4, PDF pages 75–76"
         },
         {
           "id": "E7-06",
@@ -5492,6 +5516,10 @@
     "migrations/versions/0048_lineage_recovery.py": [
       "P3-14"
     ],
+    "migrations/versions/0049_advisory_route_pin.py": [
+      "E7-03",
+      "E7-05"
+    ],
     "scripts/pg_restore_smoke.py": [
       "B1-08",
       "E1-05",
@@ -5521,6 +5549,11 @@
       "B4-01",
       "B4-02",
       "P1-01"
+    ],
+    "tests/test_advisory_routes.py": [
+      "A4-04",
+      "E7-03",
+      "E7-05"
     ],
     "tests/test_api_authorization_matrix.py": [
       "B2-04",

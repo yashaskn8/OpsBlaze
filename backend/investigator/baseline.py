@@ -55,6 +55,7 @@ async def inspect(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: str,
     incident_id: UUID,
+    *, advisory_model: str | None = None, reuse_legacy_advice: bool = False,
 ) -> str:
     """Choose a second read based on the first observation. Never perform an effect."""
     try:
@@ -62,14 +63,14 @@ async def inspect(
             sessions, tenant_id, incident_id, 1, "simulator.health"
         )
     except ProbeDenied:
-        await assess_decision(sessions, tenant_id, incident_id, 1, [], probe_failure="TOOL_BLOCKED")
+        await assess_decision(sessions, tenant_id, incident_id, 1, [], handoff_reason="TOOL_BLOCKED")
         return "ABSTAINED"
 
     ids = [str(health.evidence_id)] if health.evidence_id else []
     if health.outcome != "OK":
         await assess_decision(
             sessions, tenant_id, incident_id, 1, ids,
-            probe_failure="TOOL_BLOCKED" if health.outcome == "DENIED" else "TOOL_UNAVAILABLE",
+            handoff_reason="TOOL_BLOCKED" if health.outcome == "DENIED" else "TOOL_UNAVAILABLE",
         )
         await write_step(sessions, incident_id, 1, ids, "ABSTAINED_NO_SOURCE",
                          {}, "simulator.health")
@@ -77,15 +78,21 @@ async def inspect(
 
     current = json.loads(health.excerpt)
     if current.get("healthy", False):
+        await assess_decision(sessions, tenant_id, incident_id, 1, ids, handoff_reason="TARGET_ALREADY_HEALTHY")
         await write_step(sessions, incident_id, 1, ids, "ABSTAINED_NO_FAILURE",
                          {"no_simulated_fault": 1}, "simulator.health")
         return "ABSTAINED"
 
-    advice = await advise_after_unhealthy(sessions, tenant_id, incident_id)
+    advice = None
+    if advisory_model is not None or reuse_legacy_advice:
+        advice = await advise_after_unhealthy(
+            sessions, tenant_id, incident_id, model_id=advisory_model, cache_only=reuse_legacy_advice,
+        )
     model_id = advice.model_id if advice else "deterministic-baseline-v1"
     token_used = advice.tokens_used if advice else 0
     token_reserved = advice.tokens_reserved if advice else 0
     if advice is not None and advice.next_probe == "ABSTAIN":
+        await assess_decision(sessions, tenant_id, incident_id, 1, ids, handoff_reason="MODEL_UNCERTAINTY")
         await write_step(
             sessions, incident_id, 1, ids, "MODEL_ADVISORY_ABSTAINED",
             {"simulated_target_unhealthy": 1}, "simulator.health",
@@ -105,13 +112,13 @@ async def inspect(
             sessions, tenant_id, incident_id, 2, "simulator.version"
         )
     except ProbeDenied:
-        await assess_decision(sessions, tenant_id, incident_id, 2, ids, probe_failure="TOOL_BLOCKED")
+        await assess_decision(sessions, tenant_id, incident_id, 2, ids, handoff_reason="TOOL_BLOCKED")
         return "ABSTAINED"
     if version.evidence_id:
         ids.append(str(version.evidence_id))
     assessment = await assess_decision(
         sessions, tenant_id, incident_id, 2, ids,
-        probe_failure=(
+        handoff_reason=(
             None if version.outcome == "OK" else
             "TOOL_BLOCKED" if version.outcome == "DENIED" else "TOOL_UNAVAILABLE"
         ),

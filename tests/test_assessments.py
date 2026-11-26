@@ -272,7 +272,7 @@ async def test_probe_handoff_cannot_reuse_a_positive_assessment(assessment_lab):
     sessions, incident_id, ids = assessment_lab
     accepted = await assess_decision(sessions, "t", incident_id, 2, ids)
     assert await assess_decision(
-        sessions, "t", incident_id, 2, ids, probe_failure="TOOL_BLOCKED",
+        sessions, "t", incident_id, 2, ids, handoff_reason="TOOL_BLOCKED",
     ) is None
     async with sessions() as session:
         persisted = await session.get(DecisionAssessment, accepted.id)

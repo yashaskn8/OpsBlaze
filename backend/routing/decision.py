@@ -1,17 +1,27 @@
 
-"""E7 pinned deterministic lab route; never increases tool capabilities."""
+"""E7 pinned simulator routes using deterministic selection and cost rules."""
 
 import hashlib
+import json
 from uuid import UUID, NAMESPACE_URL, uuid5
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from backend.investigator.advisory import MAX_RESERVE_TOKENS
 
 from backend.models import Incident, PolicyAssignment, RouteDecision, SimulatorTarget
 from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.settings import get_settings
 
 ROUTER_POLICY_ID = INCUMBENT_POLICY_ID
+ROUTER_VERSION = "simulator-routing-v2"
+
+
+async def read_route(session: AsyncSession, tenant_id: str, incident_id: UUID) -> RouteDecision | None:
+    return await session.scalar(select(RouteDecision).where(
+        RouteDecision.tenant_id == tenant_id, RouteDecision.incident_id == incident_id,
+        RouteDecision.decision_no == 1,
+    ))
 
 
 async def select_route(
@@ -28,13 +38,7 @@ async def select_route(
             )
             if incident is None:
                 return None
-            existing = await session.scalar(
-                select(RouteDecision).where(
-                    RouteDecision.tenant_id == tenant_id,
-                    RouteDecision.incident_id == incident_id,
-                    RouteDecision.decision_no == 1,
-                )
-            )
+            existing = await read_route(session, tenant_id, incident_id)
             if existing is not None:
                 return existing
 
@@ -44,7 +48,13 @@ async def select_route(
             target = await session.get(
                 SimulatorTarget, (tenant_id, incident.target_id)
             )
-            budget = get_settings().max_probe_calls_per_incident
+            settings = get_settings()
+            budget = settings.max_probe_calls_per_incident
+            model = settings.ai_advisory_model.strip() if (
+                settings.environment == "development" and settings.ai_advisory_enabled
+            ) else ""
+            model_id = None
+            reservation = 0
             if (
                 assignment is None
                 or assignment.policy_id != INCUMBENT_POLICY_ID
@@ -59,20 +69,37 @@ async def select_route(
             elif budget < 2:
                 route, reason = "HANDOFF", "PROBE_BUDGET_INSUFFICIENT"
                 cost_cap = 0
+            elif 1 <= len(model) <= 64 and settings.ai_token_limit_per_minute >= MAX_RESERVE_TOKENS:
+                route, reason = "AGENT_NO_MEMORY", "DEVELOPMENT_READ_ONLY_ADVISORY"
+                cost_cap = 2
+                model_id = model
+                reservation = MAX_RESERVE_TOKENS
             else:
                 route, reason = "RUNBOOK", "APPROVED_SIMULATOR_BASELINE"
                 cost_cap = 2
 
-            digest = hashlib.sha256(
-                f"{tenant_id}/{incident.target_id}/{ROUTER_POLICY_ID}".encode()
-            ).hexdigest()
+            context = {
+                "tenant": tenant_id,
+                "target": incident.target_id,
+                "target_available": target is not None,
+                "policy": assignment.policy_id if assignment is not None else None,
+                "baseline_assignment": assignment is not None and assignment.bundle_id is None
+                    and assignment.rollout_id is None,
+                "probe_limit": budget,
+                "advisory_model": model,
+                "tenant_token_limit": settings.ai_token_limit_per_minute,
+                "router_version": ROUTER_VERSION,
+            }
+            encoded = json.dumps(context, sort_keys=True, separators=(",", ":")).encode()
+            digest = hashlib.sha256(encoded).hexdigest()
             selected = RouteDecision(
                 id=uuid5(NAMESPACE_URL, f"opsblaze/route/{tenant_id}/{incident_id}/1"),
                 tenant_id=tenant_id, incident_id=incident_id, decision_no=1,
                 policy_id=ROUTER_POLICY_ID, context_digest=digest,
                 risk_band="SIMULATOR_ONLY", route=route,
                 selection_reason=reason, propensity=1,
-                cost_cap_probes=cost_cap,
+                cost_cap_probes=cost_cap, router_version=ROUTER_VERSION,
+                model_id=model_id, model_token_reservation=reservation,
             )
             session.add(selected)
         return selected

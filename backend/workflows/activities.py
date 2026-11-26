@@ -92,10 +92,35 @@ async def inspect_incident_read_only(
     tenant_id: str, incident_id: str
 ) -> str:
     from backend.investigator.baseline import inspect
+    from backend.investigator.advisory import MAX_RESERVE_TOKENS
+    from backend.routing.decision import ROUTER_POLICY_ID, ROUTER_VERSION, read_route
 
     parent = await _activity_parent(tenant_id, incident_id)
     with _trace_activity("opsblaze.incident.inspect", incident_id, parent):
-        return await inspect(get_session_maker(), tenant_id, UUID(incident_id))
+        sessions = get_session_maker()
+        source_id = UUID(incident_id)
+        async with sessions() as session:
+            decision = await read_route(session, tenant_id, source_id)
+        model_id = None
+        reuse_legacy_advice = False
+        if decision is not None:
+            if decision.policy_id != ROUTER_POLICY_ID or decision.cost_cap_probes != 2:
+                return "ABSTAINED"
+            if decision.route == "AGENT_NO_MEMORY":
+                if (
+                    decision.router_version != ROUTER_VERSION or not decision.model_id
+                    or decision.model_token_reservation != MAX_RESERVE_TOKENS
+                ):
+                    return "ABSTAINED"
+                model_id = decision.model_id
+            elif decision.route == "RUNBOOK":
+                reuse_legacy_advice = decision.router_version is None
+            else:
+                return "ABSTAINED"
+        return await inspect(
+            sessions, tenant_id, source_id, advisory_model=model_id,
+            reuse_legacy_advice=reuse_legacy_advice,
+        )
 
 
 @activity.defn(name="apply_approved_simulator_plan")

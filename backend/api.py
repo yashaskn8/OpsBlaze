@@ -933,18 +933,11 @@ async def incident_route(
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    from sqlalchemy import select
-    from backend.models import RouteDecision
+    from backend.routing.decision import read_route
 
     if await find_incident(session, tenant_id, incident_id) is None:
         raise HTTPException(404, "incident not found")
-    decision = await session.scalar(
-        select(RouteDecision).where(
-            RouteDecision.tenant_id == tenant_id,
-            RouteDecision.incident_id == incident_id,
-            RouteDecision.decision_no == 1,
-        )
-    )
+    decision = await read_route(session, tenant_id, incident_id)
     if decision is None:
         return {"route": "UNROUTED", "policy_id": None}
     return {
@@ -952,6 +945,9 @@ async def incident_route(
         "selection_reason": decision.selection_reason,
         "risk_band": decision.risk_band,
         "cost_cap_probes": decision.cost_cap_probes,
+        "router_version": decision.router_version,
+        "model_id": decision.model_id,
+        "model_token_reservation": decision.model_token_reservation,
         "propensity": decision.propensity,
     }
 

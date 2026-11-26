@@ -52,7 +52,7 @@ class IncidentWorkflow:
             start_to_close_timeout=ACTIVITY_TIMEOUT,
             retry_policy=RETRIES,
         )
-        if route != "RUNBOOK":
+        if route not in ("RUNBOOK", "AGENT_NO_MEMORY"):
             await project("NEEDS_REVIEW")
             return "NEEDS_REVIEW"
         probe_result = await workflow.execute_activity(

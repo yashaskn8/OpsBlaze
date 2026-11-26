@@ -341,6 +341,8 @@ python -m pip install -e ".[dev,ai]"
 
 The model may suggest only the allowlisted `simulator.version` probe or abstention. The server owns all probe permissions, evidence checks, plan approvals and actions. A failed or uncertain provider call falls back safely without blind retries. CI does not make paid provider calls.
 
+New advisory workflows pin `AGENT_NO_MEMORY`, the model ID and the 512-token reservation before contacting the provider. The development switch can still stop a new call, and `RUNBOOK` stays deterministic if the switch is enabled later. Workers older than migration 0049 cannot replay histories that already selected `AGENT_NO_MEMORY`. Before rolling back those workers in a development lab, disable new advisory selection and finish the affected workflows on 0049-compatible workers.
+
 ## Design invariants
 
 - PostgreSQL owns admission, approval state, effect receipts, and outbox events; Temporal owns workflow history. No external calls occur inside an incident/outbox transaction.

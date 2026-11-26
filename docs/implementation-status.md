@@ -68,4 +68,6 @@ The [functionality audit matrix](requirements-audit.json) maps requirements acro
 
 Migration 0048 adds a PostgreSQL checkpoint for automatic lineage recovery. The dispatcher supervises a separate recovery loop that repairs at most 20 source or orphan records per page. A failed write rolls back the page and its cursor together. Healthy edges retain their timestamps. Recovery uses the database owner's existing access and adds no permissions to the restricted experience projector. Incident membership continues to come from scoped source records. Exact-commit Linux CI, recovery contention at larger workloads and production evidence remain open.
 
+Migration 0048 passed [all ten exact-commit Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45776947852). Migration 0049 pins the development-only advisory strategy, model and reservation before provider use. The native workflow test changes the ambient model after routing and verifies one call to the original pin, a typed uncertainty handoff, no plan, and successful replay. Existing historical route fields remain unknown. Exact-commit CI for 0049 must pass before updating its requirement verification status.
+
 The completion definition is **measured acceptance of every relevant test in the PDF**, not the presence of a similarly named file or endpoint.

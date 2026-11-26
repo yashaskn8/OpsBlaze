@@ -12,9 +12,10 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.models import ModelAdvisory
+from backend.models import Incident, ModelAdvisory
 from backend.settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -42,16 +43,26 @@ async def advise_after_unhealthy(
     tenant_id: str,
     incident_id: UUID,
     client=None,
+    *, model_id: str | None = None, cache_only: bool = False,
 ) -> AdvisoryResult | None:
     settings = get_settings()
-    if settings.environment != "development" or not settings.ai_advisory_enabled:
+    if settings.environment != "development" or (
+        not settings.ai_advisory_enabled and model_id is None and not cache_only
+    ):
         return None
+    pinned = model_id is not None
+    model = model_id if pinned else settings.ai_advisory_model
 
     async with sessions() as session:
         async with session.begin():
+            incident = await session.scalar(select(Incident.id).where(
+                Incident.id == incident_id, Incident.tenant_id == tenant_id,
+            ).with_for_update())
+            if incident is None:
+                return None
             row = await session.get(ModelAdvisory, incident_id, with_for_update=True)
             if row is not None:
-                if row.tenant_id != tenant_id:
+                if row.tenant_id != tenant_id or (pinned and row.model_id != model):
                     return None
                 if row.state == "COMPLETE" and row.next_probe in {
                     "simulator.version", "ABSTAIN"
@@ -60,16 +71,30 @@ async def advise_after_unhealthy(
                         row.next_probe, row.model_id, row.tokens_used,
                         row.tokens_reserved,
                     )
-                # Previous unknown/in-flight/failed call never triggers another spend.
+                # Once an ambiguous retry falls back, late model output must not change it.
+                if pinned and row.state == "RESERVED":
+                    row.state = "FAILED"
+                    row.reason_code = "UNCONFIRMED"
+                return None
+            if cache_only:
                 return None
             window_start = current_window()
-            if not await reserve_model_tokens(
-                session, tenant_id, window_start, MAX_RESERVE_TOKENS,
-            ):
+            enabled = settings.ai_advisory_enabled
+            reserved = (
+                enabled and settings.ai_token_limit_per_minute >= MAX_RESERVE_TOKENS
+                and await reserve_model_tokens(session, tenant_id, window_start, MAX_RESERVE_TOKENS)
+            )
+            if not reserved:
+                if pinned:
+                    session.add(ModelAdvisory(
+                        incident_id=incident_id, tenant_id=tenant_id, model_id=model,
+                        state="SKIPPED", reason_code="BUDGET_DENIED" if enabled else "DISABLED",
+                        tokens_reserved=0, tokens_used=0,
+                    ))
                 return None
             session.add(ModelAdvisory(
                 incident_id=incident_id, tenant_id=tenant_id,
-                model_id=settings.ai_advisory_model, state="RESERVED",
+                model_id=model, state="RESERVED",
                 next_probe=None, reason_code=None,
                 budget_window_start=window_start,
                 tokens_reserved=MAX_RESERVE_TOKENS, tokens_used=0,
@@ -83,7 +108,7 @@ async def advise_after_unhealthy(
 
             client = AsyncOpenAI(max_retries=0, timeout=10.0)
         response = await client.responses.parse(
-            model=settings.ai_advisory_model,
+            model=model,
             input=[
                 {
                     "role": "system",
@@ -117,9 +142,9 @@ async def advise_after_unhealthy(
             and candidate.reason_code != "INSUFFICIENT_EVIDENCE"
         ):
             raise ValueError("inconsistent advisory choice")
-        advice = candidate
         usage = getattr(response, "usage", None)
-        used = min(int(getattr(usage, "total_tokens", 0) or 0), 10000)
+        used = max(0, min(int(getattr(usage, "total_tokens", 0) or 0), 10000))
+        advice = candidate
     except Exception:
         # No provider payload, raw prompt, or credential is logged.
         log.warning("AI advisory unavailable; using deterministic fallback")
@@ -137,10 +162,12 @@ async def advise_after_unhealthy(
             if advice is not None:
                 row.next_probe = advice.next_probe
                 row.reason_code = advice.reason_code
+            else:
+                row.reason_code = "PROVIDER_UNAVAILABLE"
 
     if advice is None:
         return None
     return AdvisoryResult(
-        advice.next_probe, settings.ai_advisory_model,
+        advice.next_probe, model,
         used, MAX_RESERVE_TOKENS,
     )

@@ -87,12 +87,16 @@ async def assess_decision(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: str, incident_id: UUID,
     step_no: int, evidence_ids: list[str],
-    *, probe_failure: Literal["TOOL_BLOCKED", "TOOL_UNAVAILABLE"] | None = None,
+    *, handoff_reason: Literal[
+        "TOOL_BLOCKED", "TOOL_UNAVAILABLE", "MODEL_UNCERTAINTY", "TARGET_ALREADY_HEALTHY",
+    ] | None = None,
 ) -> DecisionAssessment | None:
     if step_no < 1:
         raise ValueError("assessment step must be positive")
-    if probe_failure is not None and probe_failure not in {"TOOL_BLOCKED", "TOOL_UNAVAILABLE"}:
-        raise ValueError("invalid assessment probe failure")
+    if handoff_reason is not None and handoff_reason not in {
+        "TOOL_BLOCKED", "TOOL_UNAVAILABLE", "MODEL_UNCERTAINTY", "TARGET_ALREADY_HEALTHY",
+    }:
+        raise ValueError("invalid assessment handoff reason")
     canonical = json.dumps(evidence_ids, separators=(",", ":"), sort_keys=False)
     digest = hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -118,7 +122,7 @@ async def assess_decision(
                 if existing.evidence_digest != digest:
                     return None
                 if existing.outcome == "PROPOSED" and (
-                    probe_failure is not None or not await accepted_snapshot_is_still_safe(
+                    handoff_reason is not None or not await accepted_snapshot_is_still_safe(
                         session, incident, tenant_id, evidence_ids,
                     )
                 ):
@@ -126,10 +130,10 @@ async def assess_decision(
                 return existing
 
             reason = "ACCEPTED"
-            if probe_failure is not None:
-                reason = probe_failure
+            if handoff_reason is not None:
+                reason = handoff_reason
                 if (
-                    probe_failure == "TOOL_BLOCKED"
+                    handoff_reason == "TOOL_BLOCKED"
                     and step_no == incident.probe_used + 1
                     and incident.probe_used >= get_settings().max_probe_calls_per_incident
                 ):

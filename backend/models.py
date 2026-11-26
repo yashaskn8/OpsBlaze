@@ -590,6 +590,9 @@ class RouteDecision(Base):
     selection_reason: Mapped[str] = mapped_column(String(64), nullable=False)
     propensity: Mapped[int] = mapped_column(Integer, nullable=False)
     cost_cap_probes: Mapped[int] = mapped_column(Integer, nullable=False)
+    router_version: Mapped[str | None] = mapped_column(String(32))
+    model_id: Mapped[str | None] = mapped_column(String(64))
+    model_token_reservation: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
