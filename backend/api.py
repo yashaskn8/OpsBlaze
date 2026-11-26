@@ -923,6 +923,27 @@ async def incident_lineage_records(
     return page
 
 
+@app.get("/v1/incidents/{incident_id}/lineage/record/{kind}/{record_id}")
+async def incident_lineage_record_detail(
+    incident_id: UUID,
+    kind: Literal[
+        "evidence", "hypothesis", "plan", "effect", "outcome",
+        "experience", "failure", "lesson", "approval",
+    ],
+    record_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.lineage import read_lineage_record_detail
+
+    record = await read_lineage_record_detail(
+        session, tenant_id, incident_id, kind, record_id,
+    )
+    if record is None:
+        raise HTTPException(404, "lineage record not found")
+    return record
+
+
 @app.get("/v1/incidents/{incident_id}/traces/{trace_id}")
 async def incident_trace(
     incident_id: UUID,

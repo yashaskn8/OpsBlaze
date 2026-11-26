@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation, finishReview } from "../src/api.ts";
+import {
+  detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation,
+  fetchLineageRecordDetail, finishReview,
+} from "../src/api.ts";
 import { consumeIncidentStream } from "../src/incidentStream.ts";
 import { advisoryFallbackMessage, handoffGuidance } from "../src/investigationGuidance.ts";
 
@@ -123,4 +126,29 @@ test("oversized complete notification is rejected before handling", async () => 
     onClose: () => {},
   }), /invalid event stream/);
   assert.equal(stream.locked, false);
+});
+
+test("lineage record detail enforces exact incident and node scope", async (t) => {
+  const headers = { "X-Tenant-Id": "synthetic", "X-OpsBlaze-Token": "test-only" };
+  const payload = {
+    id: "hypothesis:rec-1",
+    kind: "hypothesis",
+    record_id: "rec-1",
+    incident_id: "inc-1",
+    status: "PROPOSED",
+    authority_kind: "MODEL_OR_INVESTIGATION_CLAIM",
+    verified_outcome: false,
+    unresolved_or_failed: false,
+    details: { claim_only: true },
+    trace_refs: [],
+  };
+  const fetch = t.mock.method(globalThis, "fetch", async () => Response.json(payload));
+  assert.deepEqual(await fetchLineageRecordDetail("inc-1", "hypothesis", "rec-1", headers), payload);
+  assert.deepEqual(fetch.mock.calls[0].arguments, [
+    "/v1/incidents/inc-1/lineage/record/hypothesis/rec-1", { headers },
+  ]);
+  await assert.rejects(
+    fetchLineageRecordDetail("other-inc", "hypothesis", "rec-1", headers),
+    /selected node/,
+  );
 });

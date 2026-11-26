@@ -6,8 +6,8 @@ import { authManager, oidcConfigError, usingOidc } from "./auth";
 import { consumeIncidentStream } from "./incidentStream";
 import { InvestigationPanel } from "./InvestigationPanel";
 import {
-  detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation, finishReview,
-  type Incident, type Investigation,
+  detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation, fetchLineageRecordDetail, finishReview,
+  type Incident, type Investigation, type LineageDiagnostics, type LineageRecordDetail,
   type QueueHealth, type ExperienceDeadLetter, type ExperienceDeadLetterPage,
 } from "./api";
 
@@ -71,6 +71,7 @@ type TraceRef = { node_id: string; trace_id: string; span_id: string; collector_
 type Lineage = {
   projection: "COMPLETE" | "PARTIAL_LINKS";
   evidence_projection?: EvidenceProjectionStatus;
+  diagnostics?: LineageDiagnostics;
   trace_spans_available: boolean;
   trace_refs: TraceRef[];
   links_truncated: boolean;
@@ -82,6 +83,7 @@ type Lineage = {
 
 type LineagePage = {
   evidence_projection?: EvidenceProjectionStatus;
+  diagnostics?: LineageDiagnostics;
   incident_id: string;
   kind: string;
   nodes: Lineage["nodes"];
@@ -146,6 +148,12 @@ function App() {
   const [lineagePages, setLineagePages] = useState<{
     incidentId: string; pages: Record<string, LineagePage>;
   }>({ incidentId: "", pages: {} });
+  const [selectedRecord, setSelectedRecord] = useState<{
+    scope: object; incidentId: string; record: LineageRecordDetail;
+  } | null>(null);
+  const [recordBusy, setRecordBusy] = useState(false);
+  const [recordError, setRecordError] = useState("");
+  const recordRequestVersion = useRef(0);
   const [recent, setRecent] = useState<Incident[]>([]);
   const [queueHealth, setQueueHealth] = useState<QueueHealth | null>(null);
   const [queueBusy, setQueueBusy] = useState(false);
@@ -420,13 +428,39 @@ function App() {
     // Never display a queue snapshot under different browser credentials.
     queueRequestVersion.current += 1;
     deadLetterRequestVersion.current += 1;
+    recordRequestVersion.current += 1;
     setQueueHealth(null);
     setQueueError("");
     setQueueBusy(false);
     setDeadLetterPage(null);
     setDeadLetterError("");
     setDeadLetterBusy(false);
+    setSelectedRecord(null);
+    setRecordError("");
+    setRecordBusy(false);
   }, [tenant, token, accessToken]);
+
+  async function inspectLineageNode(kind: string, recordId: string) {
+    if (!incident || !authenticated || kind === "incident") return;
+    const requestVersion = ++recordRequestVersion.current;
+    const incidentId = incident.id;
+    const scope = authScope;
+    setRecordBusy(true);
+    setRecordError("");
+    try {
+      const record = await fetchLineageRecordDetail(incidentId, kind, recordId, headers());
+      if (recordRequestVersion.current === requestVersion) {
+        setSelectedRecord({ scope, incidentId, record });
+      }
+    } catch (cause) {
+      if (recordRequestVersion.current === requestVersion) {
+        setSelectedRecord(null);
+        setRecordError(cause instanceof Error ? cause.message : "Could not load record detail");
+      }
+    } finally {
+      if (recordRequestVersion.current === requestVersion) setRecordBusy(false);
+    }
+  }
 
   async function loadQueueHealth() {
     if (!authenticated) return;
@@ -966,6 +1000,9 @@ function App() {
             {lineage && <div className="audit">
               <h3>Evidence-to-effect trace</h3>
               <p className="muted">{lineage.projection.replaceAll("_", " ")} · {lineage.nodes.length} durable records · {lineage.edges.length} links</p>
+              {lineage.diagnostics && <p className="muted">
+                Diagnostics: {lineage.diagnostics.missing_edge_count} missing link(s) · {lineage.diagnostics.context_loss_count} missing span context(s) · projection lag {lineage.diagnostics.projection_lag_seconds ?? "unknown"}s
+              </p>}
               {evidenceProjectionWarning([lineage.evidence_projection, ...additionalLineagePages.map(page => page.evidence_projection)]) && <p className="error" role="status">{evidenceProjectionWarning([lineage.evidence_projection, ...additionalLineagePages.map(page => page.evidence_projection)])}</p>}
               {!lineage.trace_spans_available && <p className="muted">Collector delivery is not verified. Durable records remain authoritative; recorded span references are diagnostic only.</p>}
               <details>
@@ -1000,14 +1037,45 @@ function App() {
               {additionalLineagePages.some(page => page.missing_refs.length > 0) &&
                 <p className="error">Additional record pages contain {additionalLineagePages.reduce((n, page) => n + page.missing_refs.length, 0)} out-of-scope or missing references.</p>}
               <div className="trace-scroll">
-                {[...lineage.nodes, ...additionalLineagePages.flatMap(page => page.nodes)].map((node, index) =>
-                  <div className="trace-node" key={node.id}>
+                {[...lineage.nodes, ...additionalLineagePages.flatMap(page => page.nodes)].map((node, index) => {
+                  const recordId = node.id.split(":")[1];
+                  return <div className="trace-node" key={node.id}>
                     <strong>{node.kind}{index >= lineage.nodes.length && " (additional)"}</strong><span>{node.status}</span>
-                    <code>{node.id.split(":")[1]}</code>
+                    <code>{recordId}</code>
+                    {node.kind !== "incident" && recordId &&
+                      <button type="button" className="secondary" disabled={recordBusy}
+                        aria-label={`Inspect ${node.kind} record ${recordId}`}
+                        onClick={() => void inspectLineageNode(node.kind, recordId)}>
+                        Inspect record
+                      </button>}
                     {node.id === "outcome:" + activeInvestigation?.recovery?.latest_outcome_id &&
                       <a href="#investigation-outcome">View latest outcome record</a>}
-                  </div>)}
+                  </div>;
+                })}
               </div>
+              {recordError && <p role="alert" className="error">{recordError}</p>}
+              {selectedRecord && selectedRecord.scope === authScope && selectedRecord.incidentId === incident.id &&
+                <div className="audit-item" aria-live="polite">
+                  <h4>Source record: {selectedRecord.record.id}</h4>
+                  <p className="muted">
+                    Authority: {selectedRecord.record.authority_kind === "MODEL_OR_INVESTIGATION_CLAIM"
+                      ? "Model or investigation claim only — not an independently verified outcome"
+                      : selectedRecord.record.authority_kind === "INDEPENDENT_OUTCOME"
+                        ? "Independently witnessed outcome"
+                        : selectedRecord.record.authority_kind.replaceAll("_", " ")}
+                    {" · "}Status: {selectedRecord.record.status}
+                  </p>
+                  {selectedRecord.record.unresolved_or_failed &&
+                    <p role="status" className="error">Unresolved, adverse, or non-verified record state — review authoritative details before acting.</p>}
+                  <dl>
+                    {Object.entries(selectedRecord.record.details).map(([field, value]) => (
+                      <div key={field}>
+                        <dt>{field.replaceAll("_", " ")}</dt>
+                        <dd className="mono">{typeof value === "object" && value !== null ? JSON.stringify(value) : String(value ?? "none")}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>}
               <h3>Causal links ({allLineageEdges.length})</h3>
               {allLineageEdges.length > 80 &&
                 <p className="muted">Showing 80 of {allLineageEdges.length} links. Page records remain available above.</p>}

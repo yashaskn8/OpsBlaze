@@ -416,3 +416,183 @@ async def test_redteam_malformed_summary_reference_list_is_redacted(sessions_fix
             assert "private-content" not in str(graph)
             assert any(r["missing_target"] == "invalid-evidence-list" for r in graph["missing_refs"])
         assert summary["projection"] == "PARTIAL_LINKS"
+
+
+@pytest.mark.asyncio
+async def test_redteam_all_nine_record_kinds_membership_parity_detail_and_diagnostics(
+    sessions_fixture,
+):
+    """P3-06, P3-16, P3-17, P3-19: full 9-kind membership parity, scoped detail & claim distinction."""
+    from datetime import datetime, timedelta, timezone
+    from httpx import ASGITransport, AsyncClient
+
+    from backend.api import app
+    from backend.database import get_session
+    from backend.lineage import read_lineage_record_detail
+    from backend.lineage_projection import rebuild_evidence_page
+    from backend.models import (
+        ApprovalGrant, EffectReceipt, Evidence, ExperienceCapsule,
+        FailureCase, FailureCluster, IncidentPlan, OperationalLesson,
+        OutcomeRevision,
+    )
+    from backend.settings import Settings, get_settings
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    async with sessions_fixture() as session:
+        own = await admit_incident(session, "alpha", "parity-own", IncidentCreate(target_id="checkout"))
+    async with sessions_fixture() as session:
+        foreign = await admit_incident(session, "beta", "parity-foreign", IncidentCreate(target_id="secret-svc"))
+
+    ev_id, hyp_id, plan_id, grant_id = uuid4(), uuid4(), uuid4(), uuid4()
+    eff_id, out_id, cap_id, lesson_id, cluster_id, fail_id = (
+        uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(),
+    )
+    foreign_ev_id = uuid4()
+    digest = "a" * 64
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(Evidence(
+                id=ev_id, tenant_id="alpha", incident_id=own.id, target_id="checkout",
+                source="simulator.health", source_version="simulator-v1", target_version=1,
+                observed_at=now, sha256="b" * 64, redacted_excerpt='{"healthy":false}',
+                classification="INTERNAL", validity="VALID",
+            ))
+            session.add(Evidence(
+                id=foreign_ev_id, tenant_id="beta", incident_id=foreign.id, target_id="secret-svc",
+                source="simulator.health", source_version="simulator-v1", target_version=1,
+                observed_at=now, sha256="c" * 64, redacted_excerpt='{"secret":"nope"}',
+                classification="INTERNAL", validity="VALID",
+            ))
+            session.add(HypothesisStep(
+                id=hyp_id, incident_id=own.id, step_no=1,
+                model_id="deterministic-baseline-v1", prompt_version="v1",
+                evidence_ids=[str(ev_id)], cause_scores={"simulated_target_unhealthy": 90},
+                probe_id="simulator.health", decision="PROPOSED",
+                token_reserved=0, token_used=0,
+            ))
+            session.add(IncidentPlan(
+                id=plan_id, tenant_id="alpha", incident_id=own.id, target_id="checkout",
+                action_id="SIMULATOR_MARK_HEALTHY", plan_digest=digest, expected_version=1,
+                evidence_ids=[str(ev_id)], status="APPROVED", version=2,
+                decided_at=now, decided_by="DEV_REVIEWER", review_epoch=1,
+            ))
+            session.add(ApprovalGrant(
+                id=grant_id, tenant_id="alpha", plan_id=plan_id, plan_digest=digest,
+                reviewer_id="DEV_REVIEWER", scope="SIMULATOR_MARK_HEALTHY",
+                decision="APPROVE", state="CONSUMED", reason="verified synthetic plan",
+                version=2, expires_at=now + timedelta(minutes=5),
+            ))
+            session.add(EffectReceipt(
+                id=eff_id, tenant_id="alpha", incident_id=own.id, plan_digest=digest,
+                target_id="checkout", adapter_id="simulator", idempotency_key=str(eff_id),
+                fence=1, expected_version=1, state="UNKNOWN", attempt_count=1,
+            ))
+            session.add(OutcomeRevision(
+                id=out_id, tenant_id="alpha", incident_id=own.id, effect_id=eff_id,
+                revision=1, label="DISPUTED", witness_source="REVIEWER_DISPUTE",
+                observed_version=1, reason="independent check disagreed", reviewer_id="rev-1",
+            ))
+            session.add(ExperienceCapsule(
+                id=cap_id, tenant_id="alpha", incident_id=own.id, outcome_revision_id=out_id,
+                consent_epoch=1, tenant_consent_epoch=1, target_digest="d" * 64,
+                evidence_ids=[str(ev_id)], status="ACTIVE", expires_at=now + timedelta(days=7),
+            ))
+            session.add(OperationalLesson(
+                id=lesson_id, tenant_id="alpha", source_capsule_id=cap_id,
+                source_outcome_id=out_id, target_digest="d" * 64, rule_id="rule-1",
+                summary_redacted="synthetic check", consent_epoch=1, status="DRAFT",
+                version=1, valid_from=now, valid_until=now + timedelta(days=7),
+            ))
+            session.add(FailureCluster(
+                id=cluster_id, tenant_id="alpha", signature="sig-1", version=1, case_count=1,
+            ))
+            session.add(FailureCase(
+                id=fail_id, tenant_id="alpha", incident_id=own.id, outcome_revision_id=out_id,
+                cluster_id=cluster_id, origin_code="EXECUTION_FAILURE", first_bad_step=1,
+                classification_version=1, review_status="OPEN",
+            ))
+
+    # Rebuild projected causal edges for all projected source kinds.
+    async with sessions_fixture() as session:
+        async with session.begin():
+            for kind in ("hypothesis", "plan", "approval", "effect", "outcome", "experience", "lesson", "failure"):
+                await rebuild_evidence_page(session, "alpha", own.id, kind)
+
+    expected_ids = {
+        "evidence": ev_id, "hypothesis": hyp_id, "plan": plan_id,
+        "approval": grant_id, "effect": eff_id, "outcome": out_id,
+        "experience": cap_id, "lesson": lesson_id, "failure": fail_id,
+    }
+    async with sessions_fixture() as session:
+        summary = await build_lineage(session, "alpha", own.id)
+        assert summary["projection"] == "COMPLETE"
+        assert summary["evidence_projection"] == "MATCHED"
+        assert summary["diagnostics"]["missing_edge_count"] == 0
+        # Incident + outcome are trace-eligible; neither has a TraceRef in this fixture.
+        assert summary["diagnostics"]["context_loss_count"] == 2
+        assert summary["diagnostics"]["projection_lag_seconds"] == 0
+
+        summary_membership = {
+            (e["from"], e["to"]) for e in summary["edges"] if e["relation"] == "BELONGS_TO"
+        }
+        for kind, rec_id in expected_ids.items():
+            assert (f"{kind}:{rec_id}", f"incident:{own.id}") in summary_membership
+            page = await read_lineage_page(session, "alpha", own.id, kind)
+            assert [n["id"] for n in page["nodes"]] == [f"{kind}:{rec_id}"]
+            assert any(
+                e == {"from": f"{kind}:{rec_id}", "to": f"incident:{own.id}", "relation": "BELONGS_TO"}
+                for e in page["edges"]
+            ), kind
+            assert page["evidence_projection"] in {"MATCHED", "NOT_APPLICABLE"}
+
+            detail = await read_lineage_record_detail(session, "alpha", own.id, kind, rec_id)
+            assert detail is not None
+            assert detail["id"] == f"{kind}:{rec_id}"
+            assert "secret-svc" not in str(detail)
+            # Foreign tenant cannot read own record; own tenant cannot read foreign record.
+            assert await read_lineage_record_detail(session, "beta", own.id, kind, rec_id) is None
+        assert await read_lineage_record_detail(session, "alpha", own.id, "evidence", foreign_ev_id) is None
+
+        hyp_detail = await read_lineage_record_detail(session, "alpha", own.id, "hypothesis", hyp_id)
+        assert hyp_detail["authority_kind"] == "MODEL_OR_INVESTIGATION_CLAIM"
+        assert hyp_detail["verified_outcome"] is False
+        assert hyp_detail["details"]["claim_only"] is True
+        assert hyp_detail["details"]["verified_recovery"] is False
+
+        eff_detail = await read_lineage_record_detail(session, "alpha", own.id, "effect", eff_id)
+        assert eff_detail["authority_kind"] == "EFFECT_LEDGER"
+        assert eff_detail["unresolved_or_failed"] is True
+
+        out_detail = await read_lineage_record_detail(session, "alpha", own.id, "outcome", out_id)
+        assert out_detail["authority_kind"] == "INDEPENDENT_OUTCOME"
+        assert out_detail["verified_outcome"] is False
+        assert out_detail["unresolved_or_failed"] is True
+
+    async def override_session():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(local_token="detail-token")
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            own_headers = {"X-Tenant-Id": "alpha", "X-OpsBlaze-Token": "detail-token"}
+            res = await client.get(
+                f"/v1/incidents/{own.id}/lineage/record/hypothesis/{hyp_id}",
+                headers=own_headers,
+            )
+            assert res.status_code == 200
+            assert res.json()["authority_kind"] == "MODEL_OR_INVESTIGATION_CLAIM"
+            # Foreign tenant blocked.
+            assert (await client.get(
+                f"/v1/incidents/{own.id}/lineage/record/hypothesis/{hyp_id}",
+                headers={**own_headers, "X-Tenant-Id": "beta"},
+            )).status_code == 404
+            # Invalid kind rejected.
+            assert (await client.get(
+                f"/v1/incidents/{own.id}/lineage/record/unknown/{hyp_id}",
+                headers=own_headers,
+            )).status_code == 422
+    finally:
+        app.dependency_overrides.clear()

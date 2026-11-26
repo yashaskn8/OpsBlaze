@@ -64,6 +64,33 @@ export type ExperienceDeadLetterPage = {
   metadata_only: boolean;
 };
 
+export type LineageDiagnostics = {
+  missing_edge_count: number;
+  context_loss_count: number;
+  projection_lag_seconds: number | null;
+  projection_status: string;
+};
+
+export type LineageRecordDetail = {
+  id: string;
+  kind: string;
+  record_id: string;
+  incident_id: string;
+  status: string;
+  authority_kind:
+    | "OBSERVED_EVIDENCE"
+    | "MODEL_OR_INVESTIGATION_CLAIM"
+    | "PROPOSED_ACTION"
+    | "HUMAN_AUTHORIZATION"
+    | "EFFECT_LEDGER"
+    | "INDEPENDENT_OUTCOME"
+    | "DERIVED_LEARNING";
+  verified_outcome: boolean;
+  unresolved_or_failed: boolean;
+  details: Record<string, unknown>;
+  trace_refs: { node_id: string; trace_id: string; span_id: string; collector_verified: false }[];
+};
+
 export function detail(value: unknown): string {
   if (value && typeof value === "object" && "detail" in value) {
     const message = (value as { detail: unknown }).detail;
@@ -114,4 +141,20 @@ export function fetchDeadLetters(
   return readJson<ExperienceDeadLetterPage>(
     "/v1/operations/dead-letters?" + params.toString(), headers,
   );
+}
+
+export async function fetchLineageRecordDetail(
+  incidentId: string,
+  kind: string,
+  recordId: string,
+  headers: Record<string, string>,
+): Promise<LineageRecordDetail> {
+  const path =
+    `/v1/incidents/${encodeURIComponent(incidentId)}/lineage/record/`
+    + `${encodeURIComponent(kind)}/${encodeURIComponent(recordId)}`;
+  const record = await readJson<LineageRecordDetail>(path, headers);
+  if (record?.incident_id !== incidentId || record?.id !== `${kind}:${recordId}`) {
+    throw new Error("Lineage record detail did not match the selected node");
+  }
+  return record;
 }

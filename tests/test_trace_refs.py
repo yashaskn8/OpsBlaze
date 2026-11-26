@@ -121,3 +121,96 @@ async def test_redteam_orphan_and_wrong_scope_trace_refs_are_not_returned(sessio
         assert await read_trace(session, "a", incident.id, "a" * 32) is None
         assert (await build_lineage(session, "a", incident.id))["trace_refs"] == []
         assert (await read_lineage_page(session, "a", incident.id, "outcome"))["trace_refs"] == []
+
+
+@pytest.mark.asyncio
+async def test_collector_outage_and_recovery_keep_authoritative_lineage_usable(
+    sessions_fixture, monkeypatch,
+):
+    """P3-15: unreachable optional OTLP collector never degrades durable lineage."""
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import socket
+    import threading
+
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    # Reserve a loopback port, then close it so the collector is definitively absent.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    endpoint = f"http://127.0.0.1:{port}/v1/traces"
+    provider = TracerProvider()
+    exporter = OTLPSpanExporter(endpoint=endpoint, timeout=0.3)
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr("backend.telemetry.TRACER", provider.get_tracer("outage-test"))
+
+    async def override_session():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(local_token="outage-token")
+    headers = {"X-Tenant-Id": "a", "X-OpsBlaze-Token": "outage-token"}
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            admitted = await client.post(
+                "/v1/incidents",
+                json={"target_id": "checkout"},
+                headers={**headers, "Idempotency-Key": "collector-outage-1"},
+            )
+            assert admitted.status_code == 202, admitted.text
+            incident_id = admitted.json()["id"]
+
+            summary = await client.get(f"/v1/incidents/{incident_id}/lineage", headers=headers)
+            assert summary.status_code == 200
+            body = summary.json()
+            assert body["projection"] == "COMPLETE"
+            assert body["trace_spans_available"] is False
+            assert body["trace_refs"][0]["collector_verified"] is False
+            assert body["diagnostics"]["missing_edge_count"] == 0
+            assert body["diagnostics"]["context_loss_count"] == 0
+
+            page = await client.get(
+                f"/v1/incidents/{incident_id}/lineage/records",
+                params={"kind": "evidence"}, headers=headers,
+            )
+            assert page.status_code == 200
+            assert page.json()["trace_spans_available"] is False
+
+        # Start a local loopback receiver to verify collector recovery after outage.
+        received = []
+
+        class Receiver(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                received.append((self.path, self.rfile.read(length)))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, format, *args):
+                return
+
+        server = HTTPServer(("127.0.0.1", port), Receiver)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                recovered = await client.post(
+                    "/v1/incidents",
+                    json={"target_id": "checkout"},
+                    headers={**headers, "Idempotency-Key": "collector-recovered-2"},
+                )
+                assert recovered.status_code == 202
+                second_id = recovered.json()["id"]
+                second_graph = await client.get(f"/v1/incidents/{second_id}/lineage", headers=headers)
+                assert second_graph.status_code == 200
+                assert second_graph.json()["projection"] == "COMPLETE"
+                assert second_graph.json()["trace_spans_available"] is False
+            assert any(path == "/v1/traces" and payload for path, payload in received)
+        finally:
+            server.shutdown()
+            server.server_close()
+    finally:
+        app.dependency_overrides.clear()
+        provider.shutdown()

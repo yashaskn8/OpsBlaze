@@ -7,8 +7,8 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "22248e978de7d4cc5951810c62ec124e820e1cc4",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45781551269",
+    "commit": "281ec0000a83ebda2c680a37b31987d0b8e74026",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45782349756",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
@@ -17,8 +17,8 @@
     "IMPLEMENTED BUT DISCONNECTED": 1,
     "LOCALLY UNVERIFIED": 3,
     "NOT IMPLEMENTED": 9,
-    "PARTIALLY IMPLEMENTED": 55,
-    "VERIFIED WORKING": 91
+    "PARTIALLY IMPLEMENTED": 49,
+    "VERIFIED WORKING": 97
   },
   "verification": {
     "native_postgresql": {
@@ -146,6 +146,13 @@
       "frontend_node_tests_passed": 14,
       "typescript_vite_build": "PASS",
       "chrome": "Observed pending, verified, and a reviewer dispute without manual snapshot refresh. Keyboard navigation reached the scoped outcome record after loading the graph and tenant change hid the record."
+    },
+    "p3_lineage_parity_details_diagnostics": {
+      "focused_backend_tests_passed": 52,
+      "ruff": "PASS",
+      "bandit": "PASS",
+      "frontend_node_tests_passed": 15,
+      "typescript_vite_build": "PASS"
     }
   },
   "findings": [
@@ -2355,7 +2362,7 @@
         {
           "id": "P1-14",
           "requirement": "Present pending and uncertain outcomes distinctly.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "frontend/src/main.tsx",
             "backend/api.py",
@@ -2380,9 +2387,10 @@
             "E2"
           ],
           "defects": [],
-          "remaining": "Reconcile exact-commit CI. A review form for authorizing a dispute remains tracked under E2.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
-          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43"
+          "remaining": "A reviewer dispute form remains tracked under E2; exact-commit CI passed all 10 jobs.",
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
+          "commit": "281ec0000a83ebda2c680a37b31987d0b8e74026"
         },
         {
           "id": "P1-15",
@@ -2803,7 +2811,7 @@
         {
           "id": "P3-06",
           "requirement": "Preserve incident membership provenance when precomputing the graph.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/lineage.py",
             "backend/lineage_projection.py"
@@ -2814,12 +2822,12 @@
           "tests": [
             "tests/test_lineage.py"
           ],
-          "evidence": "Membership is derived at read time; no transactionally stored membership key or rebuild path exists.",
+          "evidence": "All 9 supported record kinds (evidence, hypothesis, plan, approval, effect, outcome, experience, lesson, failure) emit consistent tenant-scoped BELONGS_TO incident membership edges across build_lineage and read_lineage_page without redundant persisted lineage_edge rows, verified by 9-kind parity and foreign-tenant isolation tests.",
           "dependencies": [
             "B1"
           ],
           "defects": [],
-          "remaining": "Section 2.11 and ADR-21 require scoped causal provenance over durable records. Incident membership is read from scoped foreign keys. Validate parity for each displayed record kind before certifying membership coverage."
+          "remaining": "Production scale verification remains tracked under P3-18 and G3."
         },
         {
           "id": "P3-07",
@@ -3016,7 +3024,7 @@
         {
           "id": "P3-15",
           "requirement": "Keep authoritative lineage usable when the optional collector is absent.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/trace_refs.py",
             "backend/lineage.py",
@@ -3029,21 +3037,22 @@
             "tests/test_trace_refs.py",
             "tests/test_lineage.py"
           ],
-          "evidence": "Tests run without a collector and show durable records with unavailable-span labels. A deployed collector-outage campaign was not run.",
+          "evidence": "Verified with a real OTLPSpanExporter targeting an unreachable loopback port and subsequent loopback receiver recovery alongside live FastAPI admission, lineage summary, and paginated record reads; authoritative lineage stays COMPLETE with trace_spans_available=False throughout outage and recovery.",
           "dependencies": [
             "G3",
             "G6"
           ],
           "defects": [],
-          "remaining": "Run collector outage and recovery alongside API traffic in an isolated integration environment."
+          "remaining": "Production collector deployment and retention verification remain tracked under G3 and G6."
         },
         {
           "id": "P3-16",
           "requirement": "Provide source-record detail and visible unresolved or failed results.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/lineage.py",
             "backend/api.py",
+            "frontend/src/api.ts",
             "frontend/src/main.tsx",
             "backend/outcomes.py",
             "frontend/src/InvestigationPanel.tsx"
@@ -3054,25 +3063,28 @@
           "tests": [
             "tests/test_lineage.py",
             "tests/test_outcomes.py",
-            "tests/test_pg_temporal_e2e.py"
+            "tests/test_pg_temporal_e2e.py",
+            "tests/test_api_authorization_matrix.py",
+            "frontend/tests/api.test.mjs"
           ],
-          "evidence": "Chrome verified keyboard navigation from the current outcome node to the scoped record containing its source, version and recorded time. Historical outcome nodes and other graph nodes still require detail views.",
+          "evidence": "Scoped read-only GET /v1/incidents/{id}/lineage/record/{kind}/{record_id} returns redacted authoritative source-record details and unresolved_or_failed flags for all 9 record kinds with tenant/incident isolation; wired into React workbench with Inspect record buttons and error alerts.",
           "dependencies": [
             "B3",
             "E2"
           ],
           "defects": [],
-          "remaining": "Connect the remaining graph nodes to their authoritative scoped records and verify incomplete graph behavior.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING"
+          "remaining": "Production scale and assistive-technology audits remain tracked under G6.",
+          "ci_status": "LOCAL_VERIFIED_PENDING_PUSH"
         },
         {
           "id": "P3-17",
           "requirement": "Expose missing-edge counts, context loss, projection lag and graph errors.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/lineage_projection.py",
             "backend/lineage.py",
             "backend/trace_refs.py",
+            "frontend/src/api.ts",
             "frontend/src/main.tsx"
           ],
           "consumers": [
@@ -3080,14 +3092,15 @@
           ],
           "tests": [
             "tests/test_lineage.py",
+            "tests/test_trace_refs.py",
             "frontend/tests/lineagePages.test.mjs"
           ],
-          "evidence": "There are bounded UI warnings and missing-reference counts. The full named metric set and correlated liveness are unverified.",
+          "evidence": "build_lineage and read_lineage_page return structured diagnostics (missing_edge_count, context_loss_count, projection_lag_seconds, projection_status), rendered in the React forensic trace panel and verified by backend and frontend tests.",
           "dependencies": [
             "G6"
           ],
           "defects": [],
-          "remaining": "Instrument and verify the remaining named diagnostics."
+          "remaining": "Multi-host production metric collection remains tracked under G6."
         },
         {
           "id": "P3-18",
@@ -3114,11 +3127,13 @@
         {
           "id": "P3-19",
           "requirement": "Keep model claims distinct from independently verified outcomes.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/lineage.py",
+            "backend/api.py",
             "backend/trace_refs.py",
             "backend/outcomes.py",
+            "frontend/src/api.ts",
             "frontend/src/main.tsx"
           ],
           "consumers": [
@@ -3126,16 +3141,17 @@
           ],
           "tests": [
             "tests/test_lineage.py",
-            "tests/test_outcomes.py"
+            "tests/test_outcomes.py",
+            "frontend/tests/api.test.mjs"
           ],
-          "evidence": "The graph never enlists a model to construct relationships. A complete workbench walkthrough of claim versus verified outcome labeling remains outstanding.",
+          "evidence": "Scoped record detail assigns explicit authority_kind (MODEL_OR_INVESTIGATION_CLAIM with claim_only=True and verified_recovery=False for hypotheses vs INDEPENDENT_OUTCOME with verified_outcome=True only on verified witnesses), displayed distinctly in the React forensic detail view.",
           "dependencies": [
             "A1",
             "A4",
             "E2"
           ],
           "defects": [],
-          "remaining": "Add explicit detail semantics and test misleading or missing source claims."
+          "remaining": "External independent evaluation remains tracked under G4."
         }
       ]
     },
@@ -5013,13 +5029,6 @@
       "E8-01"
     ],
     "backend/api.py": [
-      "B1-01",
-      "B1-05",
-      "B2-04",
-      "B2-05",
-      "B3-03",
-      "B3-06",
-      "B4-01",
       "A1-08",
       "A2-07",
       "A3-05",
@@ -5027,29 +5036,13 @@
       "A4-01",
       "A4-04",
       "A4-05",
-      "P1-01",
-      "P1-02",
-      "P1-03",
-      "P1-04",
-      "P1-05",
-      "P1-06",
-      "P1-07",
-      "P1-08",
-      "P1-09",
-      "P1-12",
-      "P1-14",
-      "P1-15",
-      "P2-01",
-      "P2-02",
-      "P2-03",
-      "P2-06",
-      "P2-07",
-      "P3-01",
-      "P3-10",
-      "P3-11",
-      "P3-16",
-      "S1-02",
-      "S1-05",
+      "B1-01",
+      "B1-05",
+      "B2-04",
+      "B2-05",
+      "B3-03",
+      "B3-06",
+      "B4-01",
       "E1-06",
       "E2-03",
       "E2-04",
@@ -5072,21 +5065,45 @@
       "E7-05",
       "E7-07",
       "E8-03",
-      "E8-05"
+      "E8-05",
+      "P1-01",
+      "P1-02",
+      "P1-03",
+      "P1-04",
+      "P1-05",
+      "P1-06",
+      "P1-07",
+      "P1-08",
+      "P1-09",
+      "P1-12",
+      "P1-14",
+      "P1-15",
+      "P2-01",
+      "P2-02",
+      "P2-03",
+      "P2-06",
+      "P2-07",
+      "P3-01",
+      "P3-10",
+      "P3-11",
+      "P3-16",
+      "P3-19",
+      "S1-02",
+      "S1-05"
     ],
     "backend/auth.py": [
       "A2-08",
+      "E2-05",
       "P2-02",
-      "P2-08",
-      "E2-05"
+      "P2-08"
     ],
     "backend/benchmarks/local_capacity.py": [
       "B4-06",
       "P1-15"
     ],
     "backend/budgets.py": [
-      "B4-03",
-      "A1-06"
+      "A1-06",
+      "B4-03"
     ],
     "backend/effect_lineage.py": [
       "P3-01",
@@ -5100,10 +5117,10 @@
       "B3-04",
       "B3-05",
       "B3-06",
-      "P2-05",
-      "P3-03",
       "E7-06",
-      "E8-01"
+      "E8-01",
+      "P2-05",
+      "P3-03"
     ],
     "backend/effects/reservations.py": [
       "B2-01",
@@ -5122,11 +5139,11 @@
       "A1-10",
       "A4-06",
       "A4-07",
-      "S1-07",
       "E5-04",
       "E5-05",
       "E5-06",
-      "E7-08"
+      "E7-08",
+      "S1-07"
     ],
     "backend/evaluation/preregistration.py": [
       "E5-04"
@@ -5190,7 +5207,6 @@
       "P2-03"
     ],
     "backend/investigator/advisory.py": [
-      "B4-03",
       "A1-04",
       "A1-06",
       "A1-07",
@@ -5198,6 +5214,7 @@
       "A3-04",
       "A4-04",
       "A4-07",
+      "B4-03",
       "E4-04",
       "E7-03"
     ],
@@ -5221,14 +5238,14 @@
       "E7-03"
     ],
     "backend/learning/failures.py": [
-      "P3-05",
       "E3-01",
       "E3-02",
       "E3-03",
       "E3-04",
       "E3-05",
       "E3-06",
-      "E3-07"
+      "E3-07",
+      "P3-05"
     ],
     "backend/learning/invalidation.py": [
       "E2-06",
@@ -5257,6 +5274,7 @@
     ],
     "backend/lineage_projection.py": [
       "A3-02",
+      "E4-06",
       "P3-02",
       "P3-03",
       "P3-05",
@@ -5264,11 +5282,9 @@
       "P3-12",
       "P3-13",
       "P3-14",
-      "P3-17",
-      "E4-06"
+      "P3-17"
     ],
     "backend/memory/lessons.py": [
-      "P3-05",
       "E1-03",
       "E2-06",
       "E4-01",
@@ -5278,13 +5294,10 @@
       "E4-05",
       "E4-06",
       "E4-07",
-      "E7-04"
+      "E7-04",
+      "P3-05"
     ],
     "backend/models.py": [
-      "B1-01",
-      "B2-01",
-      "B3-01",
-      "B4-02",
       "A1-01",
       "A1-05",
       "A1-07",
@@ -5294,13 +5307,10 @@
       "A3-04",
       "A3-06",
       "A4-03",
-      "P1-02",
-      "P2-04",
-      "P2-05",
-      "P2-07",
-      "S1-01",
-      "S1-05",
-      "S1-06",
+      "B1-01",
+      "B2-01",
+      "B3-01",
+      "B4-02",
       "E1-02",
       "E1-04",
       "E2-02",
@@ -5317,7 +5327,14 @@
       "E6-04",
       "E7-01",
       "E7-05",
-      "E8-03"
+      "E8-03",
+      "P1-02",
+      "P2-04",
+      "P2-05",
+      "P2-07",
+      "S1-01",
+      "S1-05",
+      "S1-06"
     ],
     "backend/operations.py": [
       "B3-06",
@@ -5326,23 +5343,26 @@
     ],
     "backend/outcomes.py": [
       "B3-04",
-      "P1-14",
-      "P3-02",
-      "P3-16",
-      "P3-19",
       "E1-01",
       "E2-01",
       "E2-02",
       "E2-03",
       "E2-05",
       "E2-06",
-      "E2-07"
+      "E2-07",
+      "P1-14",
+      "P3-02",
+      "P3-16",
+      "P3-19"
     ],
     "backend/plans.py": [
+      "A3-02",
       "B2-03",
       "B2-04",
       "B3-05",
-      "A3-02",
+      "E2-01",
+      "E7-06",
+      "E8-02",
       "P1-12",
       "P2-01",
       "P2-02",
@@ -5350,10 +5370,7 @@
       "P2-04",
       "P2-05",
       "P2-07",
-      "P3-02",
-      "E2-01",
-      "E7-06",
-      "E8-02"
+      "P3-02"
     ],
     "backend/policy/registry.py": [
       "E6-01",
@@ -5370,7 +5387,6 @@
       "E6-08"
     ],
     "backend/probes/gateway.py": [
-      "B4-03",
       "A1-02",
       "A1-05",
       "A1-06",
@@ -5389,10 +5405,11 @@
       "A3-06",
       "A3-08",
       "A4-02",
+      "B4-03",
+      "E7-06",
       "P1-04",
       "P1-06",
-      "P3-02",
-      "E7-06"
+      "P3-02"
     ],
     "backend/routers/operations.py": [
       "B4-05",
@@ -5418,17 +5435,17 @@
       "B1-05",
       "B4-01",
       "B4-02",
-      "P1-01",
       "E6-03",
       "E6-06",
-      "E6-07"
+      "E6-07",
+      "P1-01"
     ],
     "backend/telemetry.py": [
       "A3-08",
+      "E2-07",
       "P1-16",
       "P3-07",
-      "P3-15",
-      "E2-07"
+      "P3-15"
     ],
     "backend/trace_identity.py": [
       "P3-07"
@@ -5501,11 +5518,11 @@
       "B4-05"
     ],
     "backend/workflows/activities.py": [
+      "A1-09",
+      "A3-07",
       "B1-04",
       "B1-05",
       "B1-07",
-      "A1-09",
-      "A3-07",
       "E2-01",
       "E6-03",
       "E7-01",
@@ -5516,9 +5533,6 @@
       "B4-04"
     ],
     "backend/workflows/incident.py": [
-      "B1-04",
-      "B1-05",
-      "B1-06",
       "A1-02",
       "A1-03",
       "A1-06",
@@ -5527,11 +5541,14 @@
       "A3-07",
       "A4-01",
       "A4-05",
-      "P2-04",
+      "B1-04",
+      "B1-05",
+      "B1-06",
       "E7-01",
       "E7-02",
       "E7-03",
-      "E7-07"
+      "E7-07",
+      "P2-04"
     ],
     "backend/workflows/replay_archive.py": [
       "B1-06"
@@ -5545,15 +5562,15 @@
       "B2-07",
       "B3-07",
       "B4-07",
-      "P1-17",
-      "P2-08",
-      "S1-08",
       "E1-09",
       "E2-08",
       "E5-08",
       "E6-08",
       "E8-05",
-      "E8-07"
+      "E8-07",
+      "P1-17",
+      "P2-08",
+      "S1-08"
     ],
     "frontend/src/InvestigationPanel.tsx": [
       "A4-04",
@@ -5565,7 +5582,10 @@
     ],
     "frontend/src/api.ts": [
       "P2-01",
-      "P2-06"
+      "P2-06",
+      "P3-16",
+      "P3-17",
+      "P3-19"
     ],
     "frontend/src/incidentStream.ts": [
       "P1-09",
@@ -5622,7 +5642,9 @@
       "P1-13",
       "P1-14",
       "P2-01",
-      "P2-06"
+      "P2-06",
+      "P3-16",
+      "P3-19"
     ],
     "frontend/tests/lineagePages.test.mjs": [
       "P3-09",
@@ -5668,8 +5690,8 @@
       "P3-18"
     ],
     "migrations/versions/0046_experience_edge.py": [
-      "P3-04",
-      "E1-05"
+      "E1-05",
+      "P3-04"
     ],
     "migrations/versions/0047_review_attribution.py": [
       "E2-05",
@@ -5689,9 +5711,9 @@
       "E1-09"
     ],
     "scripts/projector_grants.sql": [
-      "P3-04",
       "E1-05",
-      "E1-09"
+      "E1-09",
+      "P3-04"
     ],
     "tests/test_activity_timing.py": [
       "B1-07",
@@ -5718,15 +5740,19 @@
       "E7-05"
     ],
     "tests/test_api_authorization_matrix.py": [
-      "B2-04",
       "A2-07",
-      "P1-12",
-      "S1-05",
+      "B2-04",
       "E3-07",
       "E5-07",
-      "E8-03"
+      "E8-03",
+      "P1-12",
+      "P3-16",
+      "S1-05"
     ],
     "tests/test_api_contract.py": [
+      "A1-08",
+      "A3-05",
+      "A4-05",
       "B1-01",
       "B1-05",
       "B2-04",
@@ -5734,9 +5760,6 @@
       "B3-03",
       "B3-06",
       "B4-01",
-      "A1-08",
-      "A3-05",
-      "A4-05",
       "P1-03",
       "P2-01",
       "P2-02",
@@ -5778,8 +5801,8 @@
       "E1-04"
     ],
     "tests/test_experience_edge_migration.py": [
-      "P3-04",
-      "E1-05"
+      "E1-05",
+      "P3-04"
     ],
     "tests/test_experience_projector.py": [
       "E1-01",
@@ -5800,12 +5823,12 @@
       "E8-06"
     ],
     "tests/test_failure_proposals.py": [
-      "P3-05",
       "E3-01",
       "E3-02",
       "E3-04",
       "E3-05",
-      "E3-06"
+      "E3-06",
+      "P3-05"
     ],
     "tests/test_failure_reviews.py": [
       "E3-03",
@@ -5825,15 +5848,15 @@
       "B1-02"
     ],
     "tests/test_lessons.py": [
-      "P3-05",
-      "P3-13",
       "E4-01",
       "E4-02",
       "E4-03",
       "E4-04",
       "E4-05",
       "E4-06",
-      "E4-07"
+      "E4-07",
+      "P3-05",
+      "P3-13"
     ],
     "tests/test_lineage.py": [
       "A3-05",
@@ -5855,10 +5878,10 @@
       "P3-19"
     ],
     "tests/test_lineage_projection.py": [
+      "E4-06",
       "P3-02",
       "P3-12",
-      "P3-13",
-      "E4-06"
+      "P3-13"
     ],
     "tests/test_lineage_recovery.py": [
       "P3-14"
@@ -5868,29 +5891,26 @@
       "P1-15"
     ],
     "tests/test_model_advisory.py": [
-      "B4-03",
       "A1-04",
       "A1-06",
       "A1-07",
       "A1-09",
       "A3-04",
       "A4-04",
+      "B4-03",
       "E7-03"
     ],
     "tests/test_oidc_auth.py": [
       "A2-08",
-      "P2-02",
-      "P2-08",
       "E2-05",
-      "E3-03"
+      "E3-03",
+      "P2-02",
+      "P2-08"
     ],
     "tests/test_operations_router.py": [
       "B4-05"
     ],
     "tests/test_outcomes.py": [
-      "P1-14",
-      "P3-16",
-      "P3-19",
       "E2-01",
       "E2-02",
       "E2-03",
@@ -5898,7 +5918,10 @@
       "E2-05",
       "E2-06",
       "E2-07",
-      "E6-05"
+      "E6-05",
+      "P1-14",
+      "P3-16",
+      "P3-19"
     ],
     "tests/test_paired_replay.py": [
       "S1-01",
@@ -5909,16 +5932,22 @@
       "S1-07"
     ],
     "tests/test_pg_projector_role.py": [
-      "P3-04",
-      "P3-14",
       "E1-04",
-      "E1-05"
+      "E1-05",
+      "P3-04",
+      "P3-14"
     ],
     "tests/test_pg_restore_sentinel.py": [
       "B1-08",
       "B3-07"
     ],
     "tests/test_pg_temporal_e2e.py": [
+      "A1-02",
+      "A1-05",
+      "A2-01",
+      "A2-04",
+      "A2-06",
+      "A3-01",
       "B1-01",
       "B1-02",
       "B1-03",
@@ -5933,20 +5962,6 @@
       "B3-05",
       "B4-02",
       "B4-03",
-      "A1-02",
-      "A1-05",
-      "A2-01",
-      "A2-04",
-      "A2-06",
-      "A3-01",
-      "P1-02",
-      "P1-12",
-      "P1-14",
-      "P2-02",
-      "P2-04",
-      "P2-05",
-      "P2-07",
-      "P3-16",
       "E1-01",
       "E1-03",
       "E2-01",
@@ -5960,7 +5975,15 @@
       "E4-05",
       "E6-03",
       "E8-01",
-      "E8-02"
+      "E8-02",
+      "P1-02",
+      "P1-12",
+      "P1-14",
+      "P2-02",
+      "P2-04",
+      "P2-05",
+      "P2-07",
+      "P3-16"
     ],
     "tests/test_pg_two_worker_failover.py": [
       "B1-06",
@@ -5968,13 +5991,13 @@
     ],
     "tests/test_plans.py": [
       "A3-02",
+      "E7-06",
       "P2-01",
       "P2-02",
       "P2-03",
       "P2-05",
       "P2-06",
-      "P2-07",
-      "E7-06"
+      "P2-07"
     ],
     "tests/test_policy_drafts.py": [
       "E3-06",
@@ -5991,7 +6014,6 @@
       "E5-04"
     ],
     "tests/test_probes.py": [
-      "B4-03",
       "A1-01",
       "A1-02",
       "A1-03",
@@ -6012,9 +6034,10 @@
       "A3-06",
       "A3-08",
       "A4-02",
+      "B4-03",
+      "E7-06",
       "P1-04",
-      "P1-06",
-      "E7-06"
+      "P1-06"
     ],
     "tests/test_projection_redrive.py": [
       "E1-04"
@@ -6085,9 +6108,9 @@
       "B1-03"
     ],
     "tests/test_temporal_history_replay.py": [
-      "B1-06",
       "A1-07",
       "A3-07",
+      "B1-06",
       "E7-01"
     ],
     "tests/test_temporal_signal_idempotency.py": [
@@ -6100,9 +6123,9 @@
       "B1-06"
     ],
     "tests/test_temporal_workflow.py": [
+      "A3-07",
       "B1-04",
       "B1-05",
-      "A3-07",
       "E7-02"
     ],
     "tests/test_tenant_consent.py": [
@@ -6115,11 +6138,12 @@
       "P3-07"
     ],
     "tests/test_trace_refs.py": [
+      "E2-07",
       "P3-07",
       "P3-08",
       "P3-10",
       "P3-15",
-      "E2-07"
+      "P3-17"
     ],
     "tests/test_ui_events.py": [
       "P1-01",
