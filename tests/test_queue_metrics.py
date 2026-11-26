@@ -337,3 +337,35 @@ async def test_redteam_pending_approval_queue_age_and_tenant_scope(sessions_fixt
         assert alpha_after["pending_approvals"] == 2
         assert alpha_after["aged_pending_approvals"] == 1
         assert alpha_after["oldest_pending_approval_seconds"] == 600
+
+
+@pytest.mark.asyncio
+async def test_learning_health_metrics_are_aggregate_without_tenant_labels(
+    sessions_fixture,
+):
+    from backend.operations import learning_health
+
+    async with sessions_fixture() as session:
+        report = await learning_health(session)
+    assert report["tenant_labels_exported"] is False
+    assert set(report) == {"tenant_labels_exported", "experience", "outcomes", "failures"}
+    assert "pending_projections" in report["experience"]
+    assert "dispute_rate" in report["outcomes"]
+    assert "active_clusters" in report["failures"]
+
+    async def override_session():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(local_token="lh-token")
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.get(
+                "/v1/operations/learning-health",
+                headers={"X-Tenant-Id": "alpha", "X-OpsBlaze-Token": "lh-token"},
+            )
+            assert res.status_code == 200
+            assert res.json()["tenant_labels_exported"] is False
+    finally:
+        app.dependency_overrides.clear()

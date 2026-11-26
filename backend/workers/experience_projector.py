@@ -38,10 +38,21 @@ async def project_experience_outbox(
     """Capture eligible source revision only; never touch a real target."""
     if (
         not isinstance(payload, dict)
-        or set(payload) != {"outcome_id"}
+        or "outcome_id" not in payload
+        or not set(payload) <= {"outcome_id", "step_key", "provenance"}
         or not isinstance(payload["outcome_id"], str)
     ):
         raise InvalidProjectionIntent("experience projection intent has invalid payload")
+    step_key = payload.get("step_key", "outcome")
+    provenance = payload.get("provenance")
+    if not isinstance(step_key, str) or not 1 <= len(step_key) <= 128:
+        raise InvalidProjectionIntent("experience projection step_key is invalid")
+    if provenance is not None and (
+        not isinstance(provenance, dict)
+        or not set(provenance) <= {"policy_id", "model_id", "tool_catalog", "effect_id", "classification"}
+        or any(not isinstance(v, str) or not v or len(v) > 128 for v in provenance.values())
+    ):
+        raise InvalidProjectionIntent("experience projection provenance is invalid")
     try:
         outcome_id = UUID(payload["outcome_id"])
         source_id = UUID(incident_id)
@@ -65,6 +76,8 @@ async def project_experience_outbox(
             capsule = await capture_capsule(
                 session, tenant_id, source_id,
                 expected_outcome_id=outcome_id,
+                step_key=step_key,
+                provenance=provenance,
             )
     except ConsentConflict:
         # Missing/revoked consent and subsequently revised evidence are not

@@ -456,3 +456,95 @@ async def test_outcome_projection_preserves_both_revisions_and_rebuilds(witnesse
             assert (await rebuild_evidence_page(session, "a", incident_id, "outcome"))["processed"] == 2
     async with sessions() as session:
         assert (await build_lineage(session, "a", incident_id))["evidence_projection"] == "MATCHED"
+
+
+@pytest.mark.asyncio
+async def test_delayed_observation_reversal_pins_rule_and_cascades_invalidation(
+    witnessed_effect,
+):
+    from uuid import uuid4
+    from backend.evaluation.smoke import freeze, run_smoke
+    from backend.experiences import capture_capsule, set_consent
+    from backend.learning.failures import draft_candidate, record_case, submit_candidate
+    from backend.memory.lessons import create_draft
+    from backend.models import (
+        EvaluationManifest, ExperienceCapsule, FailureCluster,
+        ImprovementCandidate, OperationalLesson, PolicyBundle, PolicyRollout,
+    )
+    from backend.outcomes import ADJUDICATION_RULE_VERSION, record_delayed_observation
+    from backend.policy.registry import create_rollout, register_bundle
+
+    sessions, adapter, incident_id, effect_id = witnessed_effect
+    assert await adjudicate_simulator(sessions, adapter, "a", incident_id, effect_id) == "VERIFIED"
+
+    async with sessions() as session:
+        first = await session.scalar(select(OutcomeRevision))
+        assert first.rule_version == ADJUDICATION_RULE_VERSION
+        assert len(first.source_observations) == 1
+        assert first.source_observations[0]["source"] == "SIMULATOR_WITNESS"
+    async with sessions() as session:
+        await set_consent(session, "a", incident_id, 0, True)
+    async with sessions() as session:
+        capsule = await capture_capsule(session, "a", incident_id)
+        assert capsule is not None
+    async with sessions() as session:
+        lesson = await create_draft(session, "a", capsule.id, "PROBE_HEALTH_FIRST")
+
+    # Build a downstream failure cluster -> candidate -> smoke -> bundle -> rollout chain.
+    async with sessions() as session:
+        other_inc = await admit_incident(session, "a", "cascade-src", IncidentCreate(target_id="checkout"))
+    async with sessions() as session:
+        async with session.begin():
+            other_out = OutcomeRevision(
+                id=uuid4(), tenant_id="a", incident_id=other_inc.id, effect_id=None,
+                revision=1, label="DISPUTED", witness_source="OPERATOR_DISPUTE",
+                observed_version=None, reason="cascade fixture",
+            )
+            session.add(other_out)
+            out_id = other_out.id
+    async with sessions() as session:
+        f_case = await record_case(session, "a", out_id)
+    async with sessions() as session:
+        from backend.models import FailureCase
+        async with session.begin():
+            row = await session.get(FailureCase, f_case.id)
+            row.review_status = "CLASSIFIED"
+            row.incident_id = incident_id
+            row.outcome_revision_id = first.id
+    async with sessions() as session:
+        cand = await draft_candidate(
+            session, "a", f_case.cluster_id, "CONTEXT_LIMIT", "deterministic-v1",
+            {"max_context_tokens": 512}, "verify delayed invalidation cascade", "LOW", "smoke-v1",
+            created_by="operator-alice",
+        )
+    async with sessions() as session:
+        cand = await submit_candidate(session, "a", cand.id, 1, reviewer_id="reviewer-bob")
+        assert cand.reviewed_by == "reviewer-bob"
+    async with sessions() as session:
+        manifest = await freeze(session, "a", cand.id)
+    async with sessions() as session:
+        manifest = await run_smoke(session, "a", manifest.id)
+    async with sessions() as session:
+        bundle = await register_bundle(session, "a", cand.id, manifest.id)
+    async with sessions() as session:
+        rollout = await create_rollout(session, "a", bundle.id, 5)
+
+    # Simulate delayed degradation discovered on the target -> delayed conflict invalidates all dependents.
+    async with sessions() as session:
+        async with session.begin():
+            target = await session.get(SimulatorTarget, ("a", "checkout"))
+            target.healthy = False
+    delayed = await record_delayed_observation(sessions, adapter, "a", incident_id, effect_id)
+    assert delayed.label == "DISPUTED"
+    assert delayed.revision == 2
+    assert delayed.rule_version == ADJUDICATION_RULE_VERSION
+    assert len(delayed.source_observations) == 2
+
+    async with sessions() as session:
+        assert (await session.get(ExperienceCapsule, capsule.id)).status == "QUARANTINED"
+        assert (await session.get(OperationalLesson, lesson.id)).status == "REVOKED"
+        assert (await session.get(FailureCluster, f_case.cluster_id)).quarantined is True
+        assert (await session.get(ImprovementCandidate, cand.id)).state == "INVALID"
+        assert (await session.get(EvaluationManifest, manifest.id)).state == "INVALID"
+        assert (await session.get(PolicyBundle, bundle.id)).state == "REVOKED"
+        assert (await session.get(PolicyRollout, rollout.id)).state == "ROLLED_BACK"

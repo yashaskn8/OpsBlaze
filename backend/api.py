@@ -701,6 +701,8 @@ async def incident_outcomes(
         {"id": str(row.id), "revision": row.revision,
          "label": row.label, "witness_source": row.witness_source,
          "observed_version": row.observed_version, "reason": row.reason,
+         "rule_version": row.rule_version,
+         "source_observations": row.source_observations,
          "created_at": row.created_at.isoformat()}
         for row in reversed(rows)
     ]
@@ -855,6 +857,8 @@ async def tenant_experiences(
              "tenant_consent_epoch": row.tenant_consent_epoch,
              "target_digest": row.target_digest,
              "evidence_ids": row.evidence_ids,
+             "source_step_key": row.source_step_key,
+             "provenance": row.provenance,
              "expires_at": row.expires_at.isoformat()}
             for row in rows
         ],
@@ -954,10 +958,59 @@ async def list_failure_cases(
         {"id": str(case.id), "incident_id": str(case.incident_id),
          "outcome_revision_id": str(case.outcome_revision_id),
          "cluster_id": str(case.cluster_id), "origin_code": case.origin_code,
+         "first_bad_step": case.first_bad_step,
          "review_status": case.review_status,
          "classification_version": case.classification_version}
         for case in cases
     ]
+
+
+@app.get("/v1/failures/page")
+async def failures_page(
+    cursor: UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.learning.failures import list_failures_page
+
+    rows, next_cursor = await list_failures_page(
+        session, tenant_id, cursor=cursor, limit=limit,
+    )
+    return {
+        "records": [
+            {"id": str(case.id), "incident_id": str(case.incident_id),
+             "outcome_revision_id": str(case.outcome_revision_id),
+             "cluster_id": str(case.cluster_id), "origin_code": case.origin_code,
+             "first_bad_step": case.first_bad_step,
+             "review_status": case.review_status,
+             "classification_version": case.classification_version}
+            for case in rows
+        ],
+        "next_cursor": next_cursor,
+    }
+
+
+@app.get("/v1/failure-clusters")
+async def list_failure_clusters(
+    cursor: UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.learning.failures import list_clusters_page
+
+    rows, next_cursor = await list_clusters_page(
+        session, tenant_id, cursor=cursor, limit=limit,
+    )
+    return {
+        "records": [
+            {"id": str(c.id), "signature": c.signature, "version": c.version,
+             "case_count": c.case_count, "quarantined": c.quarantined}
+            for c in rows
+        ],
+        "next_cursor": next_cursor,
+    }
 
 
 @app.get("/v1/failure-clusters/{cluster_id}")
@@ -1002,11 +1055,13 @@ async def create_improvement_draft(
             session, tenant_id, payload.source_cluster_id, payload.kind,
             payload.base_policy_id, payload.change_spec,
             payload.hypothesis, payload.risk, payload.evaluation_manifest_id,
+            created_by=operator_identity[:64],
         )
     except FailureConflict as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"id": str(row.id), "state": row.state,
-            "version": row.version, "kind": row.kind}
+            "version": row.version, "kind": row.kind,
+            "created_by": row.created_by}
 
 
 @app.post("/v1/improvements/{candidate_id}/submit", status_code=202)
@@ -1024,14 +1079,15 @@ async def submit_improvement(
         raise HTTPException(400, "If-Match must be the candidate version")
     try:
         candidate = await submit_candidate(
-            session, tenant_id, candidate_id, int(version)
+            session, tenant_id, candidate_id, int(version),
+            reviewer_id=reviewer_identity[:64],
         )
     except FailureConflict as exc:
         raise HTTPException(409, str(exc)) from exc
     if candidate is None:
         raise HTTPException(404, "candidate not found")
     return {"id": str(candidate.id), "state": candidate.state,
-            "version": candidate.version}
+            "version": candidate.version, "reviewed_by": candidate.reviewed_by}
 
 
 @app.get("/v1/improvements")
@@ -1053,9 +1109,36 @@ async def list_improvements(
          "kind": row.kind, "base_policy_id": row.base_policy_id,
          "change_spec": row.change_spec, "hypothesis": row.hypothesis,
          "risk": row.risk, "state": row.state, "version": row.version,
+         "created_by": row.created_by, "reviewed_by": row.reviewed_by,
          "evaluation_manifest_id": row.evaluation_manifest_id}
         for row in rows
     ]
+
+
+@app.get("/v1/improvements/page")
+async def improvements_page(
+    cursor: UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.learning.failures import list_improvements_page
+
+    rows, next_cursor = await list_improvements_page(
+        session, tenant_id, cursor=cursor, limit=limit,
+    )
+    return {
+        "records": [
+            {"id": str(row.id), "source_cluster_id": str(row.source_cluster_id),
+             "kind": row.kind, "base_policy_id": row.base_policy_id,
+             "change_spec": row.change_spec, "hypothesis": row.hypothesis,
+             "risk": row.risk, "state": row.state, "version": row.version,
+             "created_by": row.created_by, "reviewed_by": row.reviewed_by,
+             "evaluation_manifest_id": row.evaluation_manifest_id}
+            for row in rows
+        ],
+        "next_cursor": next_cursor,
+    }
 
 
 class LessonDraftRequest(BaseModel):

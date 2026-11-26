@@ -451,6 +451,12 @@ class OutcomeRevision(Base):
     observed_version: Mapped[int | None] = mapped_column(BigInteger)
     reason: Mapped[str] = mapped_column(String(256), nullable=False)
     reviewer_id: Mapped[str | None] = mapped_column(String(48))
+    rule_version: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="adjudication-v1", default="adjudication-v1",
+    )
+    source_observations: Mapped[list[dict]] = mapped_column(
+        JSON, nullable=False, server_default="[]", default=list,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
@@ -487,6 +493,7 @@ class ExperienceCapsule(Base):
         UniqueConstraint("incident_id", "outcome_revision_id", name="uq_capsule_outcome"),
         Index("ix_experience_scoped", "tenant_id", "incident_id", "expires_at"),
         Index("ix_capsule_tenant_epoch", "tenant_id", "tenant_consent_epoch", "status"),
+        Index("ix_capsule_step_key", "incident_id", "outcome_revision_id", "source_step_key"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -499,6 +506,12 @@ class ExperienceCapsule(Base):
     )
     target_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     evidence_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    source_step_key: Mapped[str] = mapped_column(
+        String(128), nullable=False, server_default="outcome", default="outcome",
+    )
+    provenance: Mapped[dict] = mapped_column(
+        JSON, nullable=False, server_default="{}", default=dict,
+    )
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -560,7 +573,8 @@ class ImprovementCandidate(Base):
     evaluation_manifest_id: Mapped[str] = mapped_column(String(64), nullable=False)
     state: Mapped[str] = mapped_column(String(24), nullable=False, default="DRAFT")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    created_by: Mapped[str] = mapped_column(String(32), nullable=False, default="local_operator")
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False, default="local_operator")
+    reviewed_by: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

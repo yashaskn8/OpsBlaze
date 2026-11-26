@@ -91,7 +91,24 @@ async def record_case(
         )
         if code == "NONE":
             raise FailureConflict("verified outcomes are not failure cases")
-        signature = f"{code}:effect-{effect.state if effect else 'none'}"
+        bad_probe = await session.scalar(
+            select(ProbeCall)
+            .where(
+                ProbeCall.incident_id == outcome.incident_id,
+                ProbeCall.outcome.in_(("DENIED", "UNAVAILABLE")),
+            )
+            .order_by(ProbeCall.step_no)
+            .limit(1)
+        )
+        first_bad_step = bad_probe.step_no if bad_probe is not None else None
+        effect_label = effect.state if effect else "none"
+        if bad_probe is not None:
+            signature = (
+                f"{code}:step-{bad_probe.step_no}:"
+                f"{bad_probe.catalog_id}:effect-{effect_label}"
+            )[:128]
+        else:
+            signature = f"{code}:effect-{effect_label}"[:128]
         cluster_id = uuid5(NAMESPACE_URL, f"opsblaze/failure/{tenant_id}/{signature}/v1")
         cluster = await session.get(FailureCluster, cluster_id, with_for_update=True)
         if cluster is None:
@@ -107,7 +124,7 @@ async def record_case(
         case = FailureCase(
             id=uuid4(), tenant_id=tenant_id,
             incident_id=outcome.incident_id, outcome_revision_id=outcome.id,
-            cluster_id=cluster_id, origin_code=code, first_bad_step=None,
+            cluster_id=cluster_id, origin_code=code, first_bad_step=first_bad_step,
             classification_version=1, review_status=review,
         )
         session.add(case)
@@ -179,6 +196,7 @@ async def draft_candidate(
     session: AsyncSession, tenant_id: str, cluster_id: UUID,
     kind: str, base_policy_id: str, change_spec: dict,
     hypothesis: str, risk: str, manifest: str,
+    *, created_by: str = "local_operator",
 ) -> ImprovementCandidate:
     validate_change(kind, change_spec)
     if risk not in {"LOW", "MEDIUM", "HIGH"}:
@@ -187,6 +205,7 @@ async def draft_candidate(
         raise FailureConflict("hypothesis must be 8–512 characters")
     if not manifest or len(manifest) > 64 or not base_policy_id or len(base_policy_id) > 64:
         raise FailureConflict("base policy and evaluation manifest are required")
+    author = (created_by or "local_operator").strip()[:64] or "local_operator"
 
     async with session.begin():
         cluster = await session.scalar(
@@ -204,7 +223,7 @@ async def draft_candidate(
             kind=kind, base_policy_id=base_policy_id, change_spec=change_spec,
             hypothesis=hypothesis.strip(), risk=risk,
             evaluation_manifest_id=manifest,
-            state="DRAFT", version=1, created_by="local_operator",
+            state="DRAFT", version=1, created_by=author,
         )
         session.add(candidate)
     return candidate
@@ -213,6 +232,7 @@ async def draft_candidate(
 async def submit_candidate(
     session: AsyncSession, tenant_id: str, candidate_id: UUID,
     expected_version: int,
+    *, reviewer_id: str | None = None,
 ) -> ImprovementCandidate | None:
     async with session.begin():
         candidate = await session.scalar(
@@ -237,6 +257,8 @@ async def submit_candidate(
         validate_change(candidate.kind, candidate.change_spec)
         candidate.state = "EVALUATION_READY"
         candidate.version += 1
+        if reviewer_id:
+            candidate.reviewed_by = reviewer_id.strip()[:64]
     return candidate
 
 
@@ -420,3 +442,53 @@ async def review_classification(
             )
         )
     return case
+
+
+async def list_failures_page(
+    session: AsyncSession, tenant_id: str,
+    *, cursor: UUID | None = None, limit: int = 50,
+) -> tuple[list[FailureCase], str | None]:
+    if not 1 <= limit <= 50:
+        raise ValueError("failure page limit must be 1–50")
+    stmt = select(FailureCase).where(FailureCase.tenant_id == tenant_id)
+    if cursor is not None:
+        stmt = stmt.where(FailureCase.id > cursor)
+    rows = list((await session.scalars(
+        stmt.order_by(FailureCase.id).limit(limit + 1)
+    )).all())
+    visible = rows[:limit]
+    return visible, str(visible[-1].id) if len(rows) > limit else None
+
+
+async def list_clusters_page(
+    session: AsyncSession, tenant_id: str,
+    *, cursor: UUID | None = None, limit: int = 50,
+) -> tuple[list[FailureCluster], str | None]:
+    if not 1 <= limit <= 50:
+        raise ValueError("cluster page limit must be 1–50")
+    stmt = select(FailureCluster).where(FailureCluster.tenant_id == tenant_id)
+    if cursor is not None:
+        stmt = stmt.where(FailureCluster.id > cursor)
+    rows = list((await session.scalars(
+        stmt.order_by(FailureCluster.id).limit(limit + 1)
+    )).all())
+    visible = rows[:limit]
+    return visible, str(visible[-1].id) if len(rows) > limit else None
+
+
+async def list_improvements_page(
+    session: AsyncSession, tenant_id: str,
+    *, cursor: UUID | None = None, limit: int = 50,
+) -> tuple[list[ImprovementCandidate], str | None]:
+    if not 1 <= limit <= 50:
+        raise ValueError("improvement page limit must be 1–50")
+    stmt = select(ImprovementCandidate).where(
+        ImprovementCandidate.tenant_id == tenant_id
+    )
+    if cursor is not None:
+        stmt = stmt.where(ImprovementCandidate.id > cursor)
+    rows = list((await session.scalars(
+        stmt.order_by(ImprovementCandidate.id).limit(limit + 1)
+    )).all())
+    visible = rows[:limit]
+    return visible, str(visible[-1].id) if len(rows) > limit else None

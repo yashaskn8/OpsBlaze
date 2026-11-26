@@ -484,3 +484,39 @@ async def test_redteam_capsule_evidence_integrity_blocks_poisoned_memory(
             stored.evidence_ids = []
     async with sessions_fixture() as session:
         assert [row.id for row in await list_capsules(session, "alpha")] == [capsule.id]
+
+
+@pytest.mark.asyncio
+async def test_capsule_persists_provenance_and_rejects_mismatched_step_replay(
+    sessions_fixture,
+):
+    from backend.experiences import ConsentConflict
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "prov", "k-prov", IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        await set_consent(session, "prov", incident.id, 0, True)
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(OutcomeRevision(
+                id=uuid4(), tenant_id="prov", incident_id=incident.id,
+                revision=1, label="VERIFIED", effect_id=None,
+                witness_source="SIMULATOR_WITNESS", observed_version=2,
+                reason="provenance verified fixture",
+            ))
+    async with sessions_fixture() as session:
+        capsule = await capture_capsule(
+            session, "prov", incident.id,
+            step_key="outcome:1",
+            provenance={"policy_id": "deterministic-v1", "classification": "VERIFIED"},
+        )
+        assert capsule.source_step_key == "outcome:1"
+        assert capsule.provenance["policy_id"] == "deterministic-v1"
+        assert capsule.provenance["capsule_schema_version"] == "v2"
+        replay = await capture_capsule(session, "prov", incident.id, step_key="outcome:1")
+        assert replay.id == capsule.id
+    async with sessions_fixture() as session:
+        with pytest.raises(ConsentConflict, match="reused"):
+            await capture_capsule(session, "prov", incident.id, step_key="outcome:99")

@@ -159,3 +159,55 @@ async def test_redteam_projector_never_accepts_untyped_source_payload(
         await project_experience_outbox(
             sessions_fixture, "tenant", str(incident.id), payload,
         )
+
+
+@pytest.mark.asyncio
+async def test_projector_persists_step_key_and_provenance_without_raw_secrets(
+    sessions_fixture,
+):
+    from backend.models import ExperienceCapsule
+    from backend.workers.experience_projector import project_experience_outbox
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "t-prov", "prov-1", IncidentCreate(target_id="checkout"),
+        )
+    async with sessions_fixture() as session:
+        from backend.experiences import set_consent
+        await set_consent(session, "t-prov", incident.id, 0, True)
+    outcome_id = uuid4()
+    async with sessions_fixture() as session:
+        async with session.begin():
+            from backend.models import OutcomeRevision
+            session.add(OutcomeRevision(
+                id=outcome_id, tenant_id="t-prov", incident_id=incident.id,
+                revision=1, label="VERIFIED", effect_id=None,
+                witness_source="SIMULATOR_WITNESS", observed_version=2,
+                reason="provenance projection check",
+            ))
+
+    status = await project_experience_outbox(
+        sessions_fixture,
+        "t-prov",
+        str(incident.id),
+        {
+            "outcome_id": str(outcome_id),
+            "step_key": "outcome:1",
+            "provenance": {
+                "policy_id": "deterministic-v1",
+                "model_id": "none",
+                "tool_catalog": "simulator-readonly-v1",
+                "classification": "VERIFIED",
+            },
+        },
+    )
+    assert status == "CAPTURED"
+    async with sessions_fixture() as session:
+        capsule = await session.scalar(
+            select(ExperienceCapsule).where(ExperienceCapsule.incident_id == incident.id)
+        )
+        assert capsule is not None
+        assert capsule.source_step_key == "outcome:1"
+        assert capsule.provenance["policy_id"] == "deterministic-v1"
+        assert capsule.provenance["tool_catalog"] == "simulator-readonly-v1"
+        assert capsule.provenance["classification"] == "VERIFIED"

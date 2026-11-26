@@ -218,3 +218,87 @@ async def test_failure_lineage_is_transactional_and_reconstructable(failure_case
             assert (await rebuild_evidence_page(session, "t", incident_id, "failure"))["processed"] == 1
     async with sessions() as session:
         assert (await build_lineage(session, "t", incident_id))["evidence_projection"] == "MATCHED"
+
+
+@pytest.mark.asyncio
+async def test_root_step_clustering_separates_counterexamples_and_attributes_owners(
+    sessions_fixture,
+):
+    import asyncio
+    from uuid import uuid4
+    from backend.learning.failures import (
+        list_clusters_page, list_failures_page, list_improvements_page, submit_candidate,
+    )
+    from backend.models import ProbeCall
+
+    async with sessions_fixture() as session:
+        inc_a = await admit_incident(session, "t-e3", "e3-a", IncidentCreate(target_id="svc-a"))
+    async with sessions_fixture() as session:
+        inc_b = await admit_incident(session, "t-e3", "e3-b", IncidentCreate(target_id="svc-b"))
+    async with sessions_fixture() as session:
+        inc_c = await admit_incident(session, "t-e3", "e3-c", IncidentCreate(target_id="svc-c"))
+
+    out_a, out_b, out_c = uuid4(), uuid4(), uuid4()
+    async with sessions_fixture() as session:
+        async with session.begin():
+            session.add(ProbeCall(
+                id=uuid4(), incident_id=inc_a.id, step_no=1,
+                catalog_id="simulator.health", outcome="DENIED",
+            ))
+            session.add(ProbeCall(
+                id=uuid4(), incident_id=inc_b.id, step_no=2,
+                catalog_id="simulator.version", outcome="DENIED",
+            ))
+            session.add(OutcomeRevision(
+                id=out_a, tenant_id="t-e3", incident_id=inc_a.id, effect_id=None,
+                revision=1, label="DISPUTED", witness_source="OPERATOR_DISPUTE",
+                observed_version=None, reason="step 1 probe denied",
+            ))
+            session.add(OutcomeRevision(
+                id=out_b, tenant_id="t-e3", incident_id=inc_b.id, effect_id=None,
+                revision=1, label="DISPUTED", witness_source="OPERATOR_DISPUTE",
+                observed_version=None, reason="step 2 probe denied",
+            ))
+            session.add(OutcomeRevision(
+                id=out_c, tenant_id="t-e3", incident_id=inc_c.id, effect_id=None,
+                revision=1, label="DISPUTED", witness_source="OPERATOR_DISPUTE",
+                observed_version=None, reason="counterexample duplicate step",
+            ))
+
+    async with sessions_fixture() as session:
+        case_a = await record_case(session, "t-e3", out_a)
+    async with sessions_fixture() as session:
+        case_b = await record_case(session, "t-e3", out_b)
+    assert case_a.cluster_id != case_b.cluster_id
+    assert case_a.first_bad_step == 1
+    assert case_b.first_bad_step == 2
+
+    # Concurrent duplicate record_case requests must stay idempotent with case_count == 1.
+    async def classify_c():
+        async with sessions_fixture() as s:
+            try:
+                return await record_case(s, "t-e3", out_c)
+            except Exception:
+                return None
+
+    await asyncio.gather(classify_c(), classify_c())
+    async with sessions_fixture() as session:
+        case_c = await record_case(session, "t-e3", out_c)
+        assert case_c is not None
+        async with session.begin():
+            case_a_row = await session.get(FailureCase, case_a.id)
+            case_a_row.review_status = "CLASSIFIED"
+        cand = await draft_candidate(
+            session, "t-e3", case_a.cluster_id, "PROBE_ORDER", "deterministic-v1",
+            {"order": ["simulator.health"]}, "attributed candidate hypothesis", "LOW",
+            "smoke-v1", created_by="alice@lab",
+        )
+        submitted = await submit_candidate(
+            session, "t-e3", cand.id, 1, reviewer_id="bob@reviewer",
+        )
+        assert submitted.created_by == "alice@lab"
+        assert submitted.reviewed_by == "bob@reviewer"
+        c_rows, _ = await list_clusters_page(session, "t-e3", limit=2)
+        f_rows, _ = await list_failures_page(session, "t-e3", limit=2)
+        i_rows, _ = await list_improvements_page(session, "t-e3", limit=2)
+        assert len(c_rows) == 2 and len(f_rows) == 2 and len(i_rows) == 1

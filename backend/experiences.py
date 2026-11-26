@@ -132,10 +132,47 @@ async def set_consent(
     return consent
 
 
+_ALLOWED_PROVENANCE_KEYS = frozenset({
+    "policy_id", "model_id", "tool_catalog", "effect_id", "classification",
+})
+
+
+def _sanitize_provenance(
+    provenance: dict | None,
+    *,
+    outcome_label: str,
+    retention_days: int,
+    step_key: str,
+    evidence_count: int,
+) -> dict:
+    clean: dict[str, object] = {
+        "capsule_schema_version": "v2",
+        "retention_days": retention_days,
+        "outcome_label": outcome_label,
+        "classification": outcome_label,
+        "step_key": step_key,
+        "evidence_count": evidence_count,
+    }
+    if isinstance(provenance, dict):
+        for key in _ALLOWED_PROVENANCE_KEYS:
+            value = provenance.get(key)
+            if isinstance(value, str) and value and len(value) <= 128:
+                clean[key] = value
+    clean.setdefault("policy_id", "deterministic-v1")
+    clean.setdefault("model_id", "none")
+    clean.setdefault("tool_catalog", "simulator-readonly-v1")
+    return clean
+
+
 async def capture_capsule(
     session: AsyncSession, tenant_id: str, incident_id: UUID,
     expected_outcome_id: UUID | None = None,
+    *,
+    step_key: str = "outcome",
+    provenance: dict | None = None,
 ) -> ExperienceCapsule | None:
+    if not isinstance(step_key, str) or not 1 <= len(step_key) <= 128:
+        raise ValueError("source step key must be 1–128 characters")
     now = datetime.now(timezone.utc)
     retention = get_settings().experience_retention_days
     if not 1 <= retention <= 30:
@@ -193,6 +230,7 @@ async def capture_capsule(
                         f"{tenant_id}:{incident.target_id}".encode("utf-8")
                     ).hexdigest()
                     or utc(existing.expires_at) <= now
+                    or (existing.source_step_key not in {step_key, "outcome"} and step_key != "outcome")
                 ):
                     raise ConsentConflict("stale, altered or revoked capsule cannot be reused")
                 return existing
@@ -209,10 +247,20 @@ async def capture_capsule(
             digest = hashlib.sha256(
                 f"{tenant_id}:{incident.target_id}".encode("utf-8")
             ).hexdigest()
+            evidence_strs = [str(item) for item in evidence]
             capsule = ExperienceCapsule(
                 id=uuid4(), tenant_id=tenant_id, incident_id=incident_id,
                 outcome_revision_id=outcome.id, consent_epoch=consent.epoch,
-                tenant_consent_epoch=tenant_epoch, target_digest=digest, evidence_ids=[str(item) for item in evidence],
+                tenant_consent_epoch=tenant_epoch, target_digest=digest,
+                evidence_ids=evidence_strs,
+                source_step_key=step_key,
+                provenance=_sanitize_provenance(
+                    provenance,
+                    outcome_label=outcome.label,
+                    retention_days=retention,
+                    step_key=step_key,
+                    evidence_count=len(evidence_strs),
+                ),
                 status="VALID", expires_at=now + timedelta(days=retention),
             )
             session.add(capsule)

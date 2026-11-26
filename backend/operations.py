@@ -12,7 +12,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.adapters.simulator import utc
-from backend.models import EffectReceipt, Incident, IncidentPlan, OutboxEntry
+from backend.models import (
+    EffectReceipt, ExperienceCapsule, ExperienceConsent, FailureCluster,
+    ImprovementCandidate, Incident, IncidentPlan, OutboxEntry, OutcomeRevision,
+)
 from backend.lifecycle import ACTIVE_STATES, UNRESOLVED_EFFECT_STATES
 
 
@@ -160,4 +163,142 @@ async def queue_health(
         "aged_active_incidents": aged_active,
         "max_pending_attempts": int(max_attempt or 0),
         "stuck_after_seconds": stuck_after_seconds,
+    }
+
+
+async def learning_health(
+    session: AsyncSession, now: datetime | None = None,
+) -> dict:
+    """Aggregate-only E1/E2/E3 learning metrics with zero tenant identifiers."""
+    observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+
+    pending_proj_q = select(OutboxEntry.created_at).where(
+        OutboxEntry.kind == "PROJECT_EXPERIENCE",
+        OutboxEntry.delivered_at.is_(None),
+        OutboxEntry.dead_lettered_at.is_(None),
+    )
+    pending_proj = int((await session.scalar(
+        select(func.count()).select_from(pending_proj_q.subquery())
+    )) or 0)
+    oldest_proj_at = await session.scalar(
+        pending_proj_q.with_only_columns(func.min(OutboxEntry.created_at))
+    )
+    dead_proj = int((await session.scalar(
+        select(func.count()).select_from(OutboxEntry).where(
+            OutboxEntry.kind == "PROJECT_EXPERIENCE",
+            OutboxEntry.dead_lettered_at.is_not(None),
+        )
+    )) or 0)
+    valid_capsules = int((await session.scalar(
+        select(func.count()).select_from(ExperienceCapsule).where(
+            ExperienceCapsule.status == "VALID",
+        )
+    )) or 0)
+    quarantined_capsules = int((await session.scalar(
+        select(func.count()).select_from(ExperienceCapsule).where(
+            ExperienceCapsule.status == "QUARANTINED",
+        )
+    )) or 0)
+    denied_consents = int((await session.scalar(
+        select(func.count()).select_from(ExperienceConsent).where(
+            ExperienceConsent.allowed.is_(False),
+        )
+    )) or 0)
+    expired_q = select(ExperienceCapsule.expires_at).where(
+        ExperienceCapsule.expires_at < observed,
+    )
+    expired_count = int((await session.scalar(
+        select(func.count()).select_from(expired_q.subquery())
+    )) or 0)
+    oldest_expired = await session.scalar(
+        expired_q.with_only_columns(func.min(ExperienceCapsule.expires_at))
+    )
+
+    has_outcome = select(OutcomeRevision.id).where(
+        OutcomeRevision.incident_id == EffectReceipt.incident_id,
+    ).correlate(EffectReceipt).exists()
+    pending_adj_q = select(EffectReceipt.created_at).where(~has_outcome)
+    pending_adj = int((await session.scalar(
+        select(func.count()).select_from(pending_adj_q.subquery())
+    )) or 0)
+    oldest_adj_at = await session.scalar(
+        pending_adj_q.with_only_columns(func.min(EffectReceipt.created_at))
+    )
+    total_outcomes = int((await session.scalar(
+        select(func.count()).select_from(OutcomeRevision)
+    )) or 0)
+    disputed_outcomes = int((await session.scalar(
+        select(func.count()).select_from(OutcomeRevision).where(
+            OutcomeRevision.label == "DISPUTED",
+        )
+    )) or 0)
+    verified_effect_outcome_lags = (await session.execute(
+        select(EffectReceipt.created_at, OutcomeRevision.created_at)
+        .join(OutcomeRevision, OutcomeRevision.effect_id == EffectReceipt.id)
+        .order_by(OutcomeRevision.created_at.desc())
+        .limit(200)
+    )).all()
+    lag_samples = sorted(
+        max(0, int((utc(out_ts) - utc(eff_ts)).total_seconds()))
+        for eff_ts, out_ts in verified_effect_outcome_lags
+    )
+    lag_p95 = (
+        lag_samples[min(len(lag_samples) - 1, int(0.95 * (len(lag_samples) - 1)))]
+        if lag_samples else 0
+    )
+
+    active_clusters = int((await session.scalar(
+        select(func.count()).select_from(FailureCluster).where(
+            FailureCluster.quarantined.is_(False),
+        )
+    )) or 0)
+    quarantined_clusters = int((await session.scalar(
+        select(func.count()).select_from(FailureCluster).where(
+            FailureCluster.quarantined.is_(True),
+        )
+    )) or 0)
+    draft_proposals = int((await session.scalar(
+        select(func.count()).select_from(ImprovementCandidate).where(
+            ImprovementCandidate.state == "DRAFT",
+        )
+    )) or 0)
+    ready_proposals = int((await session.scalar(
+        select(func.count()).select_from(ImprovementCandidate).where(
+            ImprovementCandidate.state == "EVALUATION_READY",
+        )
+    )) or 0)
+    invalid_proposals = int((await session.scalar(
+        select(func.count()).select_from(ImprovementCandidate).where(
+            ImprovementCandidate.state == "INVALID",
+        )
+    )) or 0)
+
+    return {
+        "tenant_labels_exported": False,
+        "experience": {
+            "pending_projections": pending_proj,
+            "oldest_projection_lag_seconds": elapsed_seconds(observed, oldest_proj_at),
+            "dead_letter_projections": dead_proj,
+            "valid_capsules": valid_capsules,
+            "quarantined_capsules": quarantined_capsules,
+            "denied_consents": denied_consents,
+            "expired_unpurged_capsules": expired_count,
+            "oldest_expired_purge_age_seconds": elapsed_seconds(observed, oldest_expired),
+        },
+        "outcomes": {
+            "pending_adjudication_count": pending_adj,
+            "oldest_pending_adjudication_seconds": elapsed_seconds(observed, oldest_adj_at),
+            "total_outcomes": total_outcomes,
+            "disputed_outcomes": disputed_outcomes,
+            "dispute_rate": round(disputed_outcomes / total_outcomes, 6) if total_outcomes else 0.0,
+            "adjudication_lag_p95_seconds": lag_p95,
+            "oracle_health": "SIMULATOR_WITNESS_ACTIVE",
+        },
+        "failures": {
+            "active_clusters": active_clusters,
+            "quarantined_clusters": quarantined_clusters,
+            "draft_proposals": draft_proposals,
+            "evaluation_ready_proposals": ready_proposals,
+            "invalid_proposals": invalid_proposals,
+        },
     }

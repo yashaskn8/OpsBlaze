@@ -170,10 +170,26 @@ async def redrive_experience_dead_letter(
     }
 
 
+async def learning_health_metrics(
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """E1-08/E2-07/E3-07 aggregate learning health with zero tenant labels."""
+    from backend.operations import learning_health
+
+    _ = tenant_id
+    return await learning_health(session)
+
+
 def register_operations_routes(app: FastAPI) -> None:
     """Register flat routes so the structural authorization gate sees every endpoint."""
     app.add_api_route("/v1/health/ready", readiness, methods=["GET"])
     app.add_api_route("/v1/operations/queues", tenant_queues, methods=["GET"])
+    app.add_api_route(
+        "/v1/operations/learning-health",
+        learning_health_metrics,
+        methods=["GET"],
+    )
     app.add_api_route(
         "/v1/operations/dead-letters", experience_dead_letters, methods=["GET"],
     )

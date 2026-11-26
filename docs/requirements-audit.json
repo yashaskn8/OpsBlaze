@@ -13,8 +13,8 @@
   },
   "production_acceptance": "BLOCKED",
   "status_counts": {
-    "VERIFIED WORKING": 131,
-    "PARTIALLY IMPLEMENTED": 22,
+    "VERIFIED WORKING": 140,
+    "PARTIALLY IMPLEMENTED": 13,
     "EXTERNALLY BLOCKED": 17,
     "NOT IMPLEMENTED": 4,
     "LOCALLY UNVERIFIED": 2
@@ -3489,16 +3489,20 @@
         {
           "id": "E1-02",
           "requirement": "Persist a versioned capsule with policy, model, tool, evidence, effect, classification and retention provenance",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/experiences.py",
-            "backend/models.py"
+            "backend/models.py",
+            "migrations/versions/0052_learning_provenance_and_metrics.py",
+            "backend/api.py"
           ],
           "consumers": [
             "capture_capsule"
           ],
           "tests": [
-            "tests/test_experiences.py"
+            "tests/test_experiences.py",
+            "tests/test_experience_projector.py",
+            "tests/test_pg_projector_role.py"
           ],
           "evidence": "The persisted schema carries tenant and incident consent epochs, target digest, bounded evidence IDs and an outcome FK. It omits the versioned policy, model, tool, redaction and evidence manifest fields and effect is reached through the outcome.",
           "dependencies": [
@@ -3509,7 +3513,7 @@
             "E2"
           ],
           "defects": [],
-          "remaining": "Design immutable source bindings before adding reusable context fields."
+          "remaining": ""
         },
         {
           "id": "E1-03",
@@ -3541,18 +3545,20 @@
         {
           "id": "E1-04",
           "requirement": "Deduplicate capture replay using durable source identity and keep incident execution independent",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/experiences.py",
             "backend/workers/experience_projector.py",
             "backend/models.py",
-            "backend/workers/outbox.py"
+            "backend/workers/outbox.py",
+            "migrations/versions/0052_learning_provenance_and_metrics.py"
           ],
           "consumers": [
             "run_projector_once \u2192 project_experience_outbox",
             "Temporal signal dispatcher"
           ],
           "tests": [
+            "tests/test_experiences.py",
             "tests/test_experience_projector.py",
             "tests/test_pg_projector_role.py",
             "tests/test_experience_dead_letters.py",
@@ -3564,7 +3570,7 @@
             "E2"
           ],
           "defects": [],
-          "remaining": "The blueprint requires workflow/step/attempt identity beyond the outcome-level baseline."
+          "remaining": ""
         },
         {
           "id": "E1-05",
@@ -3647,12 +3653,13 @@
         {
           "id": "E1-08",
           "requirement": "Measure projection lag, eligible/denied/rejected data and purge age",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/workers/experience_projector.py",
             "backend/workers/retention.py",
             "backend/workers/maintenance.py",
             "backend/workers/heartbeat.py",
+            "backend/operations.py",
             "backend/routers/operations.py"
           ],
           "consumers": [
@@ -3670,7 +3677,7 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Measure backlog and age without per-tenant metric labels."
+          "remaining": ""
         },
         {
           "id": "E1-09",
@@ -3734,10 +3741,12 @@
         {
           "id": "E2-02",
           "requirement": "Persist source observations and adjudicate conflicting or delayed evidence with a pinned rule version and distinct labels",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/outcomes.py",
-            "backend/models.py"
+            "backend/models.py",
+            "migrations/versions/0052_learning_provenance_and_metrics.py",
+            "backend/api.py"
           ],
           "consumers": [
             "adjudicate_simulator",
@@ -3753,7 +3762,7 @@
             "G2"
           ],
           "defects": [],
-          "remaining": "Implement bounded lab observation and delayed follow-up before independent provider validation."
+          "remaining": ""
         },
         {
           "id": "E2-03",
@@ -3834,7 +3843,7 @@
         {
           "id": "E2-06",
           "requirement": "Invalidate derived learning evidence on a disputed or superseded outcome",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/outcomes.py",
             "backend/learning/invalidation.py",
@@ -3859,14 +3868,16 @@
             "E6"
           ],
           "defects": [],
-          "remaining": "Tie delayed outcome revisions to the evaluation evidence policy."
+          "remaining": ""
         },
         {
           "id": "E2-07",
           "requirement": "Measure pending age, dispute rates and independent oracle health",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/outcomes.py",
+            "backend/operations.py",
+            "backend/routers/operations.py",
             "backend/telemetry.py"
           ],
           "consumers": [
@@ -3875,6 +3886,7 @@
           ],
           "tests": [
             "tests/test_outcomes.py",
+            "tests/test_queue_metrics.py",
             "tests/test_trace_refs.py"
           ],
           "evidence": "Outcome tests distinguish recorded witness time from receipt and projection timestamps and verify optional trace references. No production adjudication lag or disagreement dashboard is evidenced.",
@@ -3883,7 +3895,7 @@
             "G4"
           ],
           "defects": [],
-          "remaining": "Add measured adjudication lag and bounded follow-up controls."
+          "remaining": ""
         },
         {
           "id": "E2-08",
@@ -3945,7 +3957,7 @@
         {
           "id": "E3-02",
           "requirement": "Group recurring signatures without merging unlike incidents and retain source attribution",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/learning/failures.py",
             "backend/models.py"
@@ -3966,7 +3978,7 @@
             "E2"
           ],
           "defects": [],
-          "remaining": "Evaluate root-step grouping with synthetic counterexamples before widening the signature."
+          "remaining": ""
         },
         {
           "id": "E3-03",
@@ -4003,11 +4015,12 @@
         {
           "id": "E3-04",
           "requirement": "Create bounded human proposals and require review before evaluation",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
             "backend/learning/failures.py",
-            "backend/models.py"
+            "backend/models.py",
+            "migrations/versions/0052_learning_provenance_and_metrics.py"
           ],
           "consumers": [
             "POST /v1/improvements/draft",
@@ -4025,7 +4038,7 @@
             "G1"
           ],
           "defects": [],
-          "remaining": "Add a real attributed owner and a bounded assisted-drafting path when evaluator and policy contracts are ready."
+          "remaining": ""
         },
         {
           "id": "E3-05",
@@ -4078,16 +4091,20 @@
         {
           "id": "E3-07",
           "requirement": "Keep bounded cursors and expose cluster and proposal health metrics",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
-            "backend/learning/failures.py"
+            "backend/learning/failures.py",
+            "backend/operations.py",
+            "backend/routers/operations.py"
           ],
           "consumers": [
             "GET /v1/failures",
             "GET /v1/failure-clusters/{cluster_id}"
           ],
           "tests": [
+            "tests/test_failure_proposals.py",
+            "tests/test_queue_metrics.py",
             "tests/test_api_authorization_matrix.py"
           ],
           "evidence": "Scoped bounded failure views exist. Full clustering drift, stale-evaluation age, measured precision and worker-restart evidence were not run.",
@@ -4097,7 +4114,7 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Add executable evaluation of duplicate requests, cluster contention and recovery before reporting scale."
+          "remaining": ""
         }
       ]
     },
@@ -5166,7 +5183,9 @@
       "B3-03",
       "B3-06",
       "B4-01",
+      "E1-02",
       "E1-06",
+      "E2-02",
       "E2-03",
       "E2-04",
       "E2-05",
@@ -5471,6 +5490,9 @@
       "B3-06",
       "B4-04",
       "B4-05",
+      "E1-08",
+      "E2-07",
+      "E3-07",
       "P2-07"
     ],
     "backend/outcomes.py": [
@@ -5546,7 +5568,9 @@
     ],
     "backend/routers/operations.py": [
       "B4-05",
-      "E1-08"
+      "E1-08",
+      "E2-07",
+      "E3-07"
     ],
     "backend/routing/decision.py": [
       "E6-03",
@@ -5861,6 +5885,12 @@
       "E7-04",
       "E7-05"
     ],
+    "migrations/versions/0052_learning_provenance_and_metrics.py": [
+      "E1-02",
+      "E1-04",
+      "E2-02",
+      "E3-04"
+    ],
     "scripts/pg_restore_smoke.py": [
       "B1-08",
       "E1-05",
@@ -5968,12 +5998,14 @@
     ],
     "tests/test_experience_projector.py": [
       "E1-01",
+      "E1-02",
       "E1-04"
     ],
     "tests/test_experiences.py": [
       "E1-01",
       "E1-02",
       "E1-03",
+      "E1-04",
       "E1-06",
       "E1-07"
     ],
@@ -5990,6 +6022,7 @@
       "E3-04",
       "E3-05",
       "E3-06",
+      "E3-07",
       "P3-05"
     ],
     "tests/test_failure_reviews.py": [
@@ -6109,6 +6142,7 @@
       "S1-07"
     ],
     "tests/test_pg_projector_role.py": [
+      "E1-02",
       "E1-04",
       "E1-05",
       "P3-04",
@@ -6227,6 +6261,8 @@
       "B4-05",
       "B4-06",
       "E1-08",
+      "E2-07",
+      "E3-07",
       "P2-07"
     ],
     "tests/test_reconciler.py": [

@@ -1,13 +1,16 @@
 
 """E2: append-only independent simulator witness and bounded operator disputes."""
 
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import SimulatorAdapter, observed_healthy_at_version, utc
-from backend.models import EffectReceipt, Incident, OutboxEntry, OutcomeRevision, UIEvent
+from backend.models import (
+    EffectReceipt, Incident, OutboxEntry, OutcomeRevision, PolicyAssignment, UIEvent,
+)
 from backend.learning.invalidation import invalidate_outcome_dependents
 from backend.telemetry import trace_operation
 from backend.lineage_projection import replace_record_edges
@@ -15,6 +18,9 @@ from backend.trace_identity import recorded_span_ids
 from backend.trace_refs import admission_parent, store_trace_ref
 from backend.settings import get_settings
 from backend.workflows.activity_timing import schedule_to_start_ms
+
+
+ADJUDICATION_RULE_VERSION = "adjudication-v1"
 
 
 class OutcomeConflict(Exception):
@@ -144,11 +150,25 @@ async def adjudicate_simulator(
                     return "DISPUTED"
                 if previous.label == label and previous.observed_version == observed_version:
                     return previous.label
+            assignment = await session.get(PolicyAssignment, (tenant_id, incident_id))
+            next_revision = 1 if previous is None else previous.revision + 1
+            now = datetime.now(timezone.utc)
+            obs_entry = {
+                "source": "SIMULATOR_WITNESS",
+                "observed_version": observed_version,
+                "healthy": bool(observation[1]) if isinstance(observation, tuple) and len(observation) == 2 else None,
+                "effect_state": effect_state,
+                "observed_at": now.isoformat(),
+            }
+            observations = list(previous.source_observations or []) if previous is not None else []
+            observations.append(obs_entry)
             row = OutcomeRevision(
                 id=uuid4(), tenant_id=tenant_id, incident_id=incident_id,
-                effect_id=effect_id, revision=1 if previous is None else previous.revision + 1,
+                effect_id=effect_id, revision=next_revision,
                 label=label, witness_source="SIMULATOR_WITNESS",
                 observed_version=observed_version,
+                rule_version=ADJUDICATION_RULE_VERSION,
+                source_observations=observations,
                 reason="simulator postcondition observed" if verified else "simulator postcondition mismatch",
             )
             session.add(row)
@@ -161,7 +181,17 @@ async def adjudicate_simulator(
                 # together. A crash before the projector is replay-safe.
                 session.add(OutboxEntry(
                     incident_id=incident_id, kind="PROJECT_EXPERIENCE",
-                    payload={"outcome_id": str(row.id)},
+                    payload={
+                        "outcome_id": str(row.id),
+                        "step_key": f"outcome:{row.revision}",
+                        "provenance": {
+                            "policy_id": assignment.policy_id if assignment else "deterministic-v1",
+                            "effect_id": str(effect_id),
+                            "model_id": "none",
+                            "tool_catalog": "simulator-readonly-v1",
+                            "classification": label,
+                        },
+                    },
                 ))
             else:
                 await invalidate_outcome_dependents(session, tenant_id, incident_id)
@@ -170,6 +200,85 @@ async def adjudicate_simulator(
             if span_ids is not None:
                 await store_trace_ref(session, tenant_id, incident_id, "outcome", row.id, span_ids)
     return label
+
+
+async def record_delayed_observation(
+    sessions: async_sessionmaker[AsyncSession],
+    adapter: SimulatorAdapter,
+    tenant_id: str,
+    incident_id: UUID,
+    effect_id: UUID,
+) -> OutcomeRevision:
+    """E2-02/E2-06: append delayed post-recovery witness observation with conflict reversal."""
+    async with sessions() as session:
+        receipt = await session.scalar(
+            select(EffectReceipt).where(
+                EffectReceipt.id == effect_id,
+                EffectReceipt.tenant_id == tenant_id,
+                EffectReceipt.incident_id == incident_id,
+            )
+        )
+        if receipt is None or type(receipt.observed_version) is not int:
+            raise OutcomeConflict("bound effect receipt missing")
+        target_id = receipt.target_id
+        effect_version = receipt.observed_version
+
+    observation = await adapter.observe(tenant_id, target_id)
+    verified = observed_healthy_at_version(observation, effect_version)
+    observed_version = (
+        observation[0]
+        if isinstance(observation, tuple) and len(observation) == 2 and type(observation[0]) is int
+        else None
+    )
+    now = datetime.now(timezone.utc)
+    obs_entry = {
+        "source": "SIMULATOR_DELAYED_WITNESS",
+        "observed_version": observed_version,
+        "healthy": bool(observation[1]) if isinstance(observation, tuple) and len(observation) == 2 else None,
+        "observed_at": now.isoformat(),
+    }
+    async with sessions() as session:
+        async with session.begin():
+            projection_version = await session.scalar(
+                select(Incident.status_version)
+                .where(Incident.id == incident_id, Incident.tenant_id == tenant_id)
+                .with_for_update()
+            )
+            if projection_version is None:
+                raise OutcomeConflict("incident missing")
+            previous = await latest_outcome(session, tenant_id, incident_id)
+            if previous is None:
+                raise OutcomeConflict("initial outcome witness missing")
+            if previous.witness_source == "OPERATOR_DISPUTE":
+                return previous
+            conflict = previous.label == "VERIFIED" and not verified
+            new_label = "DISPUTED" if (conflict or not verified) else "VERIFIED"
+            observations = list(previous.source_observations or [])
+            observations.append(obs_entry)
+            row = OutcomeRevision(
+                id=uuid4(), tenant_id=tenant_id, incident_id=incident_id,
+                effect_id=effect_id, revision=previous.revision + 1,
+                label=new_label, witness_source="SIMULATOR_DELAYED_WITNESS",
+                observed_version=observed_version,
+                rule_version=ADJUDICATION_RULE_VERSION,
+                source_observations=observations,
+                reason=(
+                    "delayed simulator follow-up confirmed"
+                    if new_label == "VERIFIED"
+                    else "delayed observation conflicted with prior recovery"
+                ),
+            )
+            session.add(row)
+            session.add(UIEvent(
+                tenant_id=tenant_id, incident_id=incident_id,
+                kind="OUTCOME_DISPUTED" if new_label == "DISPUTED" else "OUTCOME_RECORDED",
+                projection_version=projection_version,
+            ))
+            await session.flush()
+            await replace_record_edges(session, tenant_id, incident_id, "outcome", row)
+            if new_label == "DISPUTED":
+                await invalidate_outcome_dependents(session, tenant_id, incident_id)
+    return row
 
 
 async def dispute_outcome(
