@@ -4,8 +4,8 @@
   "source": {
     "document": "TITAN20_MASTER_PRODUCTION_ARCHITECTURE_AGENTIC_AI_BLUEPRINT_2027.pdf",
     "sections": [
-      "2.1–2.20",
-      "5.2–5.5",
+      "2.1\u20132.20",
+      "5.2\u20135.5",
       "6.6"
     ],
     "source_snapshot": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
@@ -571,7 +571,7 @@
   ],
   "checkpoint": {
     "functionality_audit": "docs/requirements-audit.json",
-    "base_commit": "adac181f34b3d2edeb088767fed3e7588c7d2966",
+    "base_commit": "e245b428c80f0e7deed736937bd84969b29c71c3",
     "implemented_changes": [
       {
         "commit": "9310682c08fa6605b09b412347d290163b5c2ae7",
@@ -635,6 +635,48 @@
         "change": "Transactional experience-to-outcome lineage projection without additional projector grants",
         "workflow_run": 45771310773,
         "verification": "EXACT_COMMIT_CI_SUCCESS_708_PASSED_29_DESELECTED_80_54_PERCENT_COVERAGE_ALL_10_JOBS_20_NATIVE_PG_TESTS"
+      },
+      {
+        "commit": "01b5423555a4fd28c53cde17c6ee44c3d80dfc77",
+        "requirement": "S1",
+        "change": "Resumable S1/E5 evaluation trials, lesson applicability, simulator canary rehearsal, and lab adapter enablement",
+        "workflow_run": 45795860069,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+      },
+      {
+        "commit": "67f2c1a99b359e2165087f2d7f4389164a7175e3",
+        "requirement": "A3",
+        "change": "Migration 0054 evidence lifecycle expiry, access audit, simulator retention horizon, and budget concurrency tests",
+        "workflow_run": 45804120216,
+        "verification": "LOCAL_PG16_VERIFIED_RECONCILED_AT_0aae1c0_ALL_10_JOBS"
+      },
+      {
+        "commit": "25243080b0fa7184e32544200dca3e131470b325",
+        "requirement": "A1",
+        "change": "Development abstention calibration freeze, runtime strategy alignment, and executable simulator benchmarks",
+        "workflow_run": 45804120216,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_AT_0aae1c0_ALL_10_JOBS"
+      },
+      {
+        "commit": "0aae1c0f8ecd96da3c6203a2e90f75b898852cab",
+        "requirement": "P2",
+        "change": "Sixth import-linter architecture boundary and tracked-secret check compliance",
+        "workflow_run": 45804120216,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+      },
+      {
+        "commit": "d6e6be47744cc6d8a3b3e5300971d262e847fbce",
+        "requirement": "E4",
+        "change": "Scoped memory lookup optimization (7 to 3 SQL statements) and automated Playwright approval keyboard/focus acceptance",
+        "workflow_run": 45817385047,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+      },
+      {
+        "commit": "e245b428c80f0e7deed736937bd84969b29c71c3",
+        "requirement": "P3",
+        "change": "Bounded database readiness probes, workbench fencing, and pre-UI-redesign functional closure",
+        "workflow_run": 45821688845,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
       }
     ],
     "functional_closeout": {
@@ -644,8 +686,8 @@
       "successful_jobs": 10
     },
     "next_actions": [
-      "Begin the UI redesign when authorized. Include deferred P2 spoken-output verification in its manual acceptance.",
-      "Collect protected E4 effectiveness evidence and independent identity, adapter qualification, privacy, multi-host recovery and release evidence. G1–G6 remain blocked."
+      "Verify spoken screen-reader approval/rejection/expiry/conflict announcements during UI redesign manual acceptance (P2-08).",
+      "Collect externally controlled G1-G6 identity, provider, multi-host recovery, independent E5 held-out evaluation, signed human E6 release, and privacy evidence."
     ]
   }
 }

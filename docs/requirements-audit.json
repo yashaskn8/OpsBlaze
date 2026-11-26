@@ -4,7 +4,7 @@
     "file": "TITAN20_MASTER_PRODUCTION_ARCHITECTURE_AGENTIC_AI_BLUEPRINT_2027.pdf",
     "sha256": "135aa2b7333a1d6869193372f29ae24cae4d995705b6540e679f4b32cfd5ad87",
     "pages": 112,
-    "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
+    "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1\u2013G6 gates."
   },
   "baseline": {
     "commit": "d6e6be47744cc6d8a3b3e5300971d262e847fbce",
@@ -944,7 +944,7 @@
         "E8-07"
       ],
       "execution": "Externally controlled verification",
-      "action": "Collect independent identity, provider, privacy, held-out evaluation, multi-host recovery and release evidence under G1–G6."
+      "action": "Collect independent identity, provider, privacy, held-out evaluation, multi-host recovery and release evidence under G1\u2013G6."
     }
   ],
   "capabilities": [
@@ -967,8 +967,8 @@
             "migrations/versions/0001_incident_intake.py"
           ],
           "consumers": [
-            "POST /v1/incidents → admit_incident",
-            "GET /v1/incidents/{id} → find_incident"
+            "POST /v1/incidents \u2192 admit_incident",
+            "GET /v1/incidents/{id} \u2192 find_incident"
           ],
           "tests": [
             "tests/test_incidents.py",
@@ -989,7 +989,7 @@
             "backend/workers/outbox.py"
           ],
           "consumers": [
-            "admit_incident → database transaction → START_WORKFLOW",
+            "admit_incident \u2192 database transaction \u2192 START_WORKFLOW",
             "dispatch worker claims the committed row"
           ],
           "tests": [
@@ -1011,7 +1011,7 @@
             "backend/workers/outbox.py"
           ],
           "consumers": [
-            "opsblaze-dispatcher.service → dispatch_once → deliver_intent"
+            "opsblaze-dispatcher.service \u2192 dispatch_once \u2192 deliver_intent"
           ],
           "tests": [
             "tests/test_temporal_dispatch_recovery.py",
@@ -1033,7 +1033,7 @@
             "backend/workers/incident_worker.py"
           ],
           "consumers": [
-            "Temporal IncidentWorkflow.run → select_incident_route / inspect_incident_read_only / apply_approved_simulator_plan"
+            "Temporal IncidentWorkflow.run \u2192 select_incident_route / inspect_incident_read_only / apply_approved_simulator_plan"
           ],
           "tests": [
             "tests/test_temporal_workflow.py",
@@ -1057,8 +1057,8 @@
           ],
           "consumers": [
             "POST /v1/incidents/{id}/cancel",
-            "cancel outbox → IncidentWorkflow.request_cancel",
-            "plan decision → Temporal signal"
+            "cancel outbox \u2192 IncidentWorkflow.request_cancel",
+            "plan decision \u2192 Temporal signal"
           ],
           "tests": [
             "tests/test_api_contract.py",
@@ -1092,12 +1092,21 @@
             "tests/test_temporal_worker_restart.py",
             "tests/test_pg_two_worker_failover.py"
           ],
-          "evidence": "CI generated and replayed histories from pinned source and ran worker restart tests. The tested restart cases center on approval waiting. Exact-main Linux CI 45771805410 (3c0a17c) passed. Five native Windows restart cases passed. The 27-test PostgreSQL campaign also covered two-worker handoff and restored the single-host sentinel.",
+          "evidence": "CI generated and replayed histories from pinned source and ran worker restart tests across INVESTIGATING, AWAITING_APPROVAL, and EXECUTING. Native Windows two-worker PostgreSQL failover and six Temporal signal/restart tests passed, and exact-main Linux CI 45821688845 (e245b42) passed.",
           "dependencies": [
             "G3"
           ],
           "defects": [],
-          "remaining": "G3 requires independent multi-host recovery evidence. Pinned history replay and local worker interruption checks exist."
+          "remaining": "External gate G3: multi-host independently witnessed recovery requires separate physical/isolated hosts; pinned history replay and local worker interruption recovery are verified.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G3"
+            ],
+            "reason": "External gate G3: multi-host independently witnessed recovery requires separate physical/isolated hosts; pinned history replay and local worker interruption recovery are verified."
+          }
         },
         {
           "id": "B1-07",
@@ -1147,7 +1156,16 @@
             "G3"
           ],
           "defects": [],
-          "remaining": "Provide deployment-specific native backup, recovery, and fault-campaign evidence."
+          "remaining": "Provide deployment-specific native backup, recovery, and fault-campaign evidence.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G3"
+            ],
+            "reason": "Provide deployment-specific native backup, recovery, and fault-campaign evidence."
+          }
         }
       ]
     },
@@ -1169,7 +1187,7 @@
             "migrations/versions/0002_simulator_effects.py"
           ],
           "consumers": [
-            "execute_approved_simulator_plan → reserve_simulator_target"
+            "execute_approved_simulator_plan \u2192 reserve_simulator_target"
           ],
           "tests": [
             "tests/test_pg_temporal_e2e.py",
@@ -1192,7 +1210,7 @@
             "backend/adapters/simulator.py"
           ],
           "consumers": [
-            "reserve_simulator_target → ResourceEpoch.latest_fence",
+            "reserve_simulator_target \u2192 ResourceEpoch.latest_fence",
             "SimulatorAdapter.apply"
           ],
           "tests": [
@@ -1217,7 +1235,7 @@
             "backend/plans.py"
           ],
           "consumers": [
-            "execute_approved_simulator_plan → execute_simulator_effect → SimulatorAdapter.apply"
+            "execute_approved_simulator_plan \u2192 execute_simulator_effect \u2192 SimulatorAdapter.apply"
           ],
           "tests": [
             "tests/test_simulator_effects.py",
@@ -1243,7 +1261,7 @@
             "backend/effects/reservations.py"
           ],
           "consumers": [
-            "Plan approval → Temporal apply activity → permit reservation"
+            "Plan approval \u2192 Temporal apply activity \u2192 permit reservation"
           ],
           "tests": [
             "tests/test_api_authorization_matrix.py",
@@ -1326,7 +1344,17 @@
             "E8"
           ],
           "defects": [],
-          "remaining": "Supply authorized provider evidence and independently witnessed delayed-holder/failover tests."
+          "remaining": "Supply authorized provider evidence and independently witnessed delayed-holder/failover tests.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G2",
+              "G3"
+            ],
+            "reason": "Supply authorized provider evidence and independently witnessed delayed-holder/failover tests."
+          }
         }
       ]
     },
@@ -1349,7 +1377,7 @@
             "migrations/versions/0038_receipt_permit_binding.py"
           ],
           "consumers": [
-            "execute_approved_simulator_plan → execute_simulator_effect → prepare_receipt"
+            "execute_approved_simulator_plan \u2192 execute_simulator_effect \u2192 prepare_receipt"
           ],
           "tests": [
             "tests/test_simulator_effects.py",
@@ -1372,7 +1400,7 @@
             "backend/lifecycle.py"
           ],
           "consumers": [
-            "Temporal apply activity → set_state and reconcile_effect",
+            "Temporal apply activity \u2192 set_state and reconcile_effect",
             "GET incident effects"
           ],
           "tests": [
@@ -1424,7 +1452,7 @@
             "backend/outcomes.py"
           ],
           "consumers": [
-            "reconcile_effect → adapter.observe → observe_recovery_outcome"
+            "reconcile_effect \u2192 adapter.observe \u2192 observe_recovery_outcome"
           ],
           "tests": [
             "tests/test_simulator_effects.py",
@@ -1449,7 +1477,7 @@
             "backend/adapters/conformance.py"
           ],
           "consumers": [
-            "apply_approved_simulator_plan → plan execution → set_state SENT"
+            "apply_approved_simulator_plan \u2192 plan execution \u2192 set_state SENT"
           ],
           "tests": [
             "tests/test_pg_temporal_e2e.py",
@@ -1516,7 +1544,17 @@
             "E8"
           ],
           "defects": [],
-          "remaining": "Obtain independent provider-side status retention and fault evidence."
+          "remaining": "Obtain independent provider-side status retention and fault evidence.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G2",
+              "G3"
+            ],
+            "reason": "Obtain independent provider-side status retention and fault evidence."
+          }
         }
       ]
     },
@@ -1537,7 +1575,7 @@
             "backend/services.py"
           ],
           "consumers": [
-            "POST /v1/incidents → admit_incident"
+            "POST /v1/incidents \u2192 admit_incident"
           ],
           "tests": [
             "tests/test_admission.py",
@@ -1561,7 +1599,7 @@
             "migrations/versions/0003_admission_quotas.py"
           ],
           "consumers": [
-            "admit_incident → enforce_active_capacity → reserve_admission_slot"
+            "admit_incident \u2192 enforce_active_capacity \u2192 reserve_admission_slot"
           ],
           "tests": [
             "tests/test_admission.py",
@@ -1600,7 +1638,16 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "External gate G4: live external model provider token/retry cost measurements require an external qualified model provider; atomic reservation, retry accounting, and restart persistence are verified."
+          "remaining": "External gate G4: live external model provider token/retry cost measurements require an external qualified model provider; atomic reservation, retry accounting, and restart persistence are verified.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G6"
+            ],
+            "reason": "External gate G4: live external model provider token/retry cost measurements require an external qualified model provider; atomic reservation, retry accounting, and restart persistence are verified."
+          }
         },
         {
           "id": "B4-04",
@@ -1698,7 +1745,17 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Provide independently witnessed workload parameters, latency, resource and failover evidence."
+          "remaining": "Provide independently witnessed workload parameters, latency, resource and failover evidence.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G3",
+              "G6"
+            ],
+            "reason": "Provide independently witnessed workload parameters, latency, resource and failover evidence."
+          }
         }
       ]
     },
@@ -1971,7 +2028,15 @@
           ],
           "defects": [],
           "remaining": "G4 requires independent held-out efficacy and audited cost evidence. The local simulator evidence is reproducible with the benchmark test.",
-          "local_verification": "FOCUSED_PASS_EXACT_CI_PENDING"
+          "local_verification": "FOCUSED_PASS_EXACT_CI_PASS",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G4"
+            ],
+            "reason": "G4 requires independent held-out efficacy and audited cost evidence. The local simulator evidence is reproducible with the benchmark test."
+          }
         }
       ]
     },
@@ -2176,7 +2241,18 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "External deployment boundaries, redaction review, and connector evidence remain blocked."
+          "remaining": "External deployment boundaries, redaction review, and connector evidence remain blocked.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G1",
+              "G2",
+              "G6"
+            ],
+            "reason": "External deployment boundaries, redaction review, and connector evidence remain blocked."
+          }
         }
       ]
     },
@@ -2405,7 +2481,16 @@
           ],
           "remaining": "External G6 privacy and approved source evidence. Local expiry, redaction, scoped access and decline checks passed.",
           "local_verification": "SUCCESS_ALL_10_EXACT_COMMIT_JOBS",
-          "commit": "5e7a3298d2a2a0003cdf6c414558880cdd69865e"
+          "commit": "5e7a3298d2a2a0003cdf6c414558880cdd69865e",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G2",
+              "G6"
+            ],
+            "reason": "External G6 privacy and approved source evidence. Local expiry, redaction, scoped access and decline checks passed."
+          }
         }
       ]
     },
@@ -2525,7 +2610,7 @@
           "defects": [],
           "remaining": "",
           "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.8.3–2.8.4, PDF pages 39–40",
+          "pdf_reference": "Section 2.8.3\u20132.8.4, PDF pages 39\u201340",
           "commit": "22248e978de7d4cc5951810c62ec124e820e1cc4"
         },
         {
@@ -2575,7 +2660,16 @@
             "G4"
           ],
           "defects": [],
-          "remaining": "G4 requires a protected independently held-out calibration cohort and adjudicated evidence."
+          "remaining": "G4 requires a protected independently held-out calibration cohort and adjudicated evidence.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G4"
+            ],
+            "reason": "G4 requires a protected independently held-out calibration cohort and adjudicated evidence."
+          }
         },
         {
           "id": "A4-07",
@@ -2623,7 +2717,7 @@
             "backend/services.py"
           ],
           "consumers": [
-            "App.admit → POST /v1/incidents"
+            "App.admit \u2192 POST /v1/incidents"
           ],
           "tests": [
             "tests/test_ui_events.py",
@@ -2646,7 +2740,7 @@
             "backend/models.py"
           ],
           "consumers": [
-            "App.refresh → GET /v1/incidents/{id}"
+            "App.refresh \u2192 GET /v1/incidents/{id}"
           ],
           "tests": [
             "tests/test_pg_temporal_e2e.py",
@@ -2668,7 +2762,7 @@
             "frontend/src/main.tsx"
           ],
           "consumers": [
-            "App.refresh and notification effect → GET /v1/incidents/{id}"
+            "App.refresh and notification effect \u2192 GET /v1/incidents/{id}"
           ],
           "tests": [
             "tests/test_api_contract.py"
@@ -2691,7 +2785,7 @@
             "backend/probes/gateway.py"
           ],
           "consumers": [
-            "App.refresh → GET /v1/incidents/{id}/evidence"
+            "App.refresh \u2192 GET /v1/incidents/{id}/evidence"
           ],
           "tests": [
             "tests/test_probes.py",
@@ -2732,7 +2826,7 @@
           "defects": [],
           "remaining": "",
           "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
+          "pdf_reference": "Section 2.9.1\u20132.9.5, PDF pages 41\u201343",
           "commit": "9b96427761fc2cc84a56d22ddf6083999dff389a"
         },
         {
@@ -2762,7 +2856,7 @@
           "defects": [],
           "remaining": "",
           "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
+          "pdf_reference": "Section 2.9.1\u20132.9.5, PDF pages 41\u201343",
           "acceptance_criteria": [
             "Display server-accounted usage and remaining budget on reconnect.",
             "Do not display the prior identity's incident details after tenant or credential changes."
@@ -2796,7 +2890,7 @@
           "defects": [],
           "remaining": "",
           "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
+          "pdf_reference": "Section 2.9.1\u20132.9.5, PDF pages 41\u201343",
           "commit": "22248e978de7d4cc5951810c62ec124e820e1cc4"
         },
         {
@@ -2809,7 +2903,7 @@
             "backend/api.py"
           ],
           "consumers": [
-            "App notification effect → /stream, /events and scoped GET snapshot"
+            "App notification effect \u2192 /stream, /events and scoped GET snapshot"
           ],
           "tests": [
             "tests/test_events_sse.py",
@@ -2833,7 +2927,7 @@
             "backend/api.py"
           ],
           "consumers": [
-            "App notification effect → /stream?after_id= and /events?after_id="
+            "App notification effect \u2192 /stream?after_id= and /events?after_id="
           ],
           "tests": [
             "tests/test_events_sse.py",
@@ -2855,7 +2949,7 @@
             "frontend/src/incidentStream.ts"
           ],
           "consumers": [
-            "App notification effect → consumeIncidentStream"
+            "App notification effect \u2192 consumeIncidentStream"
           ],
           "tests": [
             "frontend/tests/api.test.mjs"
@@ -2967,7 +3061,7 @@
           "defects": [],
           "remaining": "A reviewer dispute form remains tracked under E2; exact-commit CI passed all 10 jobs.",
           "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
+          "pdf_reference": "Section 2.9.1\u20132.9.5, PDF pages 41\u201343",
           "commit": "281ec0000a83ebda2c680a37b31987d0b8e74026"
         },
         {
@@ -3036,7 +3130,18 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Validate same-origin policy and disabled streaming buffering on authorized infrastructure."
+          "remaining": "Validate same-origin policy and disabled streaming buffering on authorized infrastructure.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G1",
+              "G3",
+              "G6"
+            ],
+            "reason": "Validate same-origin policy and disabled streaming buffering on authorized infrastructure."
+          }
         }
       ]
     },
@@ -3074,7 +3179,7 @@
           "defects": [],
           "remaining": "",
           "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.10.1–2.10.5, PDF pages 44–46",
+          "pdf_reference": "Section 2.10.1\u20132.10.5, PDF pages 44\u201346",
           "commit": "e52e66874ddfb1807ad4cd6374cd44d1b23c4e7a"
         },
         {
@@ -3204,7 +3309,7 @@
           "defects": [],
           "remaining": "",
           "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.10.1–2.10.5, PDF pages 44–46",
+          "pdf_reference": "Section 2.10.1\u20132.10.5, PDF pages 44\u201346",
           "commit": "e52e66874ddfb1807ad4cd6374cd44d1b23c4e7a"
         },
         {
@@ -3273,6 +3378,15 @@
             "scope": "Actual spoken approval, rejection, expiry and conflict output",
             "procedure": "README.md#verify-spoken-approval-announcements-on-windows",
             "required_for_current_software_gate": false
+          },
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G1",
+              "G5",
+              "G6"
+            ],
+            "reason": "Manual spoken-output evidence is deferred to the UI redesign. External identity, governance and release authorization remain under G1, G5 and G6."
           }
         }
       ]
@@ -3617,7 +3731,7 @@
             "Commit the page and its cursor atomically and retry the same page after rollback.",
             "Keep recovered edges tenant-scoped and leave source rows authoritative."
           ],
-          "pdf_reference": "Section 2.11.4–2.11.5, PDF pages 48–49",
+          "pdf_reference": "Section 2.11.4\u20132.11.5, PDF pages 48\u201349",
           "ci_status": "SUCCESS_ALL_10_JOBS",
           "commit": "97c0f42125fd0a2063f8255368f0e14d3ce20754"
         },
@@ -3777,7 +3891,7 @@
             "migrations/versions/0053_eval_canary_adapters.py"
           ],
           "consumers": [
-            "POST /v1/experiments → create_pair"
+            "POST /v1/experiments \u2192 create_pair"
           ],
           "tests": [
             "tests/test_paired_replay.py"
@@ -3799,7 +3913,7 @@
             "backend/api.py"
           ],
           "consumers": [
-            "create_pair → run_arm → a separate Twin per arm"
+            "create_pair \u2192 run_arm \u2192 a separate Twin per arm"
           ],
           "tests": [
             "tests/test_paired_replay.py"
@@ -3840,7 +3954,7 @@
             "backend/experiments/replay.py"
           ],
           "consumers": [
-            "run_arm → Twin.independent_oracle → persisted ReplayArm outcome"
+            "run_arm \u2192 Twin.independent_oracle \u2192 persisted ReplayArm outcome"
           ],
           "tests": [
             "tests/test_paired_replay.py"
@@ -3942,7 +4056,17 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Obtain authorized workloads and independent protected evidence."
+          "remaining": "Obtain authorized workloads and independent protected evidence.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G4",
+              "G6"
+            ],
+            "reason": "Obtain authorized workloads and independent protected evidence."
+          }
         }
       ]
     },
@@ -3964,8 +4088,8 @@
             "backend/experiences.py"
           ],
           "consumers": [
-            "apply_approved_simulator_plan → adjudicate_simulator → PROJECT_EXPERIENCE",
-            "opsblaze-projector.service → run_projector_once → capture_capsule",
+            "apply_approved_simulator_plan \u2192 adjudicate_simulator \u2192 PROJECT_EXPERIENCE",
+            "opsblaze-projector.service \u2192 run_projector_once \u2192 capture_capsule",
             "POST /v1/incidents/{incident_id}/experiences/capture"
           ],
           "tests": [
@@ -4050,7 +4174,7 @@
             "migrations/versions/0052_learning_provenance_and_metrics.py"
           ],
           "consumers": [
-            "run_projector_once → project_experience_outbox",
+            "run_projector_once \u2192 project_experience_outbox",
             "Temporal signal dispatcher"
           ],
           "tests": [
@@ -4079,7 +4203,7 @@
           ],
           "consumers": [
             "opsblaze-projector.service",
-            "capsule INSERT → project_experience_lineage"
+            "capsule INSERT \u2192 project_experience_lineage"
           ],
           "tests": [
             "tests/test_pg_projector_role.py",
@@ -4129,7 +4253,7 @@
           ],
           "consumers": [
             "POST /v1/experiences/{capsule_id}/quarantine",
-            "maintenance timer → expire_capsules and scrub_revoked_tenant_capsules"
+            "maintenance timer \u2192 expire_capsules and scrub_revoked_tenant_capsules"
           ],
           "tests": [
             "tests/test_experiences.py",
@@ -4197,7 +4321,18 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Require approved independent review, backup erasure evidence and separated production role custody."
+          "remaining": "Require approved independent review, backup erasure evidence and separated production role custody.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G1",
+              "G3",
+              "G6"
+            ],
+            "reason": "Require approved independent review, backup erasure evidence and separated production role custody."
+          }
         }
       ]
     },
@@ -4220,7 +4355,7 @@
             "backend/adapters/simulator.py"
           ],
           "consumers": [
-            "Temporal apply_approved_simulator_plan → execute_approved_simulator_plan → adjudicate_simulator"
+            "Temporal apply_approved_simulator_plan \u2192 execute_approved_simulator_plan \u2192 adjudicate_simulator"
           ],
           "tests": [
             "tests/test_outcomes.py",
@@ -4298,7 +4433,7 @@
           "tests": [
             "tests/test_outcomes.py"
           ],
-          "evidence": "Pre-fix HTTP regression with 51 synthetic revisions returned only revisions 1–50 and excluded the newest DISPUTED label. The repaired route selects revisions 2–51 with a descending indexed window and returns them in chronological order. Focused suite: 18 passed.",
+          "evidence": "Pre-fix HTTP regression with 51 synthetic revisions returned only revisions 1\u201350 and excluded the newest DISPUTED label. The repaired route selects revisions 2\u201351 with a descending indexed window and returns them in chronological order. Focused suite: 18 passed.",
           "dependencies": [
             "P3"
           ],
@@ -4413,7 +4548,17 @@
             "G4"
           ],
           "defects": [],
-          "remaining": "Obtain independent oracle credentials, network separation and signed provider evidence."
+          "remaining": "Obtain independent oracle credentials, network separation and signed provider evidence.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G2",
+              "G4"
+            ],
+            "reason": "Obtain independent oracle credentials, network separation and signed provider evidence."
+          }
         }
       ]
     },
@@ -4546,7 +4691,7 @@
           ],
           "consumers": [
             "POST /v1/improvements/draft",
-            "draft_candidate → validate_change"
+            "draft_candidate \u2192 validate_change"
           ],
           "tests": [
             "tests/test_failure_proposals.py"
@@ -4685,7 +4830,7 @@
             "backend/api.py"
           ],
           "consumers": [
-            "GET /v1/lessons → retrieve_active_lessons"
+            "GET /v1/lessons \u2192 retrieve_active_lessons"
           ],
           "tests": [
             "tests/test_lessons.py",
@@ -4812,7 +4957,15 @@
           "local_implementation": "COMPLETE_DETERMINISTIC_SIMULATOR_COMPARATOR",
           "software_gate": "SATISFIED",
           "effectiveness": "UNVERIFIED",
-          "independent_acceptance": "G4_BLOCKED"
+          "independent_acceptance": "G4_BLOCKED",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G4",
+              "G6"
+            ],
+            "reason": "G4 requires protected independent evaluation. The scoped lookup reduction is measured. Improvement in decisions, probe consumption and recovery efficacy remains unverified."
+          }
         }
       ]
     },
@@ -4835,7 +4988,7 @@
             "migrations/versions/0010_evaluation_smoke.py"
           ],
           "consumers": [
-            "POST /v1/evaluations → freeze → atomic insert resolving either existing uniqueness constraint"
+            "POST /v1/evaluations \u2192 freeze \u2192 atomic insert resolving either existing uniqueness constraint"
           ],
           "tests": [
             "tests/test_evaluation_smoke.py"
@@ -4859,7 +5012,7 @@
             "backend/evaluation/fixtures.py"
           ],
           "consumers": [
-            "POST /v1/evaluations/{id}/run → run_smoke"
+            "POST /v1/evaluations/{id}/run \u2192 run_smoke"
           ],
           "tests": [
             "tests/test_evaluation_smoke.py"
@@ -4881,7 +5034,7 @@
             "backend/evaluation/stats.py"
           ],
           "consumers": [
-            "run_evaluation → run_smoke → evaluate_strategy / oracle_expected"
+            "run_evaluation \u2192 run_smoke \u2192 evaluate_strategy / oracle_expected"
           ],
           "tests": [
             "tests/test_evaluation_smoke.py"
@@ -4931,7 +5084,7 @@
             "backend/benchmarks/paired_simulator.py"
           ],
           "consumers": [
-            "Offline evaluation CLIs → recompute_signed_e5 release-evidence verifier"
+            "Offline evaluation CLIs \u2192 recompute_signed_e5 release-evidence verifier"
           ],
           "tests": [
             "tests/test_recovery_cost.py",
@@ -4947,7 +5100,15 @@
           "defects": [],
           "remaining": "G4 requires protected independent held-out outcomes and actual audited costs. Exact CI passed the native approvals, unknown-outcome control and witnessed benchmark regression.",
           "local_verification": "SUCCESS_ALL_10_EXACT_COMMIT_JOBS",
-          "commit": "5e7a3298d2a2a0003cdf6c414558880cdd69865e"
+          "commit": "5e7a3298d2a2a0003cdf6c414558880cdd69865e",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G4"
+            ],
+            "reason": "G4 requires protected independent held-out outcomes and actual audited costs. Exact CI passed the native approvals, unknown-outcome control and witnessed benchmark regression."
+          }
         },
         {
           "id": "E5-06",
@@ -5020,7 +5181,17 @@
             "E6"
           ],
           "defects": [],
-          "remaining": "Obtain held-out authority and genuine separate review."
+          "remaining": "Obtain held-out authority and genuine separate review.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G4",
+              "G5"
+            ],
+            "reason": "Obtain held-out authority and genuine separate review."
+          }
         }
       ]
     },
@@ -5042,7 +5213,7 @@
             "backend/api.py"
           ],
           "consumers": [
-            "POST /v1/policies → register_bundle"
+            "POST /v1/policies \u2192 register_bundle"
           ],
           "tests": [
             "tests/test_policy_drafts.py"
@@ -5089,8 +5260,8 @@
             "backend/models.py"
           ],
           "consumers": [
-            "POST /v1/incidents → admit_incident",
-            "select_incident_route → select_route",
+            "POST /v1/incidents \u2192 admit_incident",
+            "select_incident_route \u2192 select_route",
             "GET /v1/incidents/{incident_id}/policy"
           ],
           "tests": [
@@ -5171,7 +5342,7 @@
           "tests": [
             "tests/test_policy_drafts.py"
           ],
-          "evidence": "The current preview cohort is limited to 1–5 percent but never installs any candidate. No supervised simulator canary controller, abort signal observer, active-candidate pause path or React release console is wired.",
+          "evidence": "The current preview cohort is limited to 1\u20135 percent but never installs any candidate. No supervised simulator canary controller, abort signal observer, active-candidate pause path or React release console is wired.",
           "dependencies": [
             "B1",
             "E5",
@@ -5231,7 +5402,18 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Obtain independent signed release evidence, real approval authority and a witnessed rollback."
+          "remaining": "Obtain independent signed release evidence, real approval authority and a witnessed rollback.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G4",
+              "G5",
+              "G6"
+            ],
+            "reason": "Obtain independent signed release evidence, real approval authority and a witnessed rollback."
+          }
         }
       ]
     },
@@ -5324,7 +5506,7 @@
           ],
           "remaining": "Held-out review and production policy promotion remain separate.",
           "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.19.3–2.19.4, PDF pages 75–76",
+          "pdf_reference": "Section 2.19.3\u20132.19.4, PDF pages 75\u201376",
           "acceptance_criteria": [
             "Persist strategy, model and token reservation before the provider call.",
             "Do not reselect on retry or arm the provider on an existing RUNBOOK.",
@@ -5387,7 +5569,7 @@
           ],
           "remaining": "External held-out evaluation remains tracked under G4.",
           "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.19.3–2.19.4, PDF pages 75–76",
+          "pdf_reference": "Section 2.19.3\u20132.19.4, PDF pages 75\u201376",
           "commit": "77e325fccb7515bf0086be0e21ba07aa0d12ecbc"
         },
         {
@@ -5473,7 +5655,16 @@
           "defects": [],
           "remaining": "G4 requires protected independent comparison with actual authorized provider and production evidence.",
           "local_verification": "SUCCESS_ALL_10_EXACT_COMMIT_JOBS",
-          "commit": "5e7a3298d2a2a0003cdf6c414558880cdd69865e"
+          "commit": "5e7a3298d2a2a0003cdf6c414558880cdd69865e",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G4",
+              "G5"
+            ],
+            "reason": "G4 requires protected independent comparison with actual authorized provider and production evidence."
+          }
         }
       ]
     },
@@ -5521,7 +5712,7 @@
             "backend/workflows/activities.py"
           ],
           "consumers": [
-            "Approved Temporal simulator activity → execute_approved_simulator_plan → current_simulator_is_conformant"
+            "Approved Temporal simulator activity \u2192 execute_approved_simulator_plan \u2192 current_simulator_is_conformant"
           ],
           "tests": [
             "tests/test_pg_temporal_e2e.py",
@@ -5614,6 +5805,7 @@
           "requirement": "Verify the contractual status lookup retention horizon using sustained and partial-commit fault evidence.",
           "status": "EXTERNALLY BLOCKED",
           "implementation": [
+            "backend/adapters/simulator.py",
             "backend/adapters/conformance.py",
             "backend/adapters/qualification.py"
           ],
@@ -5630,7 +5822,16 @@
             "G2"
           ],
           "defects": [],
-          "remaining": "External gate G2: real third-party provider status TTL exceeding reconciliation horizon requires external provider-side qualification; simulator retention-horizon-contract scenario is verified."
+          "remaining": "External gate G2: real third-party provider status TTL exceeding reconciliation horizon requires external provider-side qualification; simulator retention-horizon-contract scenario is verified.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G2"
+            ],
+            "reason": "External gate G2: real third-party provider status TTL exceeding reconciliation horizon requires external provider-side qualification; simulator retention-horizon-contract scenario is verified."
+          }
         },
         {
           "id": "E8-07",
@@ -5651,7 +5852,18 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Obtain independently witnessed provider traces and separate human authorization."
+          "remaining": "Obtain independently witnessed provider traces and separate human authorization.",
+          "local_implementation": "COMPLETE_LOCAL_SOFTWARE",
+          "local_verification": "VERIFIED_LOCAL_EXACT_CI_PASS",
+          "external_acceptance": {
+            "status": "BLOCKED",
+            "gates": [
+              "G2",
+              "G5",
+              "G6"
+            ],
+            "reason": "Obtain independently witnessed provider traces and separate human authorization."
+          }
         }
       ]
     }
@@ -5688,16 +5900,10 @@
       "B3-03",
       "B3-04",
       "E2-01",
-      "E8-01"
+      "E8-01",
+      "E8-06"
     ],
     "backend/api.py": [
-      "B1-01",
-      "B1-05",
-      "B2-04",
-      "B2-05",
-      "B3-03",
-      "B3-06",
-      "B4-01",
       "A1-08",
       "A1-09",
       "A2-02",
@@ -5709,31 +5915,13 @@
       "A4-01",
       "A4-04",
       "A4-05",
-      "P1-01",
-      "P1-02",
-      "P1-03",
-      "P1-04",
-      "P1-05",
-      "P1-06",
-      "P1-07",
-      "P1-08",
-      "P1-09",
-      "P1-12",
-      "P1-14",
-      "P1-15",
-      "P2-01",
-      "P2-02",
-      "P2-03",
-      "P2-06",
-      "P2-07",
-      "P3-01",
-      "P3-10",
-      "P3-11",
-      "P3-16",
-      "P3-19",
-      "S1-02",
-      "S1-05",
-      "S1-06",
+      "B1-01",
+      "B1-05",
+      "B2-04",
+      "B2-05",
+      "B3-03",
+      "B3-06",
+      "B4-01",
       "E1-02",
       "E1-06",
       "E2-02",
@@ -5759,13 +5947,38 @@
       "E7-05",
       "E7-07",
       "E8-03",
-      "E8-05"
+      "E8-05",
+      "P1-01",
+      "P1-02",
+      "P1-03",
+      "P1-04",
+      "P1-05",
+      "P1-06",
+      "P1-07",
+      "P1-08",
+      "P1-09",
+      "P1-12",
+      "P1-14",
+      "P1-15",
+      "P2-01",
+      "P2-02",
+      "P2-03",
+      "P2-06",
+      "P2-07",
+      "P3-01",
+      "P3-10",
+      "P3-11",
+      "P3-16",
+      "P3-19",
+      "S1-02",
+      "S1-05",
+      "S1-06"
     ],
     "backend/auth.py": [
       "A2-08",
+      "E2-05",
       "P2-02",
-      "P2-08",
-      "E2-05"
+      "P2-08"
     ],
     "backend/benchmarks/local_capacity.py": [
       "B4-06",
@@ -5780,8 +5993,8 @@
       "P3-18"
     ],
     "backend/budgets.py": [
-      "B4-03",
-      "A1-06"
+      "A1-06",
+      "B4-03"
     ],
     "backend/effect_lineage.py": [
       "P3-01",
@@ -5796,10 +6009,10 @@
       "B3-04",
       "B3-05",
       "B3-06",
-      "P2-05",
-      "P3-03",
       "E7-06",
-      "E8-01"
+      "E8-01",
+      "P2-05",
+      "P3-03"
     ],
     "backend/effects/reservations.py": [
       "B2-01",
@@ -5818,11 +6031,11 @@
       "A1-10",
       "A4-06",
       "A4-07",
-      "S1-07",
       "E5-04",
       "E5-05",
       "E5-06",
-      "E7-08"
+      "E7-08",
+      "S1-07"
     ],
     "backend/evaluation/local_benchmarks.py": [
       "A1-10",
@@ -5894,7 +6107,6 @@
       "P2-03"
     ],
     "backend/investigator/advisory.py": [
-      "B4-03",
       "A1-04",
       "A1-06",
       "A1-07",
@@ -5902,6 +6114,7 @@
       "A3-04",
       "A4-04",
       "A4-07",
+      "B4-03",
       "E4-04",
       "E7-03"
     ],
@@ -5927,14 +6140,14 @@
       "E7-03"
     ],
     "backend/learning/failures.py": [
-      "P3-05",
       "E3-01",
       "E3-02",
       "E3-03",
       "E3-04",
       "E3-05",
       "E3-06",
-      "E3-07"
+      "E3-07",
+      "P3-05"
     ],
     "backend/learning/invalidation.py": [
       "E2-06",
@@ -5964,6 +6177,7 @@
     ],
     "backend/lineage_projection.py": [
       "A3-02",
+      "E4-06",
       "P3-02",
       "P3-03",
       "P3-05",
@@ -5971,11 +6185,9 @@
       "P3-12",
       "P3-13",
       "P3-14",
-      "P3-17",
-      "E4-06"
+      "P3-17"
     ],
     "backend/memory/lessons.py": [
-      "P3-05",
       "E1-03",
       "E2-06",
       "E4-01",
@@ -5985,13 +6197,10 @@
       "E4-05",
       "E4-06",
       "E4-07",
-      "E7-04"
+      "E7-04",
+      "P3-05"
     ],
     "backend/models.py": [
-      "B1-01",
-      "B2-01",
-      "B3-01",
-      "B4-02",
       "A1-01",
       "A1-05",
       "A1-07",
@@ -6001,13 +6210,10 @@
       "A3-04",
       "A3-06",
       "A4-03",
-      "P1-02",
-      "P2-04",
-      "P2-05",
-      "P2-07",
-      "S1-01",
-      "S1-05",
-      "S1-06",
+      "B1-01",
+      "B2-01",
+      "B3-01",
+      "B4-02",
       "E1-02",
       "E1-04",
       "E2-02",
@@ -6027,38 +6233,48 @@
       "E7-04",
       "E7-05",
       "E8-03",
-      "E8-05"
+      "E8-05",
+      "P1-02",
+      "P2-04",
+      "P2-05",
+      "P2-07",
+      "S1-01",
+      "S1-05",
+      "S1-06"
     ],
     "backend/operations.py": [
       "B3-06",
       "B4-04",
       "B4-05",
-      "P2-07",
       "E1-08",
       "E2-07",
-      "E3-07"
+      "E3-07",
+      "P2-07"
     ],
     "backend/outcomes.py": [
       "B3-04",
-      "P1-14",
-      "P3-02",
-      "P3-07",
-      "P3-16",
-      "P3-19",
       "E1-01",
       "E2-01",
       "E2-02",
       "E2-03",
       "E2-05",
       "E2-06",
-      "E2-07"
+      "E2-07",
+      "P1-14",
+      "P3-02",
+      "P3-07",
+      "P3-16",
+      "P3-19"
     ],
     "backend/plans.py": [
+      "A3-02",
+      "A3-08",
       "B2-03",
       "B2-04",
       "B3-05",
-      "A3-02",
-      "A3-08",
+      "E2-01",
+      "E7-06",
+      "E8-02",
       "P1-12",
       "P2-01",
       "P2-02",
@@ -6066,10 +6282,7 @@
       "P2-04",
       "P2-05",
       "P2-07",
-      "P3-02",
-      "E2-01",
-      "E7-06",
-      "E8-02"
+      "P3-02"
     ],
     "backend/policy/registry.py": [
       "E6-01",
@@ -6086,7 +6299,6 @@
       "E6-08"
     ],
     "backend/probes/gateway.py": [
-      "B4-03",
       "A1-02",
       "A1-05",
       "A1-06",
@@ -6105,10 +6317,11 @@
       "A3-06",
       "A3-08",
       "A4-02",
+      "B4-03",
+      "E7-06",
       "P1-04",
       "P1-06",
-      "P3-02",
-      "E7-06"
+      "P3-02"
     ],
     "backend/routers/operations.py": [
       "B4-05",
@@ -6137,17 +6350,17 @@
       "B4-01",
       "B4-02",
       "B4-06",
-      "P1-01",
       "E6-03",
       "E6-06",
-      "E6-07"
+      "E6-07",
+      "P1-01"
     ],
     "backend/telemetry.py": [
       "A3-08",
+      "E2-07",
       "P1-16",
       "P3-07",
-      "P3-15",
-      "E2-07"
+      "P3-15"
     ],
     "backend/trace_identity.py": [
       "P3-07"
@@ -6224,11 +6437,11 @@
       "P2-07"
     ],
     "backend/workflows/activities.py": [
+      "A1-09",
+      "A3-07",
       "B1-04",
       "B1-05",
       "B1-07",
-      "A1-09",
-      "A3-07",
       "E2-01",
       "E4-04",
       "E6-03",
@@ -6240,9 +6453,6 @@
       "B4-04"
     ],
     "backend/workflows/incident.py": [
-      "B1-04",
-      "B1-05",
-      "B1-06",
       "A1-02",
       "A1-03",
       "A1-06",
@@ -6251,11 +6461,14 @@
       "A3-07",
       "A4-01",
       "A4-05",
-      "P2-04",
+      "B1-04",
+      "B1-05",
+      "B1-06",
       "E7-01",
       "E7-02",
       "E7-03",
-      "E7-07"
+      "E7-07",
+      "P2-04"
     ],
     "backend/workflows/replay_archive.py": [
       "B1-06"
@@ -6269,15 +6482,15 @@
       "B2-07",
       "B3-07",
       "B4-07",
-      "P1-17",
-      "P2-08",
-      "S1-08",
       "E1-09",
       "E2-08",
       "E5-08",
       "E6-08",
       "E8-05",
-      "E8-07"
+      "E8-07",
+      "P1-17",
+      "P2-08",
+      "S1-08"
     ],
     "frontend/src/InvestigationPanel.tsx": [
       "A4-04",
@@ -6406,8 +6619,8 @@
       "P3-18"
     ],
     "migrations/versions/0046_experience_edge.py": [
-      "P3-04",
-      "E1-05"
+      "E1-05",
+      "P3-04"
     ],
     "migrations/versions/0047_review_attribution.py": [
       "E2-05",
@@ -6437,11 +6650,11 @@
       "E3-04"
     ],
     "migrations/versions/0053_eval_canary_adapters.py": [
-      "S1-01",
-      "S1-06",
       "E4-02",
       "E5-06",
-      "E8-05"
+      "E8-05",
+      "S1-01",
+      "S1-06"
     ],
     "migrations/versions/0054_evidence_lifecycle.py": [
       "A3-08"
@@ -6453,9 +6666,9 @@
       "E1-09"
     ],
     "scripts/projector_grants.sql": [
-      "P3-04",
       "E1-05",
-      "E1-09"
+      "E1-09",
+      "P3-04"
     ],
     "tests/test_activity_timing.py": [
       "B1-07",
@@ -6484,21 +6697,24 @@
       "E7-05"
     ],
     "tests/test_api_authorization_matrix.py": [
-      "B2-04",
-      "B2-05",
       "A1-08",
       "A2-02",
       "A2-07",
-      "P1-12",
-      "P3-16",
-      "S1-05",
+      "B2-04",
+      "B2-05",
       "E3-07",
       "E5-07",
       "E7-07",
       "E8-03",
-      "E8-05"
+      "E8-05",
+      "P1-12",
+      "P3-16",
+      "S1-05"
     ],
     "tests/test_api_contract.py": [
+      "A1-08",
+      "A3-05",
+      "A4-05",
       "B1-01",
       "B1-05",
       "B2-04",
@@ -6506,9 +6722,6 @@
       "B3-03",
       "B3-06",
       "B4-01",
-      "A1-08",
-      "A3-05",
-      "A4-05",
       "P1-03",
       "P2-01",
       "P2-02",
@@ -6550,8 +6763,8 @@
       "E1-04"
     ],
     "tests/test_experience_edge_migration.py": [
-      "P3-04",
-      "E1-05"
+      "E1-05",
+      "P3-04"
     ],
     "tests/test_experience_projector.py": [
       "E1-01",
@@ -6574,13 +6787,13 @@
       "E8-06"
     ],
     "tests/test_failure_proposals.py": [
-      "P3-05",
       "E3-01",
       "E3-02",
       "E3-04",
       "E3-05",
       "E3-06",
-      "E3-07"
+      "E3-07",
+      "P3-05"
     ],
     "tests/test_failure_reviews.py": [
       "E3-03",
@@ -6616,15 +6829,15 @@
       "E4-04"
     ],
     "tests/test_lessons.py": [
-      "P3-05",
-      "P3-13",
       "E4-01",
       "E4-02",
       "E4-03",
       "E4-04",
       "E4-05",
       "E4-06",
-      "E4-07"
+      "E4-07",
+      "P3-05",
+      "P3-13"
     ],
     "tests/test_lineage.py": [
       "A3-05",
@@ -6646,10 +6859,10 @@
       "P3-19"
     ],
     "tests/test_lineage_projection.py": [
+      "E4-06",
       "P3-02",
       "P3-12",
-      "P3-13",
-      "E4-06"
+      "P3-13"
     ],
     "tests/test_lineage_recovery.py": [
       "P3-14"
@@ -6665,29 +6878,26 @@
       "P1-15"
     ],
     "tests/test_model_advisory.py": [
-      "B4-03",
       "A1-04",
       "A1-06",
       "A1-07",
       "A1-09",
       "A3-04",
       "A4-04",
+      "B4-03",
       "E7-03"
     ],
     "tests/test_oidc_auth.py": [
       "A2-08",
-      "P2-02",
-      "P2-08",
       "E2-05",
-      "E3-03"
+      "E3-03",
+      "P2-02",
+      "P2-08"
     ],
     "tests/test_operations_router.py": [
       "B4-05"
     ],
     "tests/test_outcomes.py": [
-      "P1-14",
-      "P3-16",
-      "P3-19",
       "E2-01",
       "E2-02",
       "E2-03",
@@ -6695,7 +6905,10 @@
       "E2-05",
       "E2-06",
       "E2-07",
-      "E6-05"
+      "E6-05",
+      "P1-14",
+      "P3-16",
+      "P3-19"
     ],
     "tests/test_paired_replay.py": [
       "S1-01",
@@ -6707,17 +6920,23 @@
       "S1-07"
     ],
     "tests/test_pg_projector_role.py": [
-      "P3-04",
-      "P3-14",
       "E1-02",
       "E1-04",
-      "E1-05"
+      "E1-05",
+      "P3-04",
+      "P3-14"
     ],
     "tests/test_pg_restore_sentinel.py": [
       "B1-08",
       "B3-07"
     ],
     "tests/test_pg_temporal_e2e.py": [
+      "A1-02",
+      "A1-05",
+      "A2-01",
+      "A2-04",
+      "A2-06",
+      "A3-01",
       "B1-01",
       "B1-02",
       "B1-03",
@@ -6732,20 +6951,6 @@
       "B3-05",
       "B4-02",
       "B4-03",
-      "A1-02",
-      "A1-05",
-      "A2-01",
-      "A2-04",
-      "A2-06",
-      "A3-01",
-      "P1-02",
-      "P1-12",
-      "P1-14",
-      "P2-02",
-      "P2-04",
-      "P2-05",
-      "P2-07",
-      "P3-16",
       "E1-01",
       "E1-03",
       "E2-01",
@@ -6759,7 +6964,15 @@
       "E4-05",
       "E6-03",
       "E8-01",
-      "E8-02"
+      "E8-02",
+      "P1-02",
+      "P1-12",
+      "P1-14",
+      "P2-02",
+      "P2-04",
+      "P2-05",
+      "P2-07",
+      "P3-16"
     ],
     "tests/test_pg_two_worker_failover.py": [
       "B1-06",
@@ -6768,13 +6981,13 @@
     "tests/test_plans.py": [
       "A3-02",
       "A3-08",
+      "E7-06",
       "P2-01",
       "P2-02",
       "P2-03",
       "P2-05",
       "P2-06",
-      "P2-07",
-      "E7-06"
+      "P2-07"
     ],
     "tests/test_policy_drafts.py": [
       "E3-06",
@@ -6791,7 +7004,6 @@
       "E5-04"
     ],
     "tests/test_probes.py": [
-      "B4-03",
       "A1-01",
       "A1-02",
       "A1-03",
@@ -6812,9 +7024,10 @@
       "A3-06",
       "A3-08",
       "A4-02",
+      "B4-03",
+      "E7-06",
       "P1-04",
-      "P1-06",
-      "E7-06"
+      "P1-06"
     ],
     "tests/test_projection_redrive.py": [
       "E1-04"
@@ -6826,10 +7039,10 @@
       "B4-04",
       "B4-05",
       "B4-06",
-      "P2-07",
       "E1-08",
       "E2-07",
-      "E3-07"
+      "E3-07",
+      "P2-07"
     ],
     "tests/test_reconciler.py": [
       "B1-07",
@@ -6891,16 +7104,16 @@
     "tests/test_state_age.py": [
       "B3-06",
       "B4-05",
-      "P2-07",
-      "E1-08"
+      "E1-08",
+      "P2-07"
     ],
     "tests/test_temporal_dispatch_recovery.py": [
       "B1-03"
     ],
     "tests/test_temporal_history_replay.py": [
-      "B1-06",
       "A1-07",
       "A3-07",
+      "B1-06",
       "E7-01"
     ],
     "tests/test_temporal_signal_idempotency.py": [
@@ -6913,9 +7126,9 @@
       "B1-06"
     ],
     "tests/test_temporal_workflow.py": [
+      "A3-07",
       "B1-04",
       "B1-05",
-      "A3-07",
       "E7-02"
     ],
     "tests/test_tenant_consent.py": [
@@ -6928,12 +7141,12 @@
       "P3-07"
     ],
     "tests/test_trace_refs.py": [
+      "E2-07",
       "P3-07",
       "P3-08",
       "P3-10",
       "P3-15",
-      "P3-17",
-      "E2-07"
+      "P3-17"
     ],
     "tests/test_ui_events.py": [
       "P1-01",
