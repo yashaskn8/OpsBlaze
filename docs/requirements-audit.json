@@ -16,9 +16,9 @@
     "EXTERNALLY BLOCKED": 17,
     "IMPLEMENTED BUT DISCONNECTED": 1,
     "LOCALLY UNVERIFIED": 3,
-    "NOT IMPLEMENTED": 9,
-    "PARTIALLY IMPLEMENTED": 49,
-    "VERIFIED WORKING": 97
+    "NOT IMPLEMENTED": 8,
+    "PARTIALLY IMPLEMENTED": 47,
+    "VERIFIED WORKING": 100
   },
   "verification": {
     "native_postgresql": {
@@ -149,6 +149,13 @@
     },
     "p3_lineage_parity_details_diagnostics": {
       "focused_backend_tests_passed": 52,
+      "ruff": "PASS",
+      "bandit": "PASS",
+      "frontend_node_tests_passed": 15,
+      "typescript_vite_build": "PASS"
+    },
+    "p2_approval_monitoring_and_b2_reservations": {
+      "focused_backend_tests_passed": 95,
       "ruff": "PASS",
       "bandit": "PASS",
       "frontend_node_tests_passed": 15,
@@ -733,7 +740,7 @@
         {
           "id": "B2-05",
           "requirement": "Provide an authorized reservation status read view.",
-          "status": "NOT IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
             "backend/effects/reservations.py"
@@ -741,20 +748,24 @@
           "consumers": [
             "No GET /v1/targets/{id}/reservation runtime registration found"
           ],
-          "tests": [],
-          "evidence": "Route registry has a simulator target read at a different endpoint without reservation status.",
+          "tests": [
+            "tests/test_simulator_effects.py",
+            "tests/test_api_authorization_matrix.py"
+          ],
+          "evidence": "Implemented tenant-scoped read-only GET /v1/reservations (bounded pagination limit<=50) and GET /v1/reservations/{target_id} exposing redacted reservation metadata, effective state (RESERVED/EXPIRED/RELEASED), lease remaining seconds, and latest fence; verified authentication, cross-tenant 404 isolation, and pagination limits.",
           "dependencies": [
             "P2"
           ],
           "defects": [],
-          "remaining": "Implement a tenant-scoped read-only status view once its redaction contract is defined."
+          "remaining": "Real external adapter reservation mirroring remains tracked under G2."
         },
         {
           "id": "B2-06",
           "requirement": "Project explicit reservation state release or expiration and measure contention.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/effects/reservations.py",
+            "backend/effects/gateway.py",
             "backend/adapters/simulator.py"
           ],
           "consumers": [
@@ -764,14 +775,14 @@
             "tests/test_pg_temporal_e2e.py",
             "tests/test_simulator_effects.py"
           ],
-          "evidence": "Successful simulator apply sets RELEASED in its transaction. Expiry is enforced at permit use and replacement advances the epoch. No proactive expiry sweeper or measured reservation wait p95 was supplied.",
+          "evidence": "Added explicit release_simulator_reservation (invoked on confirmed refusal/failure, never on UNKNOWN) and bounded expire_stale_reservations projection preserving monotonic fences, plus read-time effective EXPIRED projection and 8-way concurrent contention verification (1 winner, 7 ReservationBusy).",
           "dependencies": [
             "B3",
             "B4",
             "G3"
           ],
           "defects": [],
-          "remaining": "Verify explicit lifecycle reconciliation semantics and measure lock wait before changing the native path."
+          "remaining": "Multi-host clock-skew and external provider fencing remain tracked under G2 and G3."
         },
         {
           "id": "B2-07",
@@ -2627,11 +2638,14 @@
         {
           "id": "P2-07",
           "requirement": "Expose approval lifecycle state and attributes, including pending and expired views",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/models.py",
             "backend/plans.py",
+            "backend/operations.py",
+            "backend/workers/state_age.py",
             "backend/api.py",
+            "frontend/src/api.ts",
             "frontend/src/main.tsx"
           ],
           "consumers": [
@@ -2640,16 +2654,18 @@
           "tests": [
             "tests/test_api_contract.py",
             "tests/test_plans.py",
+            "tests/test_queue_metrics.py",
+            "tests/test_state_age.py",
             "tests/test_pg_temporal_e2e.py"
           ],
-          "evidence": "The scoped preview shows pending since the workflow entered review and projects expiry without changing the original vote. Chrome observed pending, approved and automatic expiry against FastAPI. The native PostgreSQL and Temporal workflow observed pending, approved and consumed.",
+          "evidence": "Authoritative tenant-scoped pending approval counts, oldest pending age, exact nearest-rank p95 age, and aged pending approval alerts added to queue_health (/v1/operations/queues), state_age monitor logs, and React Queue health panel; verified with tenant isolation, decision clearance, and existing preview/expiry lifecycle tests.",
           "dependencies": [
             "P1",
             "G6"
           ],
           "defects": [],
-          "remaining": "Implement pending-age monitoring across the review queue.",
-          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "remaining": "Multi-host production SLA alerting remains tracked under G6.",
+          "ci_status": "LOCAL_VERIFIED_PENDING_PUSH",
           "commit": "2dbc46a708f6f8291b854f6a9a28cc4803e8b38a"
         },
         {
@@ -5111,6 +5127,7 @@
     ],
     "backend/effects/gateway.py": [
       "B2-03",
+      "B2-06",
       "B3-01",
       "B3-02",
       "B3-03",
@@ -5339,7 +5356,8 @@
     "backend/operations.py": [
       "B3-06",
       "B4-04",
-      "B4-05"
+      "B4-05",
+      "P2-07"
     ],
     "backend/outcomes.py": [
       "B3-04",
@@ -5515,7 +5533,8 @@
     ],
     "backend/workers/state_age.py": [
       "B3-06",
-      "B4-05"
+      "B4-05",
+      "P2-07"
     ],
     "backend/workflows/activities.py": [
       "A1-09",
@@ -5583,6 +5602,7 @@
     "frontend/src/api.ts": [
       "P2-01",
       "P2-06",
+      "P2-07",
       "P3-16",
       "P3-17",
       "P3-19"
@@ -5742,6 +5762,7 @@
     "tests/test_api_authorization_matrix.py": [
       "A2-07",
       "B2-04",
+      "B2-05",
       "E3-07",
       "E5-07",
       "E8-03",
@@ -6048,7 +6069,8 @@
       "B4-01",
       "B4-04",
       "B4-05",
-      "E1-08"
+      "E1-08",
+      "P2-07"
     ],
     "tests/test_reconciler.py": [
       "B1-07"
@@ -6090,6 +6112,7 @@
       "B2-01",
       "B2-02",
       "B2-03",
+      "B2-05",
       "B2-06",
       "B3-01",
       "B3-02",
@@ -6102,7 +6125,8 @@
     "tests/test_state_age.py": [
       "B3-06",
       "B4-05",
-      "E1-08"
+      "E1-08",
+      "P2-07"
     ],
     "tests/test_temporal_dispatch_recovery.py": [
       "B1-03"

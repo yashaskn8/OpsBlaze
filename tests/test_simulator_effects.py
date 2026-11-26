@@ -643,3 +643,105 @@ async def test_direct_dispatch_refuses_legacy_receipt_without_permit_binding(lab
     async with sessions() as session:
         row = await session.get(EffectReceipt, effect_id)
         assert row.state == "PREPARED" and row.attempt_count == 0
+
+
+@pytest.mark.asyncio
+async def test_redteam_reservation_status_read_view_lifecycle_and_contention(lab):
+    """B2-05 & B2-06: authorized reservation status view, explicit release/expiry & contention."""
+    import asyncio
+    import time
+    from httpx import ASGITransport, AsyncClient
+
+    from backend.api import app
+    from backend.database import get_session
+    from backend.effects.reservations import (
+        expire_stale_reservations,
+        list_reservations,
+        read_reservation_status,
+        release_simulator_reservation,
+    )
+    from backend.models import ResourceReservation
+    from backend.settings import Settings, get_settings
+
+    sessions, incident_id, adapter = lab
+    # Seed a foreign tenant target to verify strict tenant isolation.
+    async with sessions() as session:
+        async with session.begin():
+            session.add(SimulatorTarget(tenant_id="b", target_id="secret-db", version=1, healthy=False, last_fence=0))
+            session.add(ResourceEpoch(tenant_id="b", target_id="secret-db", latest_fence=0, version_seen=1))
+    async with sessions() as session:
+        foreign_inc = await admit_incident(session, "b", "foreign-res", IncidentCreate(target_id="secret-db"))
+    await reserve_simulator_target(sessions, "b", "secret-db", foreign_inc.id, "f" * 64)
+
+    # Measure bounded concurrent contention across 8 competing incidents on the same target.
+    competitors = [uuid4() for _ in range(8)]
+    t0 = time.perf_counter()
+    results = await asyncio.gather(
+        *(
+            reserve_simulator_target(sessions, "a", "checkout", cid, f"{i:064x}")
+            for i, cid in enumerate(competitors)
+        ),
+        return_exceptions=True,
+    )
+    contention_ms = (time.perf_counter() - t0) * 1000
+    winners = [r for r in results if isinstance(r, Permit)]
+    busy = [r for r in results if isinstance(r, ReservationBusy)]
+    assert len(winners) == 1
+    assert len(busy) == 7
+    assert contention_ms < 5000
+    winner = winners[0]
+
+    # Verify authorized read API and strict cross-tenant isolation.
+    async def override_session():
+        async with sessions() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(local_token="res-token")
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            own = {"X-Tenant-Id": "a", "X-OpsBlaze-Token": "res-token"}
+            unauth = {"X-Tenant-Id": "a", "X-OpsBlaze-Token": "wrong"}
+            assert (await client.get("/v1/reservations", headers=unauth)).status_code == 401
+            listing = await client.get("/v1/reservations", headers=own)
+            assert listing.status_code == 200
+            body = listing.json()
+            assert len(body["reservations"]) == 1
+            assert body["reservations"][0]["target_id"] == "checkout"
+            assert body["reservations"][0]["effective_state"] == "RESERVED"
+            assert body["reservations"][0]["fence"] == winner.fence
+            assert "secret-db" not in listing.text
+
+            single = await client.get("/v1/reservations/checkout", headers=own)
+            assert single.status_code == 200
+            assert single.json()["holder_incident_id"] == str(winner.incident_id)
+            assert (await client.get("/v1/reservations/secret-db", headers=own)).status_code == 404
+            assert (await client.get("/v1/reservations?limit=51", headers=own)).status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+
+    # Expired projection without mutating fence, followed by durable expiry sweep.
+    future = winner.expires_at + timedelta(seconds=5)
+    async with sessions() as session:
+        projected = await read_reservation_status(session, "a", "checkout", now=future)
+        assert projected["stored_state"] == "RESERVED"
+        assert projected["effective_state"] == "EXPIRED"
+        assert projected["expired"] is True
+        assert projected["lease_remaining_seconds"] == 0
+    assert await expire_stale_reservations(sessions, now=future) >= 1
+    async with sessions() as session:
+        row = await session.get(ResourceReservation, ("a", "checkout"))
+        assert row.state == "EXPIRED"
+        assert row.fence == winner.fence
+
+    # New reservation gets a strictly higher monotonic fence, and explicit release marks RELEASED.
+    second = await reserve_simulator_target(sessions, "a", "checkout", incident_id, "e" * 64)
+    assert second.fence > winner.fence
+    assert await release_simulator_reservation(sessions, "a", "checkout", incident_id, second.fence) is True
+    async with sessions() as session:
+        released = await read_reservation_status(session, "a", "checkout")
+        assert released["stored_state"] == "RELEASED"
+        assert released["effective_state"] == "RELEASED"
+        assert released["latest_fence"] == second.fence
+        listed = await list_reservations(session, "a")
+        assert listed["reservations"][0]["effective_state"] == "RELEASED"

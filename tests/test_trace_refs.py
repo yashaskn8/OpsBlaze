@@ -131,8 +131,10 @@ async def test_collector_outage_and_recovery_keep_authoritative_lineage_usable(
     from http.server import BaseHTTPRequestHandler, HTTPServer
     import socket
     import threading
+    import urllib.error
+    import urllib.request
 
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
     # Reserve a loopback port, then close it so the collector is definitively absent.
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -140,8 +142,22 @@ async def test_collector_outage_and_recovery_keep_authoritative_lineage_usable(
         port = probe.getsockname()[1]
 
     endpoint = f"http://127.0.0.1:{port}/v1/traces"
+
+    class LoopbackHTTPExporter(SpanExporter):
+        def export(self, spans):
+            payload = ",".join(f"{s.context.trace_id:032x}" for s in spans).encode("utf-8")
+            req = urllib.request.Request(endpoint, data=payload, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=0.3) as resp:  # nosec B310
+                    return SpanExportResult.SUCCESS if resp.status == 200 else SpanExportResult.FAILURE
+            except (urllib.error.URLError, TimeoutError, OSError):
+                return SpanExportResult.FAILURE
+
+        def shutdown(self):
+            return None
+
     provider = TracerProvider()
-    exporter = OTLPSpanExporter(endpoint=endpoint, timeout=0.3)
+    exporter = LoopbackHTTPExporter()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     monkeypatch.setattr("backend.telemetry.TRACER", provider.get_tracer("outage-test"))
 

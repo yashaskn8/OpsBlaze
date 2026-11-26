@@ -944,6 +944,34 @@ async def incident_lineage_record_detail(
     return record
 
 
+@app.get("/v1/reservations")
+async def reservations_list(
+    cursor: str | None = Query(default=None, min_length=1, max_length=256),
+    limit: int = Query(default=50, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.effects.reservations import list_reservations
+
+    return await list_reservations(session, tenant_id, cursor=cursor, limit=limit)
+
+
+@app.get("/v1/reservations/{target_id}")
+async def reservation_status(
+    target_id: str,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.effects.reservations import read_reservation_status
+
+    if not 1 <= len(target_id) <= 256:
+        raise HTTPException(422, "invalid target identifier")
+    status = await read_reservation_status(session, tenant_id, target_id)
+    if status is None:
+        raise HTTPException(404, "reservation not found")
+    return status
+
+
 @app.get("/v1/incidents/{incident_id}/traces/{trace_id}")
 async def incident_trace(
     incident_id: UUID,

@@ -9,6 +9,7 @@ from backend.adapters.simulator import (
     EffectIdentityConflict, Permit, SimulatorAdapter, StaleFence, TargetVersionConflict,
     observed_healthy_at_version, permit_digest, utc,
 )
+from backend.effects.reservations import release_simulator_reservation
 from backend.models import ApprovalGrant, EffectReceipt, IncidentPlan, RevokedIdentity
 from backend.lineage_projection import replace_record_edges
 
@@ -390,6 +391,9 @@ async def execute_simulator_effect(
             except EffectConflict:
                 # A competing worker may have dispatched in the meantime.
                 return await reconcile_effect(sessions, adapter, effect_id)
+            await release_simulator_reservation(
+                sessions, permit.tenant_id, permit.target_id, permit.incident_id, permit.fence,
+            )
             return "NEEDS_REVIEW"
         # Another worker already sent or completed the exact effect.
         # Status-only reconciliation is safe even after a lost reply.
@@ -404,6 +408,9 @@ async def execute_simulator_effect(
         return "NEEDS_REVIEW"
     except (StaleFence, TargetVersionConflict):
         await set_state(sessions, effect_id, "FAILED")
+        await release_simulator_reservation(
+            sessions, permit.tenant_id, permit.target_id, permit.incident_id, permit.fence,
+        )
         return "FAILED"
 
     try:

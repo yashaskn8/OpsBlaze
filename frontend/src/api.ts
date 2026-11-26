@@ -39,6 +39,10 @@ export type QueueHealth = {
   active_incidents: number;
   unresolved_effects: number;
   aged_unresolved_effects: number;
+  pending_approvals: number;
+  aged_pending_approvals: number;
+  oldest_pending_approval_seconds: number;
+  pending_approval_age_p95_seconds: number;
   oldest_pending_seconds: number;
   oldest_active_phase_seconds: number;
   pending_age_p95_seconds: number;

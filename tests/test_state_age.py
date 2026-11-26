@@ -107,3 +107,45 @@ async def test_redteam_stuck_monitor_never_reports_100_as_the_total_of_101(
     assert await scan_stuck() == 101
     assert "incidents=1 outbox=0" in caplog.text
     assert caplog.text.count("Incident exceeded phase-age threshold") == 100
+
+
+@pytest.mark.asyncio
+async def test_pending_approval_queue_age_is_logged_and_cleared_on_decision(
+    sessions_fixture, monkeypatch, caplog,
+):
+    from uuid import uuid4
+    from backend.models import IncidentPlan
+
+    monkeypatch.setattr("backend.workers.state_age.get_session_maker", lambda: sessions_fixture)
+    monkeypatch.setattr(
+        "backend.workers.state_age.get_settings", lambda: Settings(stuck_after_seconds=300),
+    )
+    old = datetime.now(timezone.utc) - timedelta(minutes=20)
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "t", "aged-approval", IncidentCreate(target_id="checkout"),
+        )
+    plan_id = uuid4()
+    async with sessions_fixture() as session:
+        async with session.begin():
+            row = await session.get(Incident, incident.id)
+            row.status_projection = "AWAITING_APPROVAL"
+            row.phase_entered_at = old
+            session.add(IncidentPlan(
+                id=plan_id, tenant_id="t", incident_id=incident.id, target_id="checkout",
+                action_id="SIMULATOR_MARK_HEALTHY", plan_digest="a" * 64,
+                expected_version=1, evidence_ids=[], status="PROPOSED", version=1,
+            ))
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        assert await scan_stuck() == 1
+    assert f"Pending approval exceeded age threshold: plan_id={plan_id}" in caplog.text
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            plan = await session.get(IncidentPlan, plan_id)
+            plan.status = "APPROVED"
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        await scan_stuck()
+    assert "Pending approval exceeded age threshold" not in caplog.text

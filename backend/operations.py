@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.adapters.simulator import utc
-from backend.models import EffectReceipt, Incident, OutboxEntry
+from backend.models import EffectReceipt, Incident, IncidentPlan, OutboxEntry
 from backend.lifecycle import ACTIVE_STATES, UNRESOLVED_EFFECT_STATES
 
 
@@ -65,6 +65,16 @@ async def queue_health(
             EffectReceipt.state.in_(UNRESOLVED_EFFECT_STATES),
         )
     )
+    pending_approvals_q = (
+        select(Incident.phase_entered_at, IncidentPlan.id)
+        .join(IncidentPlan, IncidentPlan.incident_id == Incident.id)
+        .where(
+            Incident.tenant_id == tenant_id,
+            IncidentPlan.tenant_id == tenant_id,
+            Incident.status_projection == "AWAITING_APPROVAL",
+            IncidentPlan.status == "PROPOSED",
+        )
+    )
 
     pending_count = int((await session.scalar(
         select(func.count()).select_from(pending.subquery())
@@ -78,12 +88,18 @@ async def queue_health(
     unresolved_count = int((await session.scalar(
         select(func.count()).select_from(unresolved.subquery())
     )) or 0)
+    pending_approval_count = int((await session.scalar(
+        select(func.count()).select_from(pending_approvals_q.subquery())
+    )) or 0)
 
     oldest_pending = await session.scalar(
         pending.with_only_columns(func.min(OutboxEntry.created_at))
     )
     oldest_active = await session.scalar(
         active.with_only_columns(func.min(Incident.phase_entered_at))
+    )
+    oldest_pending_approval = await session.scalar(
+        pending_approvals_q.with_only_columns(func.min(Incident.phase_entered_at))
     )
     aged_pending = int((await session.scalar(
         select(func.count()).select_from(
@@ -100,6 +116,11 @@ async def queue_health(
             unresolved.where(EffectReceipt.updated_at < cutoff).subquery()
         )
     )) or 0)
+    aged_pending_approvals = int((await session.scalar(
+        select(func.count()).select_from(
+            pending_approvals_q.where(Incident.phase_entered_at < cutoff).subquery()
+        )
+    )) or 0)
     max_attempt = await session.scalar(
         pending.with_only_columns(func.max(OutboxEntry.attempt))
     )
@@ -114,6 +135,13 @@ async def queue_health(
             .order_by(OutboxEntry.created_at.desc(), OutboxEntry.id.desc())
             .offset(math.ceil(0.95 * pending_count) - 1).limit(1)
         )
+    p95_approval_entered = None
+    if pending_approval_count:
+        p95_approval_entered = await session.scalar(
+            pending_approvals_q.with_only_columns(Incident.phase_entered_at)
+            .order_by(Incident.phase_entered_at.desc(), IncidentPlan.id.desc())
+            .offset(math.ceil(0.95 * pending_approval_count) - 1).limit(1)
+        )
 
     return {
         "pending_outbox": pending_count,
@@ -121,6 +149,10 @@ async def queue_health(
         "active_incidents": active_count,
         "unresolved_effects": unresolved_count,
         "aged_unresolved_effects": aged_unresolved,
+        "pending_approvals": pending_approval_count,
+        "aged_pending_approvals": aged_pending_approvals,
+        "oldest_pending_approval_seconds": elapsed_seconds(observed, oldest_pending_approval),
+        "pending_approval_age_p95_seconds": elapsed_seconds(observed, p95_approval_entered),
         "oldest_pending_seconds": elapsed_seconds(observed, oldest_pending),
         "oldest_active_phase_seconds": elapsed_seconds(observed, oldest_active),
         "pending_age_p95_seconds": elapsed_seconds(observed, p95_created),

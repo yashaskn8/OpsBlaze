@@ -62,6 +62,10 @@ async def test_redteam_queue_health_exact_p95_and_tenant_scope(sessions_fixture)
             "active_incidents": 5,
             "unresolved_effects": 0,
             "aged_unresolved_effects": 0,
+            "pending_approvals": 0,
+            "aged_pending_approvals": 0,
+            "oldest_pending_approval_seconds": 0,
+            "pending_approval_age_p95_seconds": 0,
             "oldest_pending_seconds": 3000,
             "oldest_active_phase_seconds": 3000,
             "pending_age_p95_seconds": 3000,
@@ -267,3 +271,69 @@ async def test_redteam_queue_ignores_forged_tenant_tag_on_foreign_effect(
         assert alpha["aged_unresolved_effects"] == 0
         assert beta["unresolved_effects"] == 0
         assert beta["aged_unresolved_effects"] == 0
+
+
+@pytest.mark.asyncio
+async def test_redteam_pending_approval_queue_age_and_tenant_scope(sessions_fixture):
+    """P2-07: authoritative pending approval queue counts, exact p95, and tenant isolation."""
+    from backend.models import IncidentPlan
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    alpha_ids = []
+    for index in range(3):
+        async with sessions_fixture() as session:
+            inc = await admit_incident(
+                session, "alpha", f"pend-app-{index}", IncidentCreate(target_id="checkout"),
+            )
+            alpha_ids.append(inc.id)
+    async with sessions_fixture() as session:
+        foreign = await admit_incident(
+            session, "beta", "foreign-app", IncidentCreate(target_id="private"),
+        )
+
+    async with sessions_fixture() as session:
+        async with session.begin():
+            ages = [120, 600, 1800]
+            for incident_id, age_sec in zip(alpha_ids, ages):
+                row = await session.get(Incident, incident_id)
+                row.status_projection = "AWAITING_APPROVAL"
+                row.phase_entered_at = now - timedelta(seconds=age_sec)
+                session.add(IncidentPlan(
+                    id=uuid4(), tenant_id="alpha", incident_id=incident_id,
+                    target_id="checkout", action_id="SIMULATOR_MARK_HEALTHY",
+                    plan_digest="a" * 64, expected_version=1, evidence_ids=[],
+                    status="PROPOSED", version=1,
+                ))
+            beta_row = await session.get(Incident, foreign.id)
+            beta_row.status_projection = "AWAITING_APPROVAL"
+            beta_row.phase_entered_at = now - timedelta(days=3)
+            session.add(IncidentPlan(
+                id=uuid4(), tenant_id="beta", incident_id=foreign.id,
+                target_id="private", action_id="SIMULATOR_MARK_HEALTHY",
+                plan_digest="b" * 64, expected_version=1, evidence_ids=[],
+                status="PROPOSED", version=1,
+            ))
+
+    async with sessions_fixture() as session:
+        alpha = await queue_health(session, "alpha", 300, now)
+        beta = await queue_health(session, "beta", 300, now)
+        assert alpha["pending_approvals"] == 3
+        assert alpha["aged_pending_approvals"] == 2
+        assert alpha["oldest_pending_approval_seconds"] == 1800
+        assert alpha["pending_approval_age_p95_seconds"] == 1800
+        assert beta["pending_approvals"] == 1
+        assert beta["aged_pending_approvals"] == 1
+        assert beta["oldest_pending_approval_seconds"] == 3 * 86400
+
+    # Once decided, a plan leaves the pending approval queue immediately.
+    async with sessions_fixture() as session:
+        async with session.begin():
+            plan = await session.scalar(
+                select(IncidentPlan).where(IncidentPlan.incident_id == alpha_ids[2])
+            )
+            plan.status = "APPROVED"
+    async with sessions_fixture() as session:
+        alpha_after = await queue_health(session, "alpha", 300, now)
+        assert alpha_after["pending_approvals"] == 2
+        assert alpha_after["aged_pending_approvals"] == 1
+        assert alpha_after["oldest_pending_approval_seconds"] == 600

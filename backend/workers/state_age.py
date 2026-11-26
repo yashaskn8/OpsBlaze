@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 
 from backend.database import get_session_maker
-from backend.models import EffectReceipt, Incident, OutboxEntry
+from backend.models import EffectReceipt, Incident, IncidentPlan, OutboxEntry
 from backend.lifecycle import ACTIVE_STATES, UNRESOLVED_EFFECT_STATES as UNRESOLVED_EFFECT_STATES
 from backend.settings import get_settings
 from backend.telemetry import initialize_tracing
@@ -42,6 +42,19 @@ async def scan_stuck() -> int:
         effect_count = int((await session.scalar(
             select(func.count()).select_from(EffectReceipt).where(*effect_filter)
         )) or 0)
+        pending_approval_query = (
+            select(IncidentPlan.id, Incident.id.label("incident_id"))
+            .join(Incident, Incident.id == IncidentPlan.incident_id)
+            .where(
+                Incident.tenant_id == IncidentPlan.tenant_id,
+                Incident.status_projection == "AWAITING_APPROVAL",
+                IncidentPlan.status == "PROPOSED",
+                Incident.phase_entered_at < threshold,
+            )
+        )
+        approval_count = int((await session.scalar(
+            select(func.count()).select_from(pending_approval_query.subquery())
+        )) or 0)
         incidents = (await session.scalars(
             select(Incident).where(*incident_filter)
             .order_by(Incident.phase_entered_at, Incident.id)
@@ -55,6 +68,11 @@ async def scan_stuck() -> int:
         effects = (await session.scalars(
             select(EffectReceipt).where(*effect_filter)
             .order_by(EffectReceipt.updated_at, EffectReceipt.id)
+            .limit(100)
+        )).all()
+        aged_approvals = (await session.execute(
+            pending_approval_query
+            .order_by(Incident.phase_entered_at, IncidentPlan.id)
             .limit(100)
         )).all()
     for incident in incidents:
@@ -72,15 +90,21 @@ async def scan_stuck() -> int:
             "Unresolved effect exceeded age threshold: effect_id=%s state=%s attempt=%s",
             effect.id, effect.state, effect.attempt_count,
         )
+    for plan_id, incident_id in aged_approvals:
+        log.warning(
+            "Pending approval exceeded age threshold: plan_id=%s incident_id=%s",
+            plan_id, incident_id,
+        )
     if (
         incident_count > len(incidents) or intent_count > len(intents)
-        or effect_count > len(effects)
+        or effect_count > len(effects) or approval_count > len(aged_approvals)
     ):
         log.warning(
             "Additional aged items omitted from detailed logs: "
-            "incidents=%s outbox=%s effects=%s",
+            "incidents=%s outbox=%s effects=%s approvals=%s",
             incident_count - len(incidents),
             intent_count - len(intents), effect_count - len(effects),
+            approval_count - len(aged_approvals),
         )
     return incident_count + intent_count + effect_count
 
