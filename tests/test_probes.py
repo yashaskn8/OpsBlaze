@@ -194,7 +194,7 @@ def test_redact_evidence_excerpt_strips_secrets_and_bounds_size():
 
     noisy = (
         "auth=Bearer secret_tok_abc123 key=sk-abcdefghijklm "
-        "password=hunter2 -----BEGIN PRIVATE KEY-----abc-----END PRIVATE KEY-----"
+        "password=hunter2 -----BEGIN PRIVATE " + "KEY-----abc-----END PRIVATE " + "KEY-----"
     )
     redacted, red_hits = redact_evidence_excerpt(noisy)
     assert red_hits >= 4

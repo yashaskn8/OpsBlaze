@@ -60,3 +60,16 @@ source_modules =
     backend.routers
 forbidden_modules =
     backend.api
+
+[importlinter:contract:learning-eval-policy-decoupled-from-http]
+name = Learning, memory, policy, and evaluation layers never import HTTP API or Temporal workflows
+type = forbidden
+source_modules =
+    backend.evaluation
+    backend.learning
+    backend.memory
+    backend.policy
+forbidden_modules =
+    backend.api
+    backend.routers
+    backend.workflows
