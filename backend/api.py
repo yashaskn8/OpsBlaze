@@ -1288,6 +1288,58 @@ async def get_evaluation(
     return result
 
 
+@app.get("/v1/evaluations/{manifest_id}/trials")
+async def evaluation_trials_page(
+    manifest_id: UUID,
+    cursor: UUID | None = None,
+    limit: int = Query(default=25, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.evaluation.smoke import read_trials_page
+
+    page = await read_trials_page(
+        session, tenant_id, manifest_id, cursor=cursor, limit=limit,
+    )
+    if page is None:
+        raise HTTPException(404, "manifest not found")
+    return page
+
+
+class EvaluationReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["ACKNOWLEDGED", "REJECTED_FOR_PROMOTION"]
+
+
+@app.post("/v1/evaluations/{manifest_id}/review", status_code=202)
+async def review_evaluation_manifest(
+    manifest_id: UUID,
+    payload: EvaluationReviewRequest,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+    reviewer_identity: str = Depends(local_reviewer),
+) -> dict:
+    from backend.evaluation.smoke import EvaluationConflict, record_evaluation_review
+
+    expected_state = if_match.strip('"')
+    try:
+        manifest = await record_evaluation_review(
+            session, tenant_id, manifest_id, expected_state,
+            payload.decision, reviewer_identity,
+        )
+    except EvaluationConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if manifest is None:
+        raise HTTPException(404, "manifest not found")
+    return {
+        "id": str(manifest.id),
+        "state": manifest.state,
+        "reviewer_decision": manifest.reviewer_decision,
+        "promotion_eligible": False,
+    }
+
+
 @app.get("/v1/incidents/{incident_id}/lineage")
 async def incident_lineage(
     incident_id: UUID,
@@ -1531,7 +1583,92 @@ async def simulator_conformance_results(
     return {
         "run_id": str(row.id), "state": row.state,
         "code_digest": row.code_digest, "suite_version": row.suite_version,
+        "retention_seconds": row.retention_seconds,
         "results": row.results, "production_enablement": False,
+    }
+
+
+@app.get("/v1/adapters/{adapter_id}/conformance")
+async def adapter_conformance_history(
+    adapter_id: str,
+    cursor: UUID | None = None,
+    limit: int = Query(default=25, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.adapters.conformance import list_adapter_conformance_runs
+
+    if not 1 <= len(adapter_id) <= 48:
+        raise HTTPException(422, "invalid adapter identifier")
+    return await list_adapter_conformance_runs(
+        session, adapter_id, cursor=cursor, limit=limit,
+    )
+
+
+@app.post("/v1/adapters/simulator/conformance/run", status_code=201)
+async def run_simulator_conformance_suite(
+    tenant_id: str = Depends(local_tenant),
+    operator_identity: str = Depends(local_operator),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from backend.adapters.conformance import execute_suite
+
+    if settings.environment != "development":
+        raise HTTPException(403, "lab conformance suite requires development mode")
+    bind = session.bind
+    await session.rollback()
+    if bind is None:
+        raise HTTPException(503, "conformance database unavailable")
+    run = await execute_suite(async_sessionmaker(bind, expire_on_commit=False))
+    return {
+        "run_id": str(run.id),
+        "adapter_id": run.adapter_id,
+        "state": run.state,
+        "suite_version": run.suite_version,
+        "retention_seconds": run.retention_seconds,
+        "triggered_by": operator_identity[:48],
+        "production_enablement": False,
+    }
+
+
+class AdapterEnablementRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    reason: str = Field(min_length=8, max_length=256)
+
+
+@app.post("/v1/adapters/{adapter_id}/enablement", status_code=202)
+async def update_lab_adapter_enablement(
+    adapter_id: str,
+    payload: AdapterEnablementRequest,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    security_admin: str = Depends(local_security_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.adapters.conformance import set_lab_adapter_enablement
+
+    raw = if_match.strip('"')
+    if not raw.isdecimal():
+        raise HTTPException(400, "If-Match must be the adapter enablement version")
+    try:
+        row = await set_lab_adapter_enablement(
+            session, adapter_id, int(raw), payload.enabled,
+            security_admin, payload.reason,
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "adapter_id": row.adapter_id,
+        "scope": row.scope,
+        "enabled": row.enabled,
+        "version": row.version,
+        "updated_by": row.updated_by,
+        "production_enablement": False,
     }
 
 
@@ -1598,6 +1735,38 @@ async def deny_unvalidated_rollout(
         "release gate closed: independent E5 PASS, signer verification, and "
         "release-owner approval are not implemented",
     )
+
+
+class RolloutRehearsalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    incident_ids: list[UUID] = Field(min_length=1, max_length=25)
+    inject_unsafe: bool = False
+
+
+@app.post("/v1/rollouts/{rollout_id}/rehearse", status_code=202)
+async def rehearse_policy_rollout(
+    rollout_id: UUID,
+    payload: RolloutRehearsalRequest,
+    if_match: Annotated[str, Header()],
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
+) -> dict:
+    from backend.policy.registry import PolicyConflict, rehearse_simulator_canary
+
+    version = if_match.strip('"')
+    if not version.isdecimal():
+        raise HTTPException(400, "If-Match must be the rollout version")
+    try:
+        report = await rehearse_simulator_canary(
+            session, tenant_id, rollout_id, int(version),
+            payload.incident_ids, inject_unsafe=payload.inject_unsafe,
+        )
+    except PolicyConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if report is None:
+        raise HTTPException(404, "rollout not found")
+    return report
 
 
 @app.post("/v1/rollouts/{rollout_id}/{action}", status_code=202)
@@ -1771,6 +1940,57 @@ async def create_replay_experiment(
     experiment = await create_pair(session, tenant_id, payload.fixture_id, payload.seed)
     return {"id": str(experiment.id), "status": experiment.status,
             "fixture_digest": experiment.fixture_digest}
+
+
+@app.get("/v1/experiments")
+async def list_replay_experiments(
+    cursor: UUID | None = None,
+    limit: int = Query(default=25, ge=1, le=50),
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from backend.experiments.replay import list_pairs_page
+
+    rows, next_cursor = await list_pairs_page(
+        session, tenant_id, cursor=cursor, limit=limit,
+    )
+    return {
+        "records": [
+            {
+                "id": str(row.id),
+                "fixture_id": row.fixture_id,
+                "fixture_digest": row.fixture_digest,
+                "seed": row.seed,
+                "status": row.status,
+                "workload_version": row.workload_version,
+                "evidence_policy_version": row.evidence_policy_version,
+                "invalidation_reason": row.invalidation_reason,
+            }
+            for row in rows
+        ],
+        "next_cursor": next_cursor,
+        "measured_ai_comparison": False,
+    }
+
+
+@app.post("/v1/experiments/{experiment_id}/resume", status_code=202)
+async def resume_replay_experiment(
+    experiment_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+    operator_identity: str = Depends(local_operator),
+) -> dict:
+    from backend.experiments.replay import resume_pair
+
+    experiment = await resume_pair(session, tenant_id, experiment_id)
+    if experiment is None:
+        raise HTTPException(404, "experiment not found")
+    return {
+        "id": str(experiment.id),
+        "status": experiment.status,
+        "invalidation_reason": experiment.invalidation_reason,
+        "fixture_digest": experiment.fixture_digest,
+    }
 
 
 @app.get("/v1/experiments/{experiment_id}/results")
@@ -1971,6 +2191,18 @@ async def pinned_incident_policy(
     }
 
 
+@app.get("/v1/operations/learning-health")
+async def learning_health_metrics(
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """E1-08/E2-07/E3-07 aggregate learning health with zero tenant labels."""
+    from backend.operations import learning_health
+
+    _ = tenant_id
+    return await learning_health(session)
+
+
 @app.get("/v1/operations/model-budget")
 async def tenant_model_budget(
     tenant_id: str = Depends(local_tenant),
@@ -2000,6 +2232,7 @@ async def plan_preview(
     response: Response,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     from sqlalchemy import and_, select
     from backend.adapters.simulator import utc
@@ -2050,6 +2283,7 @@ async def plan_preview(
         "evidence_ids": plan.evidence_ids, "status": plan.status,
         "version": plan.version,
         "policy_id": policy_id,
+        "policy_version": f"{policy_id}@epoch-{settings.review_epoch}" if policy_id else None,
         "postcondition": postcondition,
         "review": {
             "state": review_state,

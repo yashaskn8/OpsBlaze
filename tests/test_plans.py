@@ -560,3 +560,42 @@ async def test_effect_projection_tracks_actual_lab_dispatch_and_detects_relation
             await session.execute(delete(LineageEdge).where(LineageEdge.from_type == "effect"))
     async with sessions() as session:
         assert (await build_lineage(session, "a", incident_id))["evidence_projection"] == "STALE_OR_MISSING"
+
+
+@pytest.mark.asyncio
+async def test_plan_preview_binds_explicit_policy_version_and_assignment(proposed_lab):
+    from httpx import ASGITransport, AsyncClient
+    from backend.api import app
+    from backend.database import get_session
+    from backend.models import PolicyAssignment
+    from backend.settings import Settings, get_settings
+
+    sessions, incident_id, plan_id = proposed_lab
+
+    async def override_session():
+        async with sessions() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(local_token="plan-p2", review_epoch=3)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.get(
+                f"/v1/plans/{plan_id}",
+                headers={"X-Tenant-Id": "a", "X-OpsBlaze-Token": "plan-p2"},
+            )
+            assert res.status_code == 200
+            body = res.json()
+            assert body["policy_id"] == "simulator-lab-route-v1"
+            assert body["policy_version"] == "simulator-lab-route-v1@epoch-3"
+    finally:
+        app.dependency_overrides.clear()
+
+    # Missing or unpinned policy assignment blocks plan approval cleanly.
+    async with sessions() as session:
+        async with session.begin():
+            assignment = await session.get(PolicyAssignment, ("a", incident_id))
+            await session.delete(assignment)
+    async with sessions() as session:
+        with pytest.raises(PlanConflict, match="policy"):
+            await decide_plan(session, "a", plan_id, 1, "APPROVE")

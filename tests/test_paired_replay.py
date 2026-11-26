@@ -3,7 +3,8 @@ import pytest
 
 from backend.experiments.replay import (
     FIXTURES, FutureEvidenceDenied, ProbeBudgetExceeded,
-    Twin, create_pair, pair_report, run_arm,
+    Twin, create_pair, list_pairs_page, pair_report,
+    resume_pair, run_arm, run_paired_trials, start_pair,
 )
 
 
@@ -48,3 +49,59 @@ async def test_pair_is_reproducible_and_tenant_scoped(sessions_fixture):
         assert all(arm["outcome"] == "FAILED" for arm in result["arms"])
         assert result["arms"][0]["namespace"] != result["arms"][1]["namespace"]
         assert await pair_report(session, "other", experiment.id) is None
+
+
+@pytest.mark.asyncio
+async def test_resumable_pair_invalidation_and_distinct_arm_trials(sessions_fixture):
+    from httpx import ASGITransport, AsyncClient
+    from backend.api import app
+    from backend.database import get_session
+    from backend.settings import Settings, get_settings
+
+    # Partial pair starts with 1 arm (RUNBOOK) and resumes to COMPLETE.
+    async with sessions_fixture() as session:
+        partial = await start_pair(session, "t-s1", "already-healthy-v1", seed=9, initial_arms=1)
+        assert partial.status == "RUNNING"
+    async with sessions_fixture() as session:
+        done = await resume_pair(session, "t-s1", partial.id)
+        assert done.status == "COMPLETE"
+        report = await pair_report(session, "t-s1", partial.id)
+        by_kind = {a["kind"]: a for a in report["arms"]}
+        assert by_kind["RUNBOOK"]["probe_cost"] == 2
+        assert by_kind["ADAPTIVE_BASELINE"]["probe_cost"] == 1
+        assert by_kind["ADAPTIVE_BASELINE"]["outcome"] == "ABSTAINED"
+
+    # Leaking / premature pair is marked INVALIDATED while retaining evidence.
+    async with sessions_fixture() as session:
+        leaking = await start_pair(session, "t-s1", "recoverable-v1", seed=11, initial_arms=1)
+    async with sessions_fixture() as session:
+        invalidated = await resume_pair(session, "t-s1", leaking.id, inject_leak=True)
+        assert invalidated.status == "INVALIDATED"
+        assert invalidated.invalidation_reason == "FUTURE_EVIDENCE_OR_CONTAMINATION"
+        inv_report = await pair_report(session, "t-s1", leaking.id)
+        assert len(inv_report["arms"]) == 2
+        assert any(a["outcome"] == "INVALIDATED" for a in inv_report["arms"])
+
+    async with sessions_fixture() as session:
+        summary = await run_paired_trials(session, "t-s1", "already-healthy-v1", [1, 2, 3])
+        assert summary["trials"] == 3
+        assert summary["adaptive_probe_saved"] == 3
+        assert summary["measured_ai_comparison"] is False
+        rows, _ = await list_pairs_page(session, "t-s1", limit=10)
+        assert len(rows) == 5
+
+    async def override_session():
+        async with sessions_fixture() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(local_token="s1-token")
+    try:
+        headers = {"X-Tenant-Id": "t-s1", "X-OpsBlaze-Token": "s1-token"}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listing = await client.get("/v1/experiments?limit=2", headers=headers)
+            assert listing.status_code == 200 and len(listing.json()["records"]) == 2
+            resumed = await client.post(f"/v1/experiments/{partial.id}/resume", headers=headers)
+            assert resumed.status_code == 202 and resumed.json()["status"] == "COMPLETE"
+    finally:
+        app.dependency_overrides.clear()

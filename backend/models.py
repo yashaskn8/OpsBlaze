@@ -601,6 +601,15 @@ class OperationalLesson(Base):
     consent_epoch: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="DRAFT")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    target_family: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="simulator", default="simulator",
+    )
+    policy_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="deterministic-v1", default="deterministic-v1",
+    )
+    conflict_evidence: Mapped[dict] = mapped_column(
+        JSON, nullable=False, server_default="{}", default=dict,
+    )
     valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -627,6 +636,10 @@ class EvaluationManifest(Base):
     oracle_version: Mapped[str] = mapped_column(String(32), nullable=False)
     trial_budget: Mapped[int] = mapped_column(Integer, nullable=False)
     state: Mapped[str] = mapped_column(String(24), nullable=False)
+    supersedes_manifest_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    correction_reason: Mapped[str | None] = mapped_column(String(256))
+    reviewer_decision: Mapped[str | None] = mapped_column(String(24))
+    reviewer_id: Mapped[str | None] = mapped_column(String(48))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -783,6 +796,13 @@ class ReplayExperiment(Base):
     seed: Mapped[int] = mapped_column(Integer, nullable=False)
     budget: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
+    invalidation_reason: Mapped[str | None] = mapped_column(String(128))
+    workload_version: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="workload-v1", default="workload-v1",
+    )
+    evidence_policy_version: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="causal-v1", default="causal-v1",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -1009,4 +1029,27 @@ class PolicyShadowObservation(Base):
     would_assign: Mapped[bool] = mapped_column(Boolean, nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AdapterEnablement(Base):
+    """E8 lab-only revocable enablement state; real external adapters stay blocked."""
+
+    __tablename__ = "adapter_enablement"
+
+    adapter_id: Mapped[str] = mapped_column(String(48), primary_key=True)
+    scope: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="LAB_ONLY", default="LAB_ONLY",
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False,
+    )
+    conformance_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    updated_by: Mapped[str] = mapped_column(String(48), nullable=False)
+    revocation_reason: Mapped[str | None] = mapped_column(String(256))
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1", default=1,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
     )

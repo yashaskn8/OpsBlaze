@@ -245,3 +245,82 @@ def test_paired_statistics_rejects_duplicate_or_unpaired_trials():
     )
     assert paired_smoke_statistics([trial], ["one"])["integrity"] == "INCOMPLETE"
     assert paired_smoke_statistics([trial, trial], ["one"])["integrity"] == "INVALID"
+
+
+@pytest.mark.asyncio
+async def test_resumable_smoke_supersession_trial_pagination_and_review(candidate_lab):
+    from backend.database import get_session
+    from backend.evaluation.smoke import (
+        record_evaluation_review, resume_smoke, supersede_manifest,
+    )
+    from backend.settings import Settings
+
+    sessions, candidate_id, _ = candidate_lab
+    async with sessions() as session:
+        manifest = await freeze(session, "t", candidate_id)
+    async with sessions() as session:
+        partial = await resume_smoke(session, "t", manifest.id, max_pairs=2)
+        assert partial.state == "IN_PROGRESS"
+    async with sessions() as session:
+        completed = await resume_smoke(session, "t", manifest.id, max_pairs=None)
+        assert completed.state == "SMOKE_PASS"
+        trials = (await session.scalars(
+            select(EvaluationTrial).where(EvaluationTrial.manifest_id == manifest.id)
+        )).all()
+        assert len(trials) == len(FIXTURES) * 2
+        await session.rollback()
+        reviewed = await record_evaluation_review(
+            session, "t", manifest.id, "SMOKE_PASS", "ACKNOWLEDGED", "rev-alice",
+        )
+        assert reviewed.reviewer_decision == "ACKNOWLEDGED"
+
+    # Supersede manifest cleanly while retaining original manifest + trials.
+    async with sessions() as session:
+        sup = await supersede_manifest(
+            session, "t", manifest.id, "outcome witness corrected after initial smoke",
+        )
+        assert sup.supersedes_manifest_id == manifest.id
+        assert sup.state == "FROZEN"
+        old = await session.get(EvaluationManifest, manifest.id)
+        assert old.state == "INVALID"
+
+    async def override_session():
+        async with sessions() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        local_token="e5-op", review_token="e5-rev",
+    )
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            page1 = await client.get(
+                f"/v1/evaluations/{manifest.id}/trials?limit=8",
+                headers={"X-Tenant-Id": "t", "X-OpsBlaze-Token": "e5-op"},
+            )
+            assert page1.status_code == 200 and len(page1.json()["records"]) == 8
+            assert page1.json()["promotion_eligible"] is False
+            cur = page1.json()["next_cursor"]
+            page2 = await client.get(
+                f"/v1/evaluations/{manifest.id}/trials?cursor={cur}&limit=8",
+                headers={"X-Tenant-Id": "t", "X-OpsBlaze-Token": "e5-op"},
+            )
+            assert page2.status_code == 200 and page2.json()["next_cursor"] is None
+            sup_run = await client.post(
+                f"/v1/evaluations/{sup.id}/run",
+                headers={"X-Tenant-Id": "t", "X-OpsBlaze-Token": "e5-op"},
+            )
+            assert sup_run.status_code == 202 and sup_run.json()["state"] == "SMOKE_PASS"
+            rev = await client.post(
+                f"/v1/evaluations/{sup.id}/review",
+                json={"decision": "REJECTED_FOR_PROMOTION"},
+                headers={
+                    "X-Tenant-Id": "t",
+                    "X-OpsBlaze-Token": "e5-op",
+                    "X-OpsBlaze-Reviewer-Token": "e5-rev",
+                    "If-Match": "SMOKE_PASS",
+                },
+            )
+            assert rev.status_code == 202 and rev.json()["promotion_eligible"] is False
+    finally:
+        app.dependency_overrides.clear()

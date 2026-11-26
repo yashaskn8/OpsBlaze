@@ -262,5 +262,36 @@ async def test_shadow_http_tenant_permissions_and_live_gate_remain_closed(
             assert (await client.get(
                 f"/v1/rollouts/{rollout.id}/shadow-summary", headers=wrong,
             )).status_code == 404
+
+            # Safe canary rehearsal preserves incumbent pin, measures latency, no exposure.
+            safe = await client.post(
+                f"/v1/rollouts/{rollout.id}/rehearse",
+                json={"incident_ids": [str(incident.id)], "inject_unsafe": False},
+                headers={**headers, "If-Match": "1"},
+            )
+            assert safe.status_code == 202, safe.text
+            assert safe.json()["aborted"] is False
+            assert safe.json()["active_pins_preserved"] is True
+            assert safe.json()["candidate_exposure"] == 0
+            assert safe.json()["promotion_eligible"] is False
+            assert safe.json()["added_admission_latency_ms"] >= 0
+
+            # Stale version conflict returns 409, unsafe rehearsal aborts & bumps version.
+            stale = await client.post(
+                f"/v1/rollouts/{rollout.id}/rehearse",
+                json={"incident_ids": [str(incident.id)], "inject_unsafe": False},
+                headers={**headers, "If-Match": "99"},
+            )
+            assert stale.status_code == 409
+            unsafe = await client.post(
+                f"/v1/rollouts/{rollout.id}/rehearse",
+                json={"incident_ids": [str(incident.id)], "inject_unsafe": True},
+                headers={**headers, "If-Match": "1"},
+            )
+            assert unsafe.status_code == 202
+            assert unsafe.json()["aborted"] is True
+            assert unsafe.json()["state"] == "ROLLED_BACK"
+            assert unsafe.json()["version"] == 2
+            assert unsafe.json()["active_pins_preserved"] is True
     finally:
         app.dependency_overrides.clear()

@@ -52,6 +52,7 @@ type PlanDetail = Plan & {
     evaluated_at: string;
   };
   policy_id: string | null;
+  policy_version?: string | null;
   postcondition: { healthy: boolean; version: number } | null;
 };
 
@@ -1045,7 +1046,7 @@ function App() {
               {plan.review.pending_since && <p className="muted">
                 Pending since {new Date(plan.review.pending_since).toLocaleString()}
               </p>}
-              <p>Pinned policy: {plan.policy_id ?? "Unavailable"}</p>
+              <p>Pinned policy: {plan.policy_id ? `${plan.policy_id}${plan.policy_version ? ` (${plan.policy_version})` : ""}` : "Unavailable"}</p>
               <p>Expected postcondition: {plan.postcondition
                 ? `Simulator target healthy at version ${plan.postcondition.version}` : "Unavailable"}</p>
               {reviewStale && <p role="status" className="muted">Refresh the plan before reviewing it again.</p>}

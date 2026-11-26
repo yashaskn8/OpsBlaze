@@ -23,7 +23,7 @@ from backend.effects.gateway import (
 )
 from backend.effects.reservations import reserve_simulator_target
 from backend.models import (
-    AdapterConformanceRun, AdmissionUsage, EffectReceipt, Incident, OutboxEntry,
+    AdapterConformanceRun, AdapterEnablement, AdmissionUsage, EffectReceipt, Incident, OutboxEntry,
     ResourceEpoch, ResourceReservation, SimulatorAppliedEffect, SimulatorTarget,
     UIEvent, PolicyAssignment,
 )
@@ -31,7 +31,7 @@ from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 from backend.settings import get_settings
 
-SUITE_VERSION = "simulator-conformance-v5"
+SUITE_VERSION = "simulator-conformance-v6"
 RETENTION_SECONDS = 3600
 REQUIRED_SCENARIOS = frozenset({
     "first-apply", "duplicate-apply", "effect-status", "stale-fence",
@@ -39,6 +39,7 @@ REQUIRED_SCENARIOS = frozenset({
     "effect-identity-binding", "status-store-outage", "status-store-recovered",
     "oracle-outage", "oracle-recovered", "retention-gap",
     "retention-recovered", "external-version-edit", "permit-version-binding",
+    "retention-horizon-contract",
 })
 
 
@@ -332,6 +333,41 @@ async def execute_suite(
                 "permit-version-binding", True,
                 "permit target version remains bound to reservation snapshot",
             )
+
+        async with sessions() as session:
+            async with session.begin():
+                stale_res = await session.get(ResourceReservation, (tenant, target_id))
+                if stale_res is not None:
+                    stale_res.state = "RELEASED"
+
+        permit_eight = await reserve_simulator_target(
+            sessions, tenant, target_id, incident_id, "h" * 64,
+        )
+
+        class PartialCommitAdapter(SimulatorAdapter):
+            async def apply(self, effect_id, permit):
+                await super().apply(effect_id, permit)
+                raise TimeoutError("partial commit acknowledgment lost")
+
+            async def query_effect(self, effect_id):
+                return None
+
+        partial = PartialCommitAdapter(sessions)
+        effect_eight = await prepare_receipt(sessions, permit_eight)
+        partial_state = await execute_simulator_effect(sessions, partial, permit_eight)
+        after_lookup = await reconcile_effect(sessions, partial, effect_eight)
+        recovered_eight = await reconcile_effect(sessions, adapter, effect_eight)
+        async with sessions() as session:
+            rec_eight = await session.get(EffectReceipt, effect_eight)
+        outcome(
+            "retention-horizon-contract",
+            RETENTION_SECONDS > 600
+            and partial_state == after_lookup == "UNKNOWN"
+            and recovered_eight == "VERIFIED"
+            and rec_eight is not None
+            and rec_eight.attempt_count == 1,
+            "retention exceeds reconciliation horizon and partial-commit stays safe",
+        )
     finally:
         # Remove disposable fixture rows. Keep only the digest + scenario report.
         async with sessions() as session:
@@ -435,3 +471,100 @@ async def current_simulator_is_conformant(
         and timedelta(0) <= age <= timedelta(days=7)
         and complete_report(run.results)
     )
+
+
+async def list_adapter_conformance_runs(
+    session: AsyncSession,
+    adapter_id: str,
+    *,
+    cursor: UUID | None = None,
+    limit: int = 25,
+) -> dict:
+    """E8-03: scoped bounded conformance run registry with retention & version semantics."""
+    if not 1 <= limit <= 50:
+        raise ValueError("conformance history limit must be 1–50")
+    stmt = select(AdapterConformanceRun).where(
+        AdapterConformanceRun.adapter_id == adapter_id,
+    )
+    if cursor is not None:
+        stmt = stmt.where(AdapterConformanceRun.id > cursor)
+    rows = list((await session.scalars(
+        stmt.order_by(AdapterConformanceRun.id).limit(limit + 1)
+    )).all())
+    visible = rows[:limit]
+    enablement = await session.get(AdapterEnablement, adapter_id)
+    return {
+        "adapter_id": adapter_id,
+        "scope": "LAB_ONLY" if adapter_id == "simulator-v1" else "EXTERNAL_BLOCKED",
+        "production_enablement": False,
+        "lab_enabled": bool(enablement.enabled) if (enablement and adapter_id == "simulator-v1") else False,
+        "enablement_version": enablement.version if enablement else 0,
+        "records": [
+            {
+                "run_id": str(r.id),
+                "state": r.state,
+                "suite_version": r.suite_version,
+                "code_digest": r.code_digest,
+                "retention_seconds": r.retention_seconds,
+                "scenario_count": len(r.results) if isinstance(r.results, list) else 0,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in visible
+        ],
+        "next_cursor": str(visible[-1].id) if len(rows) > limit else None,
+    }
+
+
+async def set_lab_adapter_enablement(
+    session: AsyncSession,
+    adapter_id: str,
+    expected_version: int,
+    enabled: bool,
+    actor_id: str,
+    reason: str,
+) -> AdapterEnablement:
+    """E8-05: human-authorized lab-only enablement/revocation; external adapters fail closed."""
+    if adapter_id != "simulator-v1":
+        raise PermissionError("external adapter enablement is permanently blocked by G2")
+    clean_reason = reason.strip()
+    if not 8 <= len(clean_reason) <= 256:
+        raise ValueError("enablement reason must be 8–256 characters")
+    async with session.begin():
+        latest_run = await session.scalar(
+            select(AdapterConformanceRun)
+            .where(AdapterConformanceRun.adapter_id == adapter_id)
+            .order_by(AdapterConformanceRun.created_at.desc(), AdapterConformanceRun.id)
+            .limit(1)
+        )
+        if enabled and not await current_simulator_is_conformant(session):
+            raise ValueError("current simulator conformance LAB_PASS is required")
+        existing = await session.scalar(
+            select(AdapterEnablement)
+            .where(AdapterEnablement.adapter_id == adapter_id)
+            .with_for_update()
+        )
+        now = datetime.now(timezone.utc)
+        if existing is None:
+            if expected_version != 0:
+                raise ValueError("initial adapter enablement expects If-Match: 0")
+            row = AdapterEnablement(
+                adapter_id=adapter_id,
+                scope="LAB_ONLY",
+                enabled=enabled,
+                conformance_run_id=latest_run.id if latest_run else None,
+                updated_by=actor_id[:48],
+                revocation_reason=None if enabled else clean_reason,
+                version=1,
+                updated_at=now,
+            )
+            session.add(row)
+            return row
+        if existing.version != expected_version:
+            raise ValueError("adapter enablement version changed; refetch before retrying")
+        existing.enabled = enabled
+        existing.conformance_run_id = latest_run.id if latest_run else existing.conformance_run_id
+        existing.updated_by = actor_id[:48]
+        existing.revocation_reason = None if enabled else clean_reason
+        existing.version += 1
+        existing.updated_at = now
+        return existing

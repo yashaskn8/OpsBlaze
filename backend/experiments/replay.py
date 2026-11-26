@@ -36,6 +36,12 @@ EVIDENCE_TIMES = {"health": 0, "version": 2}
 PROBE_BUDGET = 2
 
 
+WORKLOAD_VERSION = "workload-v1"
+EVIDENCE_POLICY_VERSION = "causal-v1"
+RUNBOOK_POLICY_VERSION = "runbook-static-v1"
+ADAPTIVE_POLICY_VERSION = "adaptive-gated-v1"
+
+
 def fixture_digest(fixture: Fixture, seed: int) -> str:
     manifest = {
         "fixture": fixture.id, "seed": seed,
@@ -44,6 +50,10 @@ def fixture_digest(fixture: Fixture, seed: int) -> str:
         "evidence_times": EVIDENCE_TIMES,
         "budget": PROBE_BUDGET,
         "oracle_version": "postcondition-v1",
+        "workload_version": WORKLOAD_VERSION,
+        "evidence_policy_version": EVIDENCE_POLICY_VERSION,
+        "runbook_policy_version": RUNBOOK_POLICY_VERSION,
+        "adaptive_policy_version": ADAPTIVE_POLICY_VERSION,
     }
     canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
@@ -102,12 +112,198 @@ def run_arm(fixture: Fixture, seed: int, kind: str) -> Twin:
         raise ValueError("unsupported replay arm")
     # Each arm gets its own mutable twin and independently gated observations.
     healthy = twin.probe("health")
+    if kind == "ADAPTIVE_BASELINE" and healthy:
+        twin.trace.append({"kind": "decision", "time": twin.virtual_time, "outcome": "HEALTHY_ABSTAIN"})
+        return twin
+    twin.advance(2)
+    version = twin.probe("version")
     if not healthy:
-        twin.advance(2)
-        version = twin.probe("version")
         result = twin.apply_simulated_recovery(version)
         twin.trace.append({"kind": "effect", "time": twin.virtual_time, "outcome": result})
+    else:
+        twin.trace.append({"kind": "decision", "time": twin.virtual_time, "outcome": "RUNBOOK_NOOP"})
     return twin
+
+
+def _arm_outcome(twin: Twin, fixture: Fixture) -> tuple[bool, str]:
+    passed = twin.independent_oracle()
+    outcome = "VERIFIED" if passed else (
+        "ABSTAINED" if fixture.initially_healthy else "FAILED"
+    )
+    return passed, outcome
+
+
+async def start_pair(
+    session: AsyncSession, tenant_id: str, fixture_id: str, seed: int,
+    *, initial_arms: int = 1,
+) -> ReplayExperiment:
+    """Create a durable paired experiment halted mid-flight for resumable replay."""
+    if fixture_id not in FIXTURES or not 0 <= seed <= 1_000_000:
+        raise ValueError("unsupported replay fixture or seed")
+    if initial_arms not in (0, 1):
+        raise ValueError("initial_arms must be 0 or 1")
+    fixture = FIXTURES[fixture_id]
+    experiment_id = uuid4()
+    with_seed = fixture_digest(fixture, seed)
+    async with session.begin():
+        experiment = ReplayExperiment(
+            id=experiment_id, tenant_id=tenant_id,
+            fixture_id=fixture_id, fixture_digest=with_seed,
+            seed=seed, budget=PROBE_BUDGET,
+            status="RUNNING" if initial_arms == 1 else "PENDING",
+            workload_version=WORKLOAD_VERSION,
+            evidence_policy_version=EVIDENCE_POLICY_VERSION,
+        )
+        session.add(experiment)
+        if initial_arms == 1:
+            twin = run_arm(fixture, seed, "RUNBOOK")
+            passed, outcome = _arm_outcome(twin, fixture)
+            session.add(
+                ReplayArm(
+                    id=uuid4(), experiment_id=experiment_id, kind="RUNBOOK",
+                    namespace=f"{experiment_id}/runbook",
+                    virtual_time=twin.virtual_time, outcome=outcome,
+                    probe_cost=twin.calls, oracle_passed=passed,
+                    trace=twin.trace,
+                )
+            )
+    return experiment
+
+
+async def resume_pair(
+    session: AsyncSession, tenant_id: str, experiment_id: UUID,
+    *, inject_leak: bool = False,
+) -> ReplayExperiment | None:
+    """Resume missing arms deterministically; invalidate leaking or incomplete pairs."""
+    async with session.begin():
+        experiment = await session.scalar(
+            select(ReplayExperiment).where(
+                ReplayExperiment.id == experiment_id,
+                ReplayExperiment.tenant_id == tenant_id,
+            ).with_for_update()
+        )
+        if experiment is None:
+            return None
+        if experiment.status in {"COMPLETE", "INVALIDATED"}:
+            return experiment
+        fixture = FIXTURES.get(experiment.fixture_id)
+        if fixture is None or experiment.fixture_digest != fixture_digest(fixture, experiment.seed):
+            experiment.status = "INVALIDATED"
+            experiment.invalidation_reason = "FIXTURE_DIGEST_MISMATCH"
+            return experiment
+        existing_arms = {
+            arm.kind: arm for arm in (await session.scalars(
+                select(ReplayArm).where(ReplayArm.experiment_id == experiment.id)
+            )).all()
+        }
+        if inject_leak:
+            leaking = Twin(fixture, experiment.seed)
+            try:
+                leaking.probe("version")
+            except FutureEvidenceDenied:
+                pass
+            experiment.status = "INVALIDATED"
+            experiment.invalidation_reason = "FUTURE_EVIDENCE_OR_CONTAMINATION"
+            if "ADAPTIVE_BASELINE" not in existing_arms:
+                session.add(
+                    ReplayArm(
+                        id=uuid4(), experiment_id=experiment.id, kind="ADAPTIVE_BASELINE",
+                        namespace=f"{experiment.id}/adaptive_baseline",
+                        virtual_time=leaking.virtual_time, outcome="INVALIDATED",
+                        probe_cost=leaking.calls, oracle_passed=False,
+                        trace=leaking.trace,
+                    )
+                )
+            return experiment
+
+        for kind in ("RUNBOOK", "ADAPTIVE_BASELINE"):
+            if kind in existing_arms:
+                continue
+            twin = run_arm(fixture, experiment.seed, kind)
+            passed, outcome = _arm_outcome(twin, fixture)
+            session.add(
+                ReplayArm(
+                    id=uuid4(), experiment_id=experiment.id, kind=kind,
+                    namespace=f"{experiment.id}/{kind.lower()}",
+                    virtual_time=twin.virtual_time, outcome=outcome,
+                    probe_cost=twin.calls, oracle_passed=passed,
+                    trace=twin.trace,
+                )
+            )
+        experiment.status = "COMPLETE"
+        return experiment
+
+
+async def list_pairs_page(
+    session: AsyncSession, tenant_id: str,
+    *, cursor: UUID | None = None, limit: int = 50,
+) -> tuple[list[ReplayExperiment], str | None]:
+    if not 1 <= limit <= 50:
+        raise ValueError("experiment page limit must be 1–50")
+    stmt = select(ReplayExperiment).where(ReplayExperiment.tenant_id == tenant_id)
+    if cursor is not None:
+        stmt = stmt.where(ReplayExperiment.id > cursor)
+    rows = list((await session.scalars(
+        stmt.order_by(ReplayExperiment.id).limit(limit + 1)
+    )).all())
+    visible = rows[:limit]
+    return visible, str(visible[-1].id) if len(rows) > limit else None
+
+
+async def run_paired_trials(
+    session: AsyncSession, tenant_id: str, fixture_id: str, seeds: list[int],
+) -> dict:
+    """S1-07: repeated paired comparison between RUNBOOK and ADAPTIVE_BASELINE arms."""
+    if fixture_id not in FIXTURES:
+        raise ValueError("unsupported replay fixture")
+    if not seeds or len(seeds) > 20 or any(not 0 <= s <= 1_000_000 for s in seeds):
+        raise ValueError("paired trials require 1–20 valid seeds")
+    fixture = FIXTURES[fixture_id]
+    runs: list[UUID] = []
+    runbook_verified = adaptive_verified = 0
+    runbook_cost = adaptive_cost = 0
+    async with session.begin():
+        for seed in seeds:
+            experiment_id = uuid4()
+            runs.append(experiment_id)
+            session.add(
+                ReplayExperiment(
+                    id=experiment_id, tenant_id=tenant_id,
+                    fixture_id=fixture_id, fixture_digest=fixture_digest(fixture, seed),
+                    seed=seed, budget=PROBE_BUDGET, status="COMPLETE",
+                    workload_version=WORKLOAD_VERSION,
+                    evidence_policy_version=EVIDENCE_POLICY_VERSION,
+                )
+            )
+            for kind in ("RUNBOOK", "ADAPTIVE_BASELINE"):
+                twin = run_arm(fixture, seed, kind)
+                passed, outcome = _arm_outcome(twin, fixture)
+                session.add(
+                    ReplayArm(
+                        id=uuid4(), experiment_id=experiment_id, kind=kind,
+                        namespace=f"{experiment_id}/{kind.lower()}",
+                        virtual_time=twin.virtual_time, outcome=outcome,
+                        probe_cost=twin.calls, oracle_passed=passed,
+                        trace=twin.trace,
+                    )
+                )
+                if kind == "RUNBOOK":
+                    runbook_verified += int(passed)
+                    runbook_cost += twin.calls
+                else:
+                    adaptive_verified += int(passed)
+                    adaptive_cost += twin.calls
+    return {
+        "fixture_id": fixture_id,
+        "trials": len(seeds),
+        "experiment_ids": [str(eid) for eid in runs],
+        "runbook_verified": runbook_verified,
+        "adaptive_verified": adaptive_verified,
+        "runbook_probe_cost": runbook_cost,
+        "adaptive_probe_cost": adaptive_cost,
+        "adaptive_probe_saved": runbook_cost - adaptive_cost,
+        "measured_ai_comparison": False,
+    }
 
 
 async def create_pair(
@@ -123,14 +319,13 @@ async def create_pair(
             id=experiment_id, tenant_id=tenant_id,
             fixture_id=fixture_id, fixture_digest=with_seed,
             seed=seed, budget=PROBE_BUDGET, status="COMPLETE",
+            workload_version=WORKLOAD_VERSION,
+            evidence_policy_version=EVIDENCE_POLICY_VERSION,
         )
         session.add(experiment)
         for kind in ("RUNBOOK", "ADAPTIVE_BASELINE"):
             twin = run_arm(fixture, seed, kind)
-            passed = twin.independent_oracle()
-            outcome = "VERIFIED" if passed else (
-                "ABSTAINED" if fixture.initially_healthy else "FAILED"
-            )
+            passed, outcome = _arm_outcome(twin, fixture)
             session.add(
                 ReplayArm(
                     id=uuid4(), experiment_id=experiment_id, kind=kind,
@@ -160,6 +355,9 @@ async def pair_report(session: AsyncSession, tenant_id: str, experiment_id: UUID
         "id": str(experiment.id), "fixture_id": experiment.fixture_id,
         "fixture_digest": experiment.fixture_digest, "seed": experiment.seed,
         "status": experiment.status, "budget": experiment.budget,
+        "workload_version": experiment.workload_version,
+        "evidence_policy_version": experiment.evidence_policy_version,
+        "invalidation_reason": experiment.invalidation_reason,
         "measured_ai_comparison": False,
         "arms": [
             {"kind": item.kind, "namespace": item.namespace,

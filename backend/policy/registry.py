@@ -3,6 +3,7 @@
 
 import hashlib
 import secrets
+from time import perf_counter
 from uuid import UUID, NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import func, select
@@ -12,7 +13,7 @@ from backend.evaluation.smoke import sha
 from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.learning.failures import validate_change
 from backend.models import (
-    EvaluationManifest, ImprovementCandidate, Incident, PolicyAssignment,
+    EvaluationManifest, ImprovementCandidate, Incident, OutcomeRevision, PolicyAssignment,
     PolicyBundle, PolicyRollout, PolicyShadowObservation,
 )
 
@@ -48,8 +49,13 @@ async def register_bundle(
         payload = {"kind": candidate.kind, "change": candidate.change_spec}
         if sha(payload) != evaluation.candidate_digest:
             raise PolicyConflict("candidate changed after evaluation")
+        artifact_digest = hashlib.sha256(
+            f"{candidate.id}:{candidate.version}:{evaluation.id}:{evaluation.fixture_digest}".encode()
+        ).hexdigest()
         content = {
             "base_policy_id": candidate.base_policy_id,
+            "policy_version": f"{candidate.base_policy_id}@cand-v{candidate.version}",
+            "artifact_digest": artifact_digest,
             "candidate_id": str(candidate.id),
             "candidate_version": candidate.version,
             "kind": candidate.kind,
@@ -231,5 +237,107 @@ async def shadow_summary(
         "rollout_id": str(rollout_id), "state": rollout.state,
         "shadow_count": total or 0, "would_assign_count": selected or 0,
         "candidate_exposure": 0, "preview_only": True,
+        "promotion_eligible": False,
+    }
+
+
+async def rehearse_simulator_canary(
+    session: AsyncSession,
+    tenant_id: str,
+    rollout_id: UUID,
+    expected_version: int,
+    incident_ids: list[UUID],
+    *,
+    inject_unsafe: bool = False,
+) -> dict | None:
+    """E6-06/E6-07: bounded simulator canary rehearsal with unsafe abort & pin check."""
+    if not incident_ids or len(incident_ids) > 25:
+        raise PolicyConflict("canary rehearsal requires 1–25 incidents")
+    t0 = perf_counter()
+    async with session.begin():
+        rollout = await session.scalar(
+            select(PolicyRollout)
+            .where(
+                PolicyRollout.id == rollout_id,
+                PolicyRollout.tenant_id == tenant_id,
+            )
+            .with_for_update()
+        )
+        if rollout is None:
+            return None
+        if rollout.version != expected_version:
+            raise PolicyConflict("rollout version changed; refetch before retrying")
+        if rollout.state != "DRAFT":
+            raise PolicyConflict("only DRAFT rollouts may rehearse simulator canary")
+        bundle = await session.scalar(
+            select(PolicyBundle).where(
+                PolicyBundle.id == rollout.bundle_id,
+                PolicyBundle.tenant_id == tenant_id,
+            )
+        )
+        if (
+            bundle is None
+            or bundle.state != "DRAFT"
+            or sha(bundle.content) != bundle.content_digest
+        ):
+            raise PolicyConflict("candidate bundle digest or state invalid")
+
+        pins_ok = True
+        unsafe_detected = bool(inject_unsafe)
+        would_assign_count = 0
+        for iid in incident_ids:
+            inc = await session.scalar(
+                select(Incident.id).where(
+                    Incident.id == iid, Incident.tenant_id == tenant_id,
+                )
+            )
+            if inc is None:
+                raise PolicyConflict("canary rehearsal incident not found in tenant")
+            assignment = await session.get(PolicyAssignment, (tenant_id, iid))
+            if (
+                assignment is None
+                or assignment.policy_id != INCUMBENT_POLICY_ID
+                or assignment.bundle_id is not None
+                or assignment.rollout_id is not None
+            ):
+                pins_ok = False
+            if dry_run_assignment(rollout, tenant_id, iid):
+                would_assign_count += 1
+            latest_outcome = await session.scalar(
+                select(OutcomeRevision.label)
+                .where(
+                    OutcomeRevision.tenant_id == tenant_id,
+                    OutcomeRevision.incident_id == iid,
+                )
+                .order_by(OutcomeRevision.revision.desc())
+                .limit(1)
+            )
+            if latest_outcome == "DISPUTED":
+                unsafe_detected = True
+
+        abort_reason: str | None = None
+        if not pins_ok:
+            unsafe_detected = True
+            abort_reason = "ACTIVE_PIN_DRIFT_DETECTED"
+        elif unsafe_detected:
+            abort_reason = "UNSAFE_OUTCOME_OR_FAULT_DETECTED"
+
+        if unsafe_detected:
+            rollout.state = "ROLLED_BACK"
+            rollout.version += 1
+
+    elapsed_ms = (perf_counter() - t0) * 1000.0
+    return {
+        "rollout_id": str(rollout.id),
+        "state": rollout.state,
+        "version": rollout.version,
+        "aborted": unsafe_detected,
+        "abort_reason": abort_reason,
+        "checked_incidents": len(incident_ids),
+        "would_assign_count": would_assign_count,
+        "active_pins_preserved": pins_ok,
+        "added_admission_latency_ms": round(elapsed_ms, 3),
+        "candidate_exposure": 0,
+        "preview_only": True,
         "promotion_eligible": False,
     }

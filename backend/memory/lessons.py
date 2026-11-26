@@ -205,6 +205,8 @@ async def validate_draft(
 async def revoke_lesson(
     session: AsyncSession, tenant_id: str, lesson_id: UUID,
     expected_version: int,
+    *,
+    conflict_evidence: dict | None = None,
 ) -> OperationalLesson | None:
     async with session.begin():
         lesson = await session.scalar(
@@ -221,13 +223,16 @@ async def revoke_lesson(
             raise LessonConflict("already revoked")
         lesson.status = "REVOKED"
         lesson.version += 1
+        if isinstance(conflict_evidence, dict):
+            lesson.conflict_evidence = dict(conflict_evidence)
     return lesson
 
 
 async def retrieve_active_lessons(
     session: AsyncSession, tenant_id: str, target_id: str, limit: int = 4,
+    *, target_family: str = "simulator", policy_id: str = "deterministic-v1",
 ) -> list[OperationalLesson]:
-    """Fail closed on expiry, consent loss, or corrected outcome at read-time."""
+    """Fail closed on expiry, consent loss, target family/policy mismatch, or corrected outcome."""
     if limit < 1 or limit > 8:
         raise ValueError("lesson result limit must be 1–8")
     digest = hashlib.sha256(
@@ -239,6 +244,8 @@ async def retrieve_active_lessons(
             OperationalLesson.tenant_id == tenant_id,
             OperationalLesson.target_digest == digest,
             OperationalLesson.status == "ACTIVE",
+            OperationalLesson.target_family == target_family,
+            OperationalLesson.policy_id == policy_id,
             OperationalLesson.valid_until > datetime.now(timezone.utc),
         )
         .order_by(OperationalLesson.created_at.desc())
@@ -253,12 +260,58 @@ async def retrieve_active_lessons(
             and lesson.consent_epoch == capsule.consent_epoch
             and lesson.source_outcome_id == capsule.outcome_revision_id
             and lesson.target_digest == capsule.target_digest
+            and lesson.target_family == target_family
+            and lesson.policy_id == policy_id
             and lesson.summary_redacted == LESSON_RULES.get(lesson.rule_id)
             and utc(lesson.valid_from) <= now < utc(lesson.valid_until)
             and utc(lesson.valid_until) <= utc(capsule.expires_at)
         ):
             allowed.append(lesson)
     return allowed
+
+
+async def evaluate_memory_vs_no_memory(
+    session: AsyncSession, tenant_id: str, target_id: str,
+    *, iterations: int = 5,
+) -> dict:
+    """E4-07: lab latency and context comparison against isolated no-memory control."""
+    from time import perf_counter
+
+    if not 1 <= iterations <= 20:
+        raise ValueError("iterations must be 1–20")
+    with_mem_ms: list[float] = []
+    no_mem_ms: list[float] = []
+    mem_items: list[dict] = []
+    mem_mode = "NO_MEMORY"
+    for _ in range(iterations):
+        t0 = perf_counter()
+        mem_items, mem_mode = await retrieve_cited_memory_context(
+            session, tenant_id, target_id, allow_memory=True,
+        )
+        with_mem_ms.append((perf_counter() - t0) * 1000.0)
+        t1 = perf_counter()
+        _, ctrl_mode = await retrieve_cited_memory_context(
+            session, tenant_id, target_id, allow_memory=False,
+        )
+        no_mem_ms.append((perf_counter() - t1) * 1000.0)
+    with_mem_ms.sort()
+    no_mem_ms.sort()
+    p50_idx = int(0.5 * (len(with_mem_ms) - 1))
+    p95_idx = int(0.95 * (len(with_mem_ms) - 1))
+    return {
+        "scope": "SIMULATOR_LAB_ONLY",
+        "iterations": iterations,
+        "memory_mode": mem_mode,
+        "control_mode": ctrl_mode,
+        "cited_lesson_count": len(mem_items),
+        "with_memory_p50_ms": round(with_mem_ms[p50_idx], 3),
+        "with_memory_p95_ms": round(with_mem_ms[p95_idx], 3),
+        "no_memory_p50_ms": round(no_mem_ms[p50_idx], 3),
+        "no_memory_p95_ms": round(no_mem_ms[p95_idx], 3),
+        "latency_overhead_p95_ms": round(max(0.0, with_mem_ms[p95_idx] - no_mem_ms[p95_idx]), 3),
+        "measured_ai_comparison": False,
+        "promotion_eligible": False,
+    }
 
 
 async def retrieve_cited_memory_context(

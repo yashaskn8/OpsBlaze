@@ -13,7 +13,8 @@ from backend.adapters.simulator import SimulatorAdapter, utc
 from backend.adapters.conformance import current_simulator_is_conformant
 from backend.effects.gateway import execute_simulator_effect, reconcile_effect
 from backend.effects.reservations import ReservationBusy, reserve_simulator_target
-from backend.models import ApprovalGrant, ApprovalRevocation, RevokedIdentity, DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, ProbeCall, SimulatorTarget, UIEvent
+from backend.models import ApprovalGrant, ApprovalRevocation, RevokedIdentity, DecisionAssessment, EffectReceipt, Evidence, Incident, IncidentPlan, OutboxEntry, PolicyAssignment, ProbeCall, SimulatorTarget, UIEvent
+from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.outcomes import adjudicate_simulator
 from backend.lineage_projection import replace_record_edges
 from backend.plan_proposals import (
@@ -174,10 +175,17 @@ async def decide_plan(
             and decided_by == incident.created_by
         ):
             raise PlanConflict("incident creator cannot decide the same plan")
-        if decision == "APPROVE" and not await current_plan_evidence_is_intact(
-            session, plan
-        ):
-            raise PlanConflict("plan evidence, assessment, or target version changed")
+        if decision == "APPROVE":
+            assignment = await session.get(PolicyAssignment, (tenant_id, incident.id))
+            if (
+                assignment is None
+                or assignment.policy_id != INCUMBENT_POLICY_ID
+                or assignment.bundle_id is not None
+                or assignment.rollout_id is not None
+            ):
+                raise PlanConflict("incident not pinned to an authorized policy")
+            if not await current_plan_evidence_is_intact(session, plan):
+                raise PlanConflict("plan evidence, assessment, or target version changed")
         plan.status = "APPROVED" if decision == "APPROVE" else "REJECTED"
         plan.version += 1
         decided_at = datetime.now(timezone.utc)

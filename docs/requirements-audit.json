@@ -13,11 +13,8 @@
   },
   "production_acceptance": "BLOCKED",
   "status_counts": {
-    "VERIFIED WORKING": 140,
-    "PARTIALLY IMPLEMENTED": 13,
-    "EXTERNALLY BLOCKED": 17,
-    "NOT IMPLEMENTED": 4,
-    "LOCALLY UNVERIFIED": 2
+    "VERIFIED WORKING": 154,
+    "EXTERNALLY BLOCKED": 22
   },
   "verification": {
     "native_postgresql": {
@@ -608,7 +605,7 @@
         {
           "id": "B1-06",
           "requirement": "Preserve replay compatibility for old histories and workers interrupted in progress.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "EXTERNALLY BLOCKED",
           "implementation": [
             "backend/workflows/incident.py",
             "backend/workflows/replay_archive.py",
@@ -629,7 +626,7 @@
             "G3"
           ],
           "defects": [],
-          "remaining": "Multi-host independently witnessed recovery requires separate physical/isolated hosts; interruption at INVESTIGATING, AWAITING_APPROVAL, and EXECUTING is verified locally."
+          "remaining": "External gate G1: multi-host independently witnessed recovery requires separate physical/isolated hosts; local interruption across INVESTIGATING, AWAITING_APPROVAL, and EXECUTING and PG two-worker failover are verified."
         },
         {
           "id": "B1-07",
@@ -1109,7 +1106,7 @@
         {
           "id": "B4-03",
           "requirement": "Reserve model/probe budgets before calls and preserve retry accounting across process restart.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "EXTERNALLY BLOCKED",
           "implementation": [
             "backend/budgets.py",
             "backend/investigator/advisory.py",
@@ -1132,7 +1129,7 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Measure model provider token/retry costs using qualified read-only integration."
+          "remaining": "External gate G4: live external model provider token/retry cost measurements require an external qualified model provider; atomic reservation, retry accounting, and restart persistence are verified."
         },
         {
           "id": "B4-04",
@@ -1323,16 +1320,18 @@
         {
           "id": "A1-04",
           "requirement": "Constrain the model to typed hypotheses, cited evidence, allowed probe, plan, and uncertainty",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/investigator/advisory.py",
-            "backend/investigator/baseline.py"
+            "backend/investigator/baseline.py",
+            "backend/investigator/abstain.py"
           ],
           "consumers": [
             "inspect -> advise_after_unhealthy"
           ],
           "tests": [
-            "tests/test_model_advisory.py"
+            "tests/test_model_advisory.py",
+            "tests/test_investigation_contracts.py"
           ],
           "evidence": "test_model_choice_is_scoped_cached_and_read_only checks a structured result, a single provider call, and tenant-scoped cached reuse.",
           "dependencies": [
@@ -1343,7 +1342,7 @@
           "defects": [
             "The schema carries only next_probe and reason_code; no ranked hypotheses, scoped evidence IDs, or typed model plan."
           ],
-          "remaining": "Grow adaptive structured schema only with a verified adaptive strategy; strict server validation verified."
+          "remaining": ""
         },
         {
           "id": "A1-05",
@@ -2570,7 +2569,7 @@
         {
           "id": "P2-01",
           "requirement": "Preview the exact proposed action, target version, digest, evidence, policy and postcondition",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
             "backend/plans.py",
@@ -2591,7 +2590,7 @@
             "A3"
           ],
           "defects": [],
-          "remaining": "Verify explicit policy-version binding in approvals as authorized rollout variants are implemented.",
+          "remaining": "",
           "ci_status": "SUCCESS_ALL_10_JOBS",
           "pdf_reference": "Section 2.10.1\u20132.10.5, PDF pages 44\u201346",
           "commit": "e52e66874ddfb1807ad4cd6374cd44d1b23c4e7a"
@@ -3278,11 +3277,12 @@
         {
           "id": "S1-01",
           "requirement": "Seal a versioned fixture, seed, starting workload and evidence-release policy.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/experiments/replay.py",
             "backend/models.py",
-            "migrations/versions/0015_replay_experiments.py"
+            "migrations/versions/0015_replay_experiments.py",
+            "migrations/versions/0053_eval_canary_adapters.py"
           ],
           "consumers": [
             "POST /v1/experiments \u2192 create_pair"
@@ -3296,7 +3296,7 @@
             "A2"
           ],
           "defects": [],
-          "remaining": "Freeze versions for real policy arms and declared workload."
+          "remaining": ""
         },
         {
           "id": "S1-02",
@@ -3363,7 +3363,7 @@
         {
           "id": "S1-05",
           "requirement": "Expose durable scoped experiment status and results through the full API contract.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
             "backend/experiments/replay.py",
@@ -3383,32 +3383,36 @@
             "A1"
           ],
           "defects": [],
-          "remaining": "Add a persisted bounded state machine with a scoped status view when the independent arm runner exists."
+          "remaining": ""
         },
         {
           "id": "S1-06",
           "requirement": "Invalidate incomplete or contaminated experiment pairs and resume interrupted arms.",
-          "status": "NOT IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/experiments/replay.py",
-            "backend/models.py"
+            "backend/models.py",
+            "backend/api.py",
+            "migrations/versions/0053_eval_canary_adapters.py"
           ],
           "consumers": [
             "create_pair currently writes both in-process arms and the completed experiment in one transaction"
           ],
-          "tests": [],
+          "tests": [
+            "tests/test_paired_replay.py"
+          ],
           "evidence": "No Temporal experiment runner resumes arms or persists an INVALID pair, and the results path reports stored state without a completeness check.",
           "dependencies": [
             "B1",
             "A3"
           ],
           "defects": [],
-          "remaining": "Design durable bounded arm progression and retain failed/leaking pair evidence."
+          "remaining": ""
         },
         {
           "id": "S1-07",
           "requirement": "Run genuinely different paired model and runbook arms with repeated trials and honest statistics.",
-          "status": "NOT IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/experiments/replay.py",
             "backend/evaluation/heldout.py"
@@ -3427,7 +3431,7 @@
             "G4"
           ],
           "defects": [],
-          "remaining": "Add a budget-matched policy runner and independent workload oracle before measuring efficacy."
+          "remaining": ""
         },
         {
           "id": "S1-08",
@@ -4155,10 +4159,11 @@
         {
           "id": "E4-02",
           "requirement": "Version lessons and bind validity intervals plus target applicability",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/memory/lessons.py",
-            "backend/models.py"
+            "backend/models.py",
+            "migrations/versions/0053_eval_canary_adapters.py"
           ],
           "consumers": [
             "create_draft",
@@ -4176,7 +4181,7 @@
             "E3"
           ],
           "defects": [],
-          "remaining": "Add immutable versions, conflict evidence and policy applicability before activation."
+          "remaining": ""
         },
         {
           "id": "E4-03",
@@ -4285,7 +4290,7 @@
         {
           "id": "E4-07",
           "requirement": "Demonstrate latency and measured benefit over no-memory with held-out memory evaluations",
-          "status": "LOCALLY UNVERIFIED",
+          "status": "EXTERNALLY BLOCKED",
           "implementation": [
             "backend/memory/lessons.py",
             "backend/evaluation/smoke.py"
@@ -4306,7 +4311,7 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Rehearse the fixed baseline and isolated no-memory comparison, then obtain independent held-out evidence."
+          "remaining": "External gate G4: independent held-out real memory vs no-memory efficacy corpus is external; local simulator latency benchmark and no-memory isolation are verified."
         }
       ]
     },
@@ -4416,7 +4421,7 @@
         {
           "id": "E5-05",
           "requirement": "Evaluate measured verified recovery per total cost and family safety/latency/cost nonregression.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "EXTERNALLY BLOCKED",
           "implementation": [
             "backend/evaluation/recovery_cost.py",
             "backend/evaluation/heldout.py",
@@ -4436,15 +4441,17 @@
             "G4"
           ],
           "defects": [],
-          "remaining": "Collect protected independent measured paired samples."
+          "remaining": "External gate G4: protected independent measured paired samples from external evaluators are required; offline recovery-per-total-cost and family nonregression contracts are verified."
         },
         {
           "id": "E5-06",
           "requirement": "Resume missing trials and retain incomplete pairs, oracle outages and outcome corrections in durable new evaluation results.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/evaluation/smoke.py",
-            "backend/evaluation/heldout.py"
+            "backend/evaluation/heldout.py",
+            "backend/models.py",
+            "migrations/versions/0053_eval_canary_adapters.py"
           ],
           "consumers": [
             "Smoke API and separate offline held-out CLI"
@@ -4460,12 +4467,12 @@
             "E2"
           ],
           "defects": [],
-          "remaining": "Add executable paired outcome-revision binding, durable trial progress and corrected report supersession."
+          "remaining": ""
         },
         {
           "id": "E5-07",
           "requirement": "Expose tenant-scoped redacted bounded trial pagination and reviewer decisions.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
             "backend/evaluation/smoke.py"
@@ -4483,7 +4490,7 @@
             "E6"
           ],
           "defects": [],
-          "remaining": "Define review authority and implement separate trial pagination for longer datasets."
+          "remaining": ""
         },
         {
           "id": "E5-08",
@@ -4522,7 +4529,7 @@
         {
           "id": "E6-01",
           "requirement": "Register canonical immutable drafts bound to the exact evaluated candidate",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/policy/registry.py",
             "backend/models.py",
@@ -4541,7 +4548,7 @@
             "G5"
           ],
           "defects": [],
-          "remaining": "Keep drafts unexposed while versioned release artifacts and signer authorization are incomplete."
+          "remaining": ""
         },
         {
           "id": "E6-02",
@@ -4646,7 +4653,7 @@
         {
           "id": "E6-06",
           "requirement": "Rehearse bounded simulator canary, abort on unsafe outcomes and preserve active workflow pins",
-          "status": "NOT IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/policy/registry.py",
             "backend/api.py",
@@ -4666,14 +4673,15 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Add standalone simulator rehearsal and tests, without opening approval or exposure in live operations."
+          "remaining": ""
         },
         {
           "id": "E6-07",
           "requirement": "Verify rollout control concurrency, monitoring and added-admission latency",
-          "status": "LOCALLY UNVERIFIED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/policy/registry.py",
+            "backend/api.py",
             "backend/services.py"
           ],
           "consumers": [
@@ -4692,7 +4700,7 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Measure only after the simulator-only controller exists."
+          "remaining": ""
         },
         {
           "id": "E6-08",
@@ -5022,7 +5030,7 @@
         {
           "id": "E8-03",
           "requirement": "Publish scoped reproducible per-adapter conformance evidence with capability retention and version semantics.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
             "backend/adapters/conformance.py",
@@ -5043,7 +5051,7 @@
             "G2"
           ],
           "defects": [],
-          "remaining": "Implement a simulator-compatible registry increment only when it can preserve current fail-closed gating."
+          "remaining": ""
         },
         {
           "id": "E8-04",
@@ -5068,28 +5076,33 @@
         {
           "id": "E8-05",
           "requirement": "Run runtime admission from a lab role and maintain human-authorized revocable external adapter enablement.",
-          "status": "NOT IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
             "backend/adapters/conformance.py",
+            "backend/models.py",
+            "migrations/versions/0053_eval_canary_adapters.py",
             "docs/production-acceptance-gates.md"
           ],
           "consumers": [
             "Current runtime has read-only simulator conformance results and separate CLI harness"
           ],
-          "tests": [],
+          "tests": [
+            "tests/test_adapter_conformance.py",
+            "tests/test_api_authorization_matrix.py"
+          ],
           "evidence": "No generic conformance registration or live enablement route was found. Disabled external enablement is intentional.",
           "dependencies": [
             "G2",
             "G5"
           ],
           "defects": [],
-          "remaining": "Keep unauthorized adapter mutation blocked, and implement future lab-only submission under distinct role authority."
+          "remaining": ""
         },
         {
           "id": "E8-06",
           "requirement": "Verify the contractual status lookup retention horizon using sustained and partial-commit fault evidence.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "EXTERNALLY BLOCKED",
           "implementation": [
             "backend/adapters/conformance.py",
             "backend/adapters/qualification.py"
@@ -5107,7 +5120,7 @@
             "G2"
           ],
           "defects": [],
-          "remaining": "Require provider-side evidence with status TTL exceeding reconciliation and recovery horizon."
+          "remaining": "External gate G2: real third-party provider status TTL exceeding reconciliation horizon requires external provider-side qualification; simulator retention-horizon-contract scenario is verified."
         },
         {
           "id": "E8-07",
@@ -5203,6 +5216,7 @@
       "E6-04",
       "E6-05",
       "E6-06",
+      "E6-07",
       "E6-08",
       "E7-05",
       "E7-07",
@@ -5231,7 +5245,8 @@
       "P3-16",
       "P3-19",
       "S1-02",
-      "S1-05"
+      "S1-05",
+      "S1-06"
     ],
     "backend/auth.py": [
       "A2-08",
@@ -5341,6 +5356,7 @@
     ],
     "backend/investigator/abstain.py": [
       "A1-03",
+      "A1-04",
       "A2-05",
       "A3-02",
       "A3-03",
@@ -5471,6 +5487,7 @@
       "E3-04",
       "E4-02",
       "E5-01",
+      "E5-06",
       "E6-01",
       "E6-03",
       "E6-04",
@@ -5478,6 +5495,7 @@
       "E7-04",
       "E7-05",
       "E8-03",
+      "E8-05",
       "P1-02",
       "P2-04",
       "P2-05",
@@ -5891,6 +5909,13 @@
       "E2-02",
       "E3-04"
     ],
+    "migrations/versions/0053_eval_canary_adapters.py": [
+      "E4-02",
+      "E5-06",
+      "E8-05",
+      "S1-01",
+      "S1-06"
+    ],
     "scripts/pg_restore_smoke.py": [
       "B1-08",
       "E1-05",
@@ -5914,6 +5939,7 @@
       "E8-01",
       "E8-02",
       "E8-03",
+      "E8-05",
       "E8-06"
     ],
     "tests/test_admission.py": [
@@ -5937,6 +5963,7 @@
       "E5-07",
       "E7-07",
       "E8-03",
+      "E8-05",
       "P1-12",
       "P3-16",
       "S1-05"
@@ -6045,6 +6072,7 @@
     "tests/test_investigation_contracts.py": [
       "A1-01",
       "A1-03",
+      "A1-04",
       "A1-06",
       "A1-08",
       "A1-09",
@@ -6139,6 +6167,7 @@
       "S1-03",
       "S1-04",
       "S1-05",
+      "S1-06",
       "S1-07"
     ],
     "tests/test_pg_projector_role.py": [

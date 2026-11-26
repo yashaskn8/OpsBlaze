@@ -290,3 +290,43 @@ async def test_e4_04_a1_investigation_feeds_cited_lower_trust_lessons_with_no_me
             select(ContextManifest).where(ContextManifest.incident_id == inc_after.id)
         )).all()
         assert all(m.memory_mode == "NO_MEMORY" and m.lesson_ids == [] for m in m_after)
+
+
+@pytest.mark.asyncio
+async def test_lesson_applicability_conflict_evidence_and_latency_benchmark(
+    lesson_source,
+):
+    from backend.memory.lessons import evaluate_memory_vs_no_memory
+
+    sessions, _src, capsule_id = lesson_source
+    async with sessions() as session:
+        lesson = await create_draft(session, "t", capsule_id, "PROBE_HEALTH_FIRST")
+    async with sessions() as session:
+        async with session.begin():
+            row = await session.get(OperationalLesson, lesson.id)
+            row.status = "ACTIVE"
+
+    async with sessions() as session:
+        assert len(await retrieve_active_lessons(
+            session, "t", "checkout", target_family="simulator", policy_id="deterministic-v1",
+        )) == 1
+        assert await retrieve_active_lessons(
+            session, "t", "checkout", target_family="k8s-other",
+        ) == []
+        assert await retrieve_active_lessons(
+            session, "t", "checkout", policy_id="other-policy",
+        ) == []
+        bench = await evaluate_memory_vs_no_memory(session, "t", "checkout", iterations=5)
+        assert bench["scope"] == "SIMULATOR_LAB_ONLY"
+        assert bench["memory_mode"] == "VALIDATED_LESSONS"
+        assert bench["control_mode"] == "NO_MEMORY_CONTROL"
+        assert bench["cited_lesson_count"] == 1
+        assert bench["with_memory_p95_ms"] >= 0
+        assert bench["promotion_eligible"] is False
+
+    async with sessions() as session:
+        revoked = await revoke_lesson(
+            session, "t", lesson.id, 1,
+            conflict_evidence={"reason": "operator conflict check", "source_step": 1},
+        )
+        assert revoked.conflict_evidence["source_step"] == 1
