@@ -7,8 +7,8 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "97c0f42125fd0a2063f8255368f0e14d3ce20754",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45776947852",
+    "commit": "77e325fccb7515bf0086be0e21ba07aa0d12ecbc",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45777899105",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
@@ -16,9 +16,9 @@
     "EXTERNALLY BLOCKED": 17,
     "IMPLEMENTED BUT DISCONNECTED": 1,
     "LOCALLY UNVERIFIED": 3,
-    "NOT IMPLEMENTED": 11,
-    "PARTIALLY IMPLEMENTED": 59,
-    "VERIFIED WORKING": 85
+    "NOT IMPLEMENTED": 9,
+    "PARTIALLY IMPLEMENTED": 60,
+    "VERIFIED WORKING": 86
   },
   "verification": {
     "native_postgresql": {
@@ -111,6 +111,13 @@
       "focused_windows_tests_passed": 69,
       "pinned_history_replay": "PASS",
       "migration_upgrade_schema_drift_downgrade_restore": "PASS"
+    },
+    "live_investigation": {
+      "focused_windows_backend_tests_passed": 64,
+      "native_postgresql_concurrency_tests_passed": 1,
+      "frontend_node_tests_passed": 12,
+      "typescript_vite_build": "PASS",
+      "chrome": "Real FastAPI, keyboard admission and evidence expansion, clean SSE EOF and resync, live budget/outcome/evidence, 390-pixel viewport, tenant change hides previous results."
     }
   },
   "findings": [
@@ -231,7 +238,7 @@
     {
       "id": "E7-DEVELOPMENT-ADVISORY",
       "severity": "LOW",
-      "status": "LOCALLY_REPAIRED_CI_PENDING",
+      "status": "REPAIRED",
       "requirements": [
         "E7-03",
         "E7-05"
@@ -245,7 +252,9 @@
         "tests/test_advisory_routes.py",
         "tests/test_model_advisory.py",
         "tests/test_temporal_history_replay.py"
-      ]
+      ],
+      "commit": "77e325fccb7515bf0086be0e21ba07aa0d12ecbc",
+      "ci_status": "SUCCESS_ALL_10_JOBS"
     },
     {
       "id": "E2-E3-REVIEW-ATTRIBUTION",
@@ -285,7 +294,7 @@
         "A4-04"
       ],
       "execution": "Native Codex",
-      "action": "Reconcile exact-commit CI for the locally repaired advisory route and typed optional-model handoff."
+      "action": "Expand E7 persisted risk, freshness and eligible memory context after related dependencies are verified."
     },
     {
       "order": 3,
@@ -299,7 +308,7 @@
         "P3-16"
       ],
       "execution": "Direct GitHub for isolated changes when applicable checks can run; native Codex for browser and runtime verification",
-      "action": "Wire authoritative investigation detail into the workbench, refresh on review conflicts, and test keyboard, gap and outcome states."
+      "action": "Reconcile exact-commit CI for live investigation; then implement plan preview and approval conflict refresh, richer handoff guidance, and scoped source navigation."
     },
     {
       "order": 4,
@@ -1866,9 +1875,10 @@
           "defects": [
             "Optional model uncertainty and healthy-source abstention do not populate the A4 assessment route. Optional provider failure falls back to the deterministic path."
           ],
-          "remaining": "Reconcile exact-commit Linux CI. Held-out review and production policy approval remain separate.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
-          "pdf_reference": "Section 2.8.3–2.8.4, PDF pages 39–40"
+          "remaining": "Render provider fallback alongside terminal handoff in the operator view. Calibration evidence is tracked separately.",
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "pdf_reference": "Section 2.8.3–2.8.4, PDF pages 39–40",
+          "commit": "77e325fccb7515bf0086be0e21ba07aa0d12ecbc"
         },
         {
           "id": "A4-05",
@@ -2046,46 +2056,64 @@
         {
           "id": "P1-05",
           "requirement": "Show evidence-linked competing hypotheses.",
-          "status": "NOT IMPLEMENTED",
+          "status": "PARTIALLY IMPLEMENTED",
           "implementation": [
             "frontend/src/main.tsx",
-            "backend/lineage.py"
+            "backend/lineage.py",
+            "backend/workbench.py",
+            "backend/api.py",
+            "frontend/src/InvestigationPanel.tsx"
           ],
           "consumers": [
-            "Forensic graph can show hypothesis IDs; the workbench refresh has no hypotheses panel."
+            "Workbench SSE resynchronization and polling -> GET /v1/incidents/{id}/investigation"
           ],
           "tests": [
-            "tests/test_lineage.py"
+            "tests/test_lineage.py",
+            "tests/test_workbench.py",
+            "frontend/tests/api.test.mjs"
           ],
-          "evidence": "The current workbench refresh fetches plans, evidence, effects and lineage. It does not render a scoped hypothesis view with linked evidence.",
+          "evidence": "Chrome received recorded hypothesis labels and redacted source evidence after a real stream reconnect. FastAPI rejects or masks foreign and malformed evidence references and retains at most 20 steps.",
           "dependencies": [
             "A1",
             "A3"
           ],
           "defects": [],
-          "remaining": "Wire a bounded hypothesis read model into the workbench."
+          "remaining": "Reconcile exact-commit Linux CI and retain A1 adaptive investigation and richer hypothesis semantics in their own rows.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43"
         },
         {
           "id": "P1-06",
           "requirement": "Show remaining per-incident tool budget.",
-          "status": "NOT IMPLEMENTED",
+          "status": "PARTIALLY IMPLEMENTED",
           "implementation": [
             "frontend/src/main.tsx",
-            "backend/probes/gateway.py"
+            "backend/probes/gateway.py",
+            "backend/workbench.py",
+            "backend/api.py",
+            "frontend/src/InvestigationPanel.tsx"
           ],
           "consumers": [
-            "Probe gateway enforces budget; the workbench has no per-incident budget display."
+            "Workbench SSE resynchronization and polling -> GET /v1/incidents/{id}/investigation"
           ],
           "tests": [
-            "tests/test_probes.py"
+            "tests/test_probes.py",
+            "tests/test_workbench.py",
+            "frontend/tests/api.test.mjs"
           ],
-          "evidence": "No budget fetch or meter is wired into App.refresh.",
+          "evidence": "Chrome displayed 2 used and 1 remaining from the scoped probe budget on reconnect. The native PostgreSQL concurrency regression verifies that the counter and latest outcome use one consistent read.",
           "dependencies": [
             "B4",
             "A2"
           ],
           "defects": [],
-          "remaining": "Expose and render a bounded, scoped budget summary."
+          "remaining": "Reconcile exact-commit Linux CI.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
+          "acceptance_criteria": [
+            "Display server-accounted usage and remaining budget on reconnect.",
+            "Do not display the prior identity's incident details after tenant or credential changes."
+          ]
         },
         {
           "id": "P1-07",
@@ -2094,20 +2122,26 @@
           "implementation": [
             "frontend/src/main.tsx",
             "backend/api.py",
-            "backend/investigator/abstain.py"
+            "backend/investigator/abstain.py",
+            "backend/workbench.py",
+            "frontend/src/InvestigationPanel.tsx"
           ],
           "consumers": [
-            "Incident stage and GET /v1/incidents/{id}/assessments"
+            "Workbench SSE resynchronization and polling -> GET /v1/incidents/{id}/investigation"
           ],
           "tests": [
-            "tests/test_assessments.py"
+            "tests/test_assessments.py",
+            "tests/test_workbench.py",
+            "frontend/tests/api.test.mjs"
           ],
-          "evidence": "The workbench shows the incident status. It does not fetch or show the typed assessment.",
+          "evidence": "The live investigation panel renders the most recent durable assessment when one exists. FastAPI test verifies typed TOOL_UNAVAILABLE provenance.",
           "dependencies": [
             "A4"
           ],
           "defects": [],
-          "remaining": "Add typed reason and handoff guidance to the displayed incident snapshot."
+          "remaining": "Add next-step guidance and visible provider fallback before completing operator handoff.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43"
         },
         {
           "id": "P1-08",
@@ -2252,23 +2286,29 @@
           "status": "PARTIALLY IMPLEMENTED",
           "implementation": [
             "frontend/src/main.tsx",
-            "backend/api.py"
+            "backend/api.py",
+            "backend/workbench.py",
+            "frontend/src/InvestigationPanel.tsx"
           ],
           "consumers": [
-            "Incident status and App.refresh → effects/lineage"
+            "Workbench SSE resynchronization and polling -> GET /v1/incidents/{id}/investigation"
           ],
           "tests": [
             "tests/test_outcomes.py",
-            "tests/test_lineage.py"
+            "tests/test_lineage.py",
+            "tests/test_workbench.py",
+            "frontend/tests/api.test.mjs"
           ],
-          "evidence": "The workbench renders effect state and incident status. It does not show a complete operator-facing outcome revision and review handoff timeline.",
+          "evidence": "Chrome rendered an UNKNOWN effect and the newest failed outcome from the actual FastAPI investigation response. Only a verified simulator witness is eligible for recorded duration.",
           "dependencies": [
             "B3",
             "A4",
             "E2"
           ],
           "defects": [],
-          "remaining": "Add and verify explicit failed, disputed and unresolved outcome presentation."
+          "remaining": "Complete operator navigation and review control behavior for pending and disputed outcomes.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43"
         },
         {
           "id": "P1-15",
@@ -4509,7 +4549,7 @@
         {
           "id": "E7-03",
           "requirement": "Bind the actual executed strategy, model selection, and total budget to the persisted route",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/routing/decision.py",
             "backend/workflows/incident.py",
@@ -4535,14 +4575,15 @@
           "defects": [
             "Previously the opt-in advisory ran under RUNBOOK. Repaired locally."
           ],
-          "remaining": "Reconcile exact-commit Linux CI. Held-out review and production policy approval remain separate.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "remaining": "Held-out review and production policy promotion remain separate.",
+          "ci_status": "SUCCESS_ALL_10_JOBS",
           "pdf_reference": "Section 2.19.3–2.19.4, PDF pages 75–76",
           "acceptance_criteria": [
             "Persist strategy, model and token reservation before the provider call.",
             "Do not reselect on retry or arm the provider on an existing RUNBOOK.",
             "Keep the route under development authorization and the existing tool and approval guards."
-          ]
+          ],
+          "commit": "77e325fccb7515bf0086be0e21ba07aa0d12ecbc"
         },
         {
           "id": "E7-04",
@@ -4593,9 +4634,10 @@
           "defects": [
             "The prior digest omitted selection inputs. Repaired locally."
           ],
-          "remaining": "Reconcile exact-commit Linux CI. Held-out review and production policy approval remain separate.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
-          "pdf_reference": "Section 2.19.3–2.19.4, PDF pages 75–76"
+          "remaining": "Persist additional route context as memory and risk inputs are implemented. Held-out comparative evaluation remains open.",
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "pdf_reference": "Section 2.19.3–2.19.4, PDF pages 75–76",
+          "commit": "77e325fccb7515bf0086be0e21ba07aa0d12ecbc"
         },
         {
           "id": "E7-06",
@@ -4903,6 +4945,8 @@
       "P1-02",
       "P1-03",
       "P1-04",
+      "P1-05",
+      "P1-06",
       "P1-07",
       "P1-08",
       "P1-09",
@@ -5309,6 +5353,12 @@
       "P3-17",
       "P3-19"
     ],
+    "backend/workbench.py": [
+      "P1-05",
+      "P1-06",
+      "P1-07",
+      "P1-14"
+    ],
     "backend/workers/dispatcher.py": [
       "B1-03",
       "B1-07",
@@ -5416,6 +5466,12 @@
       "E8-05",
       "E8-07"
     ],
+    "frontend/src/InvestigationPanel.tsx": [
+      "P1-05",
+      "P1-06",
+      "P1-07",
+      "P1-14"
+    ],
     "frontend/src/incidentStream.ts": [
       "P1-09",
       "P1-10",
@@ -5457,10 +5513,14 @@
       "P1-13"
     ],
     "frontend/tests/api.test.mjs": [
+      "P1-05",
+      "P1-06",
+      "P1-07",
       "P1-09",
       "P1-10",
       "P1-11",
-      "P1-13"
+      "P1-13",
+      "P1-14"
     ],
     "frontend/tests/lineagePages.test.mjs": [
       "P3-09",
@@ -5959,6 +6019,12 @@
       "P1-01",
       "P1-02",
       "P1-08"
+    ],
+    "tests/test_workbench.py": [
+      "P1-05",
+      "P1-06",
+      "P1-07",
+      "P1-14"
     ],
     "tests/test_worker_limits.py": [
       "B4-04"

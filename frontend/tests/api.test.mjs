@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { detail, fetchQueueHealth, fetchDeadLetters } from "../src/api.ts";
+import { detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation } from "../src/api.ts";
 import { consumeIncidentStream } from "../src/incidentStream.ts";
 
 test("queue request uses the caller's headers and original read-only path", async (t) => {
@@ -10,6 +10,18 @@ test("queue request uses the caller's headers and original read-only path", asyn
   assert.deepEqual(await fetchQueueHealth(headers), payload);
   assert.equal(fetch.mock.calls.length, 1);
   assert.deepEqual(fetch.mock.calls[0].arguments, ["/v1/operations/queues", { headers }]);
+});
+
+test("investigation requests carry the current scope and reject mismatched snapshots", async (t) => {
+  const headers = { "X-Tenant-Id": "synthetic" };
+  const signal = new AbortController().signal;
+  const payload = { incident: { id: "first" }, steps: [] };
+  const fetch = t.mock.method(globalThis, "fetch", async () => Response.json(payload));
+  assert.deepEqual(await fetchInvestigation("first", headers, signal), payload);
+  assert.deepEqual(fetch.mock.calls[0].arguments, [
+    "/v1/incidents/first/investigation", { headers, signal },
+  ]);
+  await assert.rejects(fetchInvestigation("other", headers, signal), /selected incident/);
 });
 
 test("dead-letter request preserves cursor, page limit and caller identity", async (t) => {

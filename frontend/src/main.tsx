@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import { evidenceProjectionWarning, replaceLineagePage, type EvidenceProjectionStatus } from "./lineagePages";
 import { authManager, oidcConfigError, usingOidc } from "./auth";
 import { consumeIncidentStream } from "./incidentStream";
+import { InvestigationPanel } from "./InvestigationPanel";
 import {
-  detail, fetchQueueHealth, fetchDeadLetters,
+  detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation,
+  type Incident, type Investigation,
   type QueueHealth, type ExperienceDeadLetter, type ExperienceDeadLetterPage,
 } from "./api";
 
@@ -13,14 +15,6 @@ type AuthIdentity = {
   tenant_id: string;
   actor_id: string;
   roles: string[];
-};
-
-type Incident = {
-  id: string;
-  target_id: string;
-  status_projection: string;
-  status_version: number;
-  created_at: string;
 };
 
 type Plan = {
@@ -151,6 +145,8 @@ function App() {
   const deadLetterRequestVersion = useRef(0);
   const [events, setEvents] = useState<UIEvent[]>([]);
   const [connection, setConnection] = useState<"SYNCING" | "LIVE" | "STALE">("SYNCING");
+  const authScope = useMemo(() => ({}), [tenant, token, accessToken, identity?.actor_id]);
+  const [investigation, setInvestigation] = useState<{ scope: object; report: Investigation } | null>(null);
   const [replayFixture, setReplayFixture] = useState<ReplayFixture>("recoverable-v1");
   const [replaySeed, setReplaySeed] = useState("42");
   const [replay, setReplay] = useState<ReplayReport | null>(null);
@@ -563,6 +559,7 @@ function App() {
   useEffect(() => {
     const selectedId = incident?.id;
     if (!selectedId || !authenticated) return;
+    const incidentId = selectedId;
 
     const controller = new AbortController();
     const auth = headers();
@@ -571,15 +568,17 @@ function App() {
     setConnection("SYNCING");
 
     async function refreshSnapshot() {
-      const response = await fetch(url, { headers: auth, signal: controller.signal });
-      const body: unknown = await response.json();
-      if (!response.ok) throw new Error(detail(body));
+      const snapshot = await fetchInvestigation(incidentId, auth, controller.signal);
       if (controller.signal.aborted) return;
-      const incoming = body as Incident;
+      const incoming = snapshot.incident;
       setIncident(previous =>
-        previous && previous.id === incoming.id
-          && previous.status_version > incoming.status_version
-          ? previous : incoming
+        previous?.id === incoming.id && previous.status_version <= incoming.status_version
+          ? incoming : previous
+      );
+      setInvestigation(previous =>
+        previous?.scope === authScope && previous.report.incident.id === incoming.id
+          && previous.report.incident.status_version > incoming.status_version
+          ? previous : { scope: authScope, report: snapshot }
       );
     }
 
@@ -684,7 +683,7 @@ function App() {
 
     void subscribe();
     return () => controller.abort();
-  }, [incident?.id, tenant, token, accessToken, identity?.actor_id]);
+  }, [incident?.id, authScope, authenticated]);
 
   async function decide(action: "cancel" | "acknowledge") {
     if (!incident) return;
@@ -873,6 +872,10 @@ function App() {
                 <button type="button" className="secondary" disabled={busy || connection !== "LIVE"} onClick={() => decide("cancel")}>Request cancellation</button>
               )}
             </div>
+            {authenticated && investigation?.scope === authScope
+              && investigation.report.incident.id === incident.id
+              && <InvestigationPanel report={investigation.report}
+                stale={connection !== "LIVE" || investigation.report.incident.status_version !== incident.status_version} />}
             {plan && <div className="plan">
               <h3>Proposed simulator plan</h3>
               <p><strong>{plan.action_id}</strong> for {plan.target_id}</p>

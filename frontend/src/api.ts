@@ -1,4 +1,33 @@
 // Read-only operations HTTP contracts; auth headers belong to the caller.
+export type Incident = {
+  id: string;
+  target_id: string;
+  status_projection: string;
+  status_version: number;
+  created_at: string;
+};
+
+export type Investigation = {
+  incident: Incident;
+  probe_budget: { used: number; limit: number; remaining: number };
+  steps: {
+    step_no: number;
+    decision: string;
+    probe_id: string;
+    hypotheses: string[];
+    incomplete_evidence: boolean;
+    evidence: { id: string; source: string; validity: string; redacted_excerpt: string }[];
+  }[];
+  steps_truncated: boolean;
+  latest_assessment: { reason: string; outcome: string; step_no: number } | null;
+  latest_effect_state: string | null;
+  recovery: {
+    latest_outcome_revision: number | null;
+    latest_outcome_label: string | null;
+    admission_to_recorded_witness_ms: number | null;
+  } | null;
+};
+
 export type QueueHealth = {
   pending_outbox: number;
   experience_dead_letters_unreviewed: number;
@@ -47,6 +76,18 @@ async function readJson<T>(path: string, headers: Record<string, string>): Promi
 
 export function fetchQueueHealth(headers: Record<string, string>): Promise<QueueHealth> {
   return readJson<QueueHealth>("/v1/operations/queues", headers);
+}
+
+export async function fetchInvestigation(
+  incidentId: string, headers: Record<string, string>, signal: AbortSignal,
+): Promise<Investigation> {
+  const path = `/v1/incidents/${encodeURIComponent(incidentId)}/investigation`;
+  const response = await fetch(path, { headers, signal });
+  const body: unknown = await response.json();
+  if (!response.ok) throw new Error(detail(body));
+  const report = body as Investigation;
+  if (report?.incident?.id !== incidentId) throw new Error("Investigation did not match the selected incident");
+  return report;
 }
 
 export function fetchDeadLetters(

@@ -70,4 +70,6 @@ Migration 0048 adds a PostgreSQL checkpoint for automatic lineage recovery. The 
 
 Migration 0048 passed [all ten exact-commit Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45776947852). Migration 0049 pins the development-only advisory strategy, model and reservation before provider use. The native workflow test changes the ambient model after routing and verifies one call to the original pin, a typed uncertainty handoff, no plan, and successful replay. Existing historical route fields remain unknown. Exact-commit CI for 0049 must pass before updating its requirement verification status.
 
+Migration 0049 passed [all ten exact-commit Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45777899105). The workbench now refreshes bounded investigation details with the incident snapshot on event delivery and reconnect. The read uses one PostgreSQL snapshot for probe usage, redacted evidence, typed assessments and the most recent outcome and receipt state. A native concurrency test and a Chrome walkthrough against FastAPI passed. Next are plan preview, approval conflict refresh and end-to-end operator handoff guidance.
+
 The completion definition is **measured acceptance of every relevant test in the PDF**, not the presence of a similarly named file or endpoint.

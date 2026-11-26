@@ -97,7 +97,7 @@ textarea:focus { outline: 2px solid #76a8ff; }
 .skip-link:focus-visible {
   top: 12px;
 }
-:where(button, a, input, textarea, select):focus-visible {
+:where(button, a, input, textarea, select, summary):focus-visible {
   outline: 3px solid #b6ddff;
   outline-offset: 3px;
 }

@@ -178,6 +178,21 @@ async def acknowledge_incident_review(
 register_operations_routes(app)
 
 
+@app.get("/v1/incidents/{incident_id}/investigation")
+async def incident_investigation(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    from backend.workbench import read_investigation
+
+    report = await read_investigation(session, tenant_id, incident_id, settings.max_probe_calls_per_incident)
+    if report is None:
+        raise HTTPException(404, "incident not found")
+    return report
+
+
 @app.get("/v1/incidents/{incident_id}/evidence")
 async def incident_evidence(
     incident_id: UUID,
