@@ -1,4 +1,5 @@
 import type { Investigation } from "./api";
+import { advisoryFallbackMessage, handoffGuidance } from "./investigationGuidance";
 
 function humanize(value: string): string {
   return value.toLowerCase().replaceAll("_", " ");
@@ -11,6 +12,9 @@ const causeLabels: Record<string, string> = {
 
 export function InvestigationPanel({ report, stale }: { report: Investigation; stale: boolean }) {
   const { probe_budget: budget, latest_assessment: assessment, recovery } = report;
+  const handoff = report.incident.status_projection === "NEEDS_REVIEW";
+  const handoffReason = assessment?.outcome === "ABSTAINED" ? assessment.reason : undefined;
+  const fallback = report.advisory_fallback_reason;
   const outcome = recovery?.latest_outcome_label;
   const witnessTime = recovery?.admission_to_recorded_witness_ms;
   const effect = report.latest_effect_state;
@@ -20,6 +24,14 @@ export function InvestigationPanel({ report, stale }: { report: Investigation; s
   return <div className="audit" aria-labelledby="investigation-title">
     <h3 id="investigation-title">Investigation</h3>
     {stale && <p className="muted">Last fetched details</p>}
+    {handoff && <div className="audit-item" role="status">
+      <strong>{stale ? "Last recorded handoff" : "Operator handoff"}</strong>
+      <p>{handoffReason ? humanize(handoffReason) : "Review required"}</p>
+      <p>{handoffGuidance(handoffReason)}</p>
+    </div>}
+    {fallback && <p className="muted" role="status">
+      <strong>Runbook fallback.</strong> {advisoryFallbackMessage(fallback)}
+    </p>}
     <dl>
       <dt>Probe budget</dt><dd>{budget.used} used · {budget.remaining} remaining of {budget.limit}</dd>
       <dt>Assessment</dt><dd>{assessment

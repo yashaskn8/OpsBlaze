@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from backend.api import app
 from backend.database import get_session
-from backend.models import DecisionAssessment, Evidence, HypothesisStep, Incident, OutcomeRevision
+from backend.models import DecisionAssessment, Evidence, HypothesisStep, Incident, ModelAdvisory, OutcomeRevision
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 from backend.settings import Settings, get_settings
@@ -50,6 +50,11 @@ async def test_investigation_refresh_bounds_history_and_redacts_foreign_refs(ses
             id=uuid4(), tenant_id="own", incident_id=own.id, revision=1, label="FAILED",
             reason="internal human feedback", witness_source="SIMULATOR_WITNESS",
         ))
+        session.add(ModelAdvisory(
+            incident_id=own.id, tenant_id="own", state="FAILED", reason_code="PROVIDER_UNAVAILABLE",
+            model_id="synthetic-provider-name", next_probe="untrusted provider text",
+            tokens_used=0, tokens_reserved=512,
+        ))
 
     settings = Settings(local_token="disposable-test", max_probe_calls_per_incident=3)
     async def session_override():
@@ -69,6 +74,7 @@ async def test_investigation_refresh_bounds_history_and_redacts_foreign_refs(ses
     assert str(foreign_id) not in response.text
     assert all(value not in response.text for value in (
         "foreign-only excerpt", "unsupported raw value", "internal human feedback", "unapproved-label",
+        "synthetic-provider-name", "untrusted provider text",
     ))
     body = response.json()
     assert body["incident"]["id"] == str(own.id)
@@ -80,8 +86,33 @@ async def test_investigation_refresh_bounds_history_and_redacts_foreign_refs(ses
     assert last["incomplete_evidence"]
     assert [record["id"] for record in last["evidence"]] == [str(own_id)]
     assert body["latest_assessment"] == {"reason": "TOOL_UNAVAILABLE", "outcome": "ABSTAINED", "step_no": 21}
+    assert body["advisory_fallback_reason"] == "PROVIDER_UNAVAILABLE"
     assert body["recovery"]["latest_outcome_label"] == "FAILED"
     assert body["recovery"]["admission_to_recorded_witness_ms"] is None
+
+
+@pytest.mark.parametrize("state,reason,scope,projected", [
+    ("COMPLETE", "INSUFFICIENT_EVIDENCE", "own", None),
+    ("RESERVED", None, "own", None),
+    ("FAILED", "untrusted text", "own", "UNKNOWN"),
+    ("FAILED", "UNCONFIRMED", "other", None),
+    ("SKIPPED", "BUDGET_DENIED", "own", "BUDGET_DENIED"),
+])
+async def test_investigation_only_projects_scoped_typed_fallback(
+    sessions_fixture, state, reason, scope, projected,
+):
+    from backend.workbench import read_investigation
+
+    async with sessions_fixture() as session:
+        incident = await admit_incident(session, "own", "fallback", IncidentCreate(target_id="checkout"))
+    async with sessions_fixture.begin() as session:
+        session.add(ModelAdvisory(
+            incident_id=incident.id, tenant_id=scope, state=state, reason_code=reason,
+            model_id="synthetic", tokens_used=0, tokens_reserved=0,
+        ))
+    async with sessions_fixture() as session:
+        report = await read_investigation(session, "own", incident.id, 3)
+    assert report["advisory_fallback_reason"] == projected
 
 
 @pytest.mark.integration
@@ -125,12 +156,19 @@ async def test_postgres_workbench_uses_one_snapshot_during_concurrent_update(mon
                         id=uuid4(), tenant_id=tenant, incident_id=incident.id, revision=1, label="FAILED",
                         reason="synthetic observation", witness_source="SIMULATOR_WITNESS",
                     ))
+                    session.add(ModelAdvisory(
+                        incident_id=incident.id, tenant_id=tenant, state="FAILED",
+                        model_id="synthetic", reason_code="PROVIDER_UNAVAILABLE",
+                        tokens_used=0, tokens_reserved=512,
+                    ))
                 changed.set()
             before = first.result().json()
             after = (await client.get(path, headers=headers)).json()
         assert before["probe_budget"]["used"] == 0
         assert before["recovery"]["latest_outcome_label"] is None
+        assert before["advisory_fallback_reason"] is None
         assert after["probe_budget"]["used"] == 1
         assert after["recovery"]["latest_outcome_label"] == "FAILED"
+        assert after["advisory_fallback_reason"] == "PROVIDER_UNAVAILABLE"
     finally:
         await engine.dispose()

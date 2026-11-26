@@ -7,8 +7,8 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "e52e66874ddfb1807ad4cd6374cd44d1b23c4e7a",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45779838912",
+    "commit": "2dbc46a708f6f8291b854f6a9a28cc4803e8b38a",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45780955016",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
@@ -132,6 +132,13 @@
       "frontend_node_tests_passed": 13,
       "typescript_vite_build": "PASS",
       "chrome": "Saw a pending plan become approved and then expired without another request. A new request displayed expired with the original vote preserved."
+    },
+    "operator_handoff": {
+      "focused_windows_backend_tests_passed": 44,
+      "native_postgresql_tests_passed": 1,
+      "frontend_node_tests_passed": 14,
+      "typescript_vite_build": "PASS",
+      "chrome": "The terminal handoff and provider fallback appeared after the server's SSE notification and disappeared immediately on tenant change."
     }
   },
   "findings": [
@@ -341,7 +348,7 @@
         "P3-16"
       ],
       "execution": "Direct GitHub for isolated changes when applicable checks can run; native Codex for browser and runtime verification",
-      "action": "Reconcile exact-commit approval lifecycle CI, connect operator handoff guidance, and complete scoped source navigation."
+      "action": "Reconcile exact-commit operator handoff CI, then connect scoped source navigation for pending and disputed outcomes."
     },
     {
       "order": 4,
@@ -1890,7 +1897,10 @@
             "backend/investigator/advisory.py",
             "backend/investigator/baseline.py",
             "backend/investigator/abstain.py",
-            "backend/api.py"
+            "backend/api.py",
+            "backend/workbench.py",
+            "frontend/src/InvestigationPanel.tsx",
+            "frontend/src/investigationGuidance.ts"
           ],
           "consumers": [
             "Optional advisory -> ModelAdvisory state/reason and GET advisory; deterministic tool handoff -> GET assessments"
@@ -1898,20 +1908,19 @@
           "tests": [
             "tests/test_model_advisory.py",
             "tests/test_assessments.py",
-            "tests/test_advisory_routes.py"
+            "tests/test_advisory_routes.py",
+            "tests/test_workbench.py",
+            "frontend/tests/api.test.mjs"
           ],
-          "evidence": "Native workflow returns NEEDS_REVIEW and stores MODEL_UNCERTAINTY at the probe step without creating a plan. Provider failures and denied reservations have distinct advisory reasons. Healthy targets persist a separate typed abstention.",
+          "evidence": "Native workflow returns NEEDS_REVIEW and stores MODEL_UNCERTAINTY at the probe step without creating a plan. Provider failures and denied reservations have distinct advisory reasons. Healthy targets persist a separate typed abstention. The scoped workbench distinguishes fallback provider failure and denied advisory budget from typed model uncertainty and probe or budget handoff. The FastAPI and Chrome tests cover fallback, guidance, and tenant isolation.",
           "dependencies": [
             "A1",
             "P1"
           ],
-          "defects": [
-            "Optional model uncertainty and healthy-source abstention do not populate the A4 assessment route. Optional provider failure falls back to the deterministic path."
-          ],
-          "remaining": "Render provider fallback alongside terminal handoff in the operator view. Calibration evidence is tracked separately.",
-          "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.8.3–2.8.4, PDF pages 39–40",
-          "commit": "77e325fccb7515bf0086be0e21ba07aa0d12ecbc"
+          "defects": [],
+          "remaining": "Reconcile exact-commit CI.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.8.3–2.8.4, PDF pages 39–40"
         },
         {
           "id": "A4-05",
@@ -2159,7 +2168,8 @@
             "backend/api.py",
             "backend/investigator/abstain.py",
             "backend/workbench.py",
-            "frontend/src/InvestigationPanel.tsx"
+            "frontend/src/InvestigationPanel.tsx",
+            "frontend/src/investigationGuidance.ts"
           ],
           "consumers": [
             "Workbench SSE resynchronization and polling -> GET /v1/incidents/{id}/investigation"
@@ -2169,15 +2179,14 @@
             "tests/test_workbench.py",
             "frontend/tests/api.test.mjs"
           ],
-          "evidence": "The live investigation panel renders the most recent durable assessment when one exists. FastAPI test verifies typed TOOL_UNAVAILABLE provenance.",
+          "evidence": "The live workbench presents the durable handoff reason and a reason-specific next step. Chrome observed TOOL_UNAVAILABLE guidance and provider fallback after an SSE notification and cleared them on tenant switch.",
           "dependencies": [
             "A4"
           ],
           "defects": [],
-          "remaining": "Add next-step guidance and visible provider fallback before completing operator handoff.",
-          "ci_status": "SUCCESS_ALL_10_JOBS",
-          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
-          "commit": "9b96427761fc2cc84a56d22ddf6083999dff389a"
+          "remaining": "Reconcile exact-commit CI.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43"
         },
         {
           "id": "P1-08",
@@ -2603,8 +2612,9 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Reconcile exact-commit CI and implement pending-age monitoring across the review queue.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING"
+          "remaining": "Implement pending-age monitoring across the review queue.",
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "commit": "2dbc46a708f6f8291b854f6a9a28cc4803e8b38a"
         },
         {
           "id": "P2-08",
@@ -5397,6 +5407,7 @@
       "P3-19"
     ],
     "backend/workbench.py": [
+      "A4-04",
       "P1-05",
       "P1-06",
       "P1-07",
@@ -5510,6 +5521,7 @@
       "E8-07"
     ],
     "frontend/src/InvestigationPanel.tsx": [
+      "A4-04",
       "P1-05",
       "P1-06",
       "P1-07",
@@ -5523,6 +5535,10 @@
       "P1-09",
       "P1-10",
       "P1-11"
+    ],
+    "frontend/src/investigationGuidance.ts": [
+      "A4-04",
+      "P1-07"
     ],
     "frontend/src/lineagePages.ts": [
       "P3-11",
@@ -5560,6 +5576,7 @@
       "P1-13"
     ],
     "frontend/tests/api.test.mjs": [
+      "A4-04",
       "P1-05",
       "P1-06",
       "P1-07",
@@ -6071,6 +6088,7 @@
       "P1-08"
     ],
     "tests/test_workbench.py": [
+      "A4-04",
       "P1-05",
       "P1-06",
       "P1-07",

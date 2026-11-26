@@ -20,6 +20,7 @@ export type Investigation = {
   }[];
   steps_truncated: boolean;
   latest_assessment: { reason: string; outcome: string; step_no: number } | null;
+  advisory_fallback_reason: string | null;
   latest_effect_state: string | null;
   recovery: {
     latest_outcome_revision: number | null;

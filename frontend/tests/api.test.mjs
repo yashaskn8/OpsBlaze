@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation, finishReview } from "../src/api.ts";
 import { consumeIncidentStream } from "../src/incidentStream.ts";
+import { advisoryFallbackMessage, handoffGuidance } from "../src/investigationGuidance.ts";
 
 test("queue request uses the caller's headers and original read-only path", async (t) => {
   const headers = { Authorization: "Bearer synthetic-test" };
@@ -40,6 +41,18 @@ test("review completion refetches for success, conflict and forbidden responses"
     /Database offline/,
   );
   assert.equal(refreshed, 3);
+});
+
+test("investigation handoff directs operators to scoped read-only checks", () => {
+  assert.match(handoffGuidance("TOOL_UNAVAILABLE"), /read-only observation/);
+  assert.match(handoffGuidance("TOOL_BLOCKED"), /authorization and target scope/);
+  assert.match(handoffGuidance("BUDGET_EXHAUSTED"), /runbook for escalation/);
+  assert.match(handoffGuidance("VERSION_CHANGED"), /current target version/);
+  assert.match(handoffGuidance("UNLINKED_EVIDENCE"), /fresh evidence/);
+  assert.equal(handoffGuidance("unknown untrusted text"), handoffGuidance(undefined));
+  assert.match(advisoryFallbackMessage("PROVIDER_UNAVAILABLE"), /did not return usable guidance/);
+  assert.match(advisoryFallbackMessage("BUDGET_DENIED"), /budget was unavailable/);
+  assert.equal(advisoryFallbackMessage("unknown untrusted text"), "The advisory result was unavailable.");
 });
 
 test("dead-letter request preserves cursor, page limit and caller identity", async (t) => {

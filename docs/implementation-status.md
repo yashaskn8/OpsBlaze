@@ -76,4 +76,6 @@ The live investigation increment passed [all ten exact-commit Linux CI jobs](htt
 
 The preview repair passed [all ten exact-commit Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45779838912). The plan preview now shows when review became pending and derives expiry from the server clock. Chrome displayed expiry without a refresh and preserved the recorded decision. The native PostgreSQL and Temporal workflow verified the pending, approved and consumed states. Pending-age monitoring and operator handoff guidance remain open.
 
+The approval lifecycle passed [all ten exact-commit Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45780955016). The workbench now displays reason-specific guidance on terminal investigation handoff and explains the deterministic fallback when advisory execution fails or is skipped. It reads only the scoped fallback category within the investigation snapshot. Chrome verified the live update and tenant switch against FastAPI. Native PostgreSQL verified that fallback, probe budget, and outcome advance together on the next snapshot read.
+
 The completion definition is **measured acceptance of every relevant test in the PDF**, not the presence of a similarly named file or endpoint.

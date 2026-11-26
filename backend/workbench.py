@@ -6,13 +6,17 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.lineage_refs import MAX_EVIDENCE_REFS, bounded_evidence_refs, reference_uuid
-from backend.models import DecisionAssessment, EffectReceipt, Evidence, HypothesisStep
+from backend.models import DecisionAssessment, EffectReceipt, Evidence, HypothesisStep, ModelAdvisory
 from backend.outcomes import recorded_recovery_timing
 from backend.schemas import IncidentView
 from backend.services import find_incident
 
 STEP_LIMIT = 20
 LAB_CAUSES = ("simulated_target_unhealthy", "no_simulated_fault")
+ADVISORY_FALLBACK_REASONS = {
+    "FAILED": {"UNCONFIRMED", "PROVIDER_UNAVAILABLE"},
+    "SKIPPED": {"BUDGET_DENIED", "DISABLED"},
+}
 
 
 async def read_investigation(
@@ -61,6 +65,13 @@ async def read_investigation(
         DecisionAssessment.reason, DecisionAssessment.outcome, DecisionAssessment.step_no,
     ).where(DecisionAssessment.incident_id == incident.id, DecisionAssessment.tenant_id == tenant_id)
         .order_by(DecisionAssessment.step_no.desc()).limit(1))).one_or_none()
+    advisory = (await session.execute(select(ModelAdvisory.state, ModelAdvisory.reason_code).where(
+        ModelAdvisory.incident_id == incident.id, ModelAdvisory.tenant_id == tenant_id,
+        ModelAdvisory.state.in_(ADVISORY_FALLBACK_REASONS),
+    ))).one_or_none()
+    fallback = None
+    if advisory is not None:
+        fallback = advisory.reason_code if advisory.reason_code in ADVISORY_FALLBACK_REASONS[advisory.state] else "UNKNOWN"
     latest_effect = await session.scalar(select(EffectReceipt.state).where(
         EffectReceipt.incident_id == incident.id, EffectReceipt.tenant_id == tenant_id,
     ).order_by(EffectReceipt.created_at.desc(), EffectReceipt.id.desc()).limit(1))
@@ -72,6 +83,7 @@ async def read_investigation(
         "steps": steps,
         "steps_truncated": len(rows) > STEP_LIMIT,
         "latest_assessment": dict(assessment._mapping) if assessment else None,
+        "advisory_fallback_reason": fallback,
         "latest_effect_state": latest_effect,
         "recovery": recovery,
     }
