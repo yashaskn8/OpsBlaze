@@ -72,4 +72,6 @@ Migration 0048 passed [all ten exact-commit Linux CI jobs](https://github.com/ya
 
 Migration 0049 passed [all ten exact-commit Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45777899105). The workbench now refreshes bounded investigation details with the incident snapshot on event delivery and reconnect. The read uses one PostgreSQL snapshot for probe usage, redacted evidence, typed assessments and the most recent outcome and receipt state. A native concurrency test and a Chrome walkthrough against FastAPI passed. Next are plan preview, approval conflict refresh and end-to-end operator handoff guidance.
 
+The live investigation increment passed [all ten exact-commit Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45779108327). Reviewers now see the pinned policy and typed simulator postcondition in the scoped plan preview. Following a competing decision that returns HTTP 409, the workbench reloads the durable plan and approval. A Chrome regression exercised a real competing rejection through FastAPI. Exact-commit CI for the preview repair remains a release check.
+
 The completion definition is **measured acceptance of every relevant test in the PDF**, not the presence of a similarly named file or endpoint.

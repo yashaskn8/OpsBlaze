@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation } from "../src/api.ts";
+import { detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation, finishReview } from "../src/api.ts";
 import { consumeIncidentStream } from "../src/incidentStream.ts";
 
 test("queue request uses the caller's headers and original read-only path", async (t) => {
@@ -22,6 +22,24 @@ test("investigation requests carry the current scope and reject mismatched snaps
     "/v1/incidents/first/investigation", { headers, signal },
   ]);
   await assert.rejects(fetchInvestigation("other", headers, signal), /selected incident/);
+});
+
+test("review completion refetches for success, conflict and forbidden responses", async () => {
+  let refreshed = 0;
+  const refresh = async () => { refreshed += 1; };
+  await finishReview(Response.json({}, { status: 201 }), refresh);
+  for (const status of [409, 403]) {
+    await assert.rejects(
+      finishReview(Response.json({ detail: "Review changed" }, { status }), refresh),
+      /Review changed/,
+    );
+  }
+  assert.equal(refreshed, 3);
+  await assert.rejects(
+    finishReview(Response.json({ detail: "Database offline" }, { status: 503 }), refresh),
+    /Database offline/,
+  );
+  assert.equal(refreshed, 3);
 });
 
 test("dead-letter request preserves cursor, page limit and caller identity", async (t) => {

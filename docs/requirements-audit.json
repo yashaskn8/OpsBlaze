@@ -7,8 +7,8 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "77e325fccb7515bf0086be0e21ba07aa0d12ecbc",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45777899105",
+    "commit": "9b96427761fc2cc84a56d22ddf6083999dff389a",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45779108327",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
@@ -17,8 +17,8 @@
     "IMPLEMENTED BUT DISCONNECTED": 1,
     "LOCALLY UNVERIFIED": 3,
     "NOT IMPLEMENTED": 9,
-    "PARTIALLY IMPLEMENTED": 60,
-    "VERIFIED WORKING": 86
+    "PARTIALLY IMPLEMENTED": 58,
+    "VERIFIED WORKING": 88
   },
   "verification": {
     "native_postgresql": {
@@ -118,6 +118,13 @@
       "frontend_node_tests_passed": 12,
       "typescript_vite_build": "PASS",
       "chrome": "Real FastAPI, keyboard admission and evidence expansion, clean SSE EOF and resync, live budget/outcome/evidence, 390-pixel viewport, tenant change hides previous results."
+    },
+    "approval_preview": {
+      "focused_windows_backend_tests_passed": 89,
+      "native_postgresql_temporal_tests_passed": 2,
+      "frontend_node_tests_passed": 13,
+      "typescript_vite_build": "PASS",
+      "chrome": "Competing authorized rejection produced HTTP 409 for the stale browser request. The durable rejected plan, pinned policy and simulator postcondition were shown."
     }
   },
   "findings": [
@@ -274,6 +281,24 @@
         "tests/test_failure_reviews.py",
         "tests/test_oidc_auth.py"
       ]
+    },
+    {
+      "id": "P2-STALE-REVIEW-PREVIEW",
+      "severity": "MEDIUM",
+      "status": "LOCALLY_REPAIRED_CI_PENDING",
+      "requirements": [
+        "P2-06"
+      ],
+      "reproduction": "Open a proposed plan in Chrome, have a competing authorized reviewer reject it first, then submit the stale browser approval.",
+      "expected": "The conflict is reported and the preview is refreshed from durable plan and approval records.",
+      "observed": "FastAPI returned 409, but the preview continued to show the previous proposal.",
+      "root_cause": "The browser refreshed only after successful review writes.",
+      "repair": "Refetch for successful and conflicting or forbidden decisions, and disable review controls if the preview cannot be refreshed.",
+      "acceptance": [
+        "tests/test_api_contract.py",
+        "frontend/tests/api.test.mjs",
+        "Chrome against real FastAPI with competing synthetic reviews"
+      ]
     }
   ],
   "repair_backlog": [
@@ -308,7 +333,7 @@
         "P3-16"
       ],
       "execution": "Direct GitHub for isolated changes when applicable checks can run; native Codex for browser and runtime verification",
-      "action": "Reconcile exact-commit CI for live investigation; then implement plan preview and approval conflict refresh, richer handoff guidance, and scoped source navigation."
+      "action": "Reconcile the approval preview repair's exact CI, then show approval expiry, connect operator handoff guidance, and complete scoped source navigation."
     },
     {
       "order": 4,
@@ -2056,7 +2081,7 @@
         {
           "id": "P1-05",
           "requirement": "Show evidence-linked competing hypotheses.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "frontend/src/main.tsx",
             "backend/lineage.py",
@@ -2078,14 +2103,15 @@
             "A3"
           ],
           "defects": [],
-          "remaining": "Reconcile exact-commit Linux CI and retain A1 adaptive investigation and richer hypothesis semantics in their own rows.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
-          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43"
+          "remaining": "",
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
+          "commit": "9b96427761fc2cc84a56d22ddf6083999dff389a"
         },
         {
           "id": "P1-06",
           "requirement": "Show remaining per-incident tool budget.",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "frontend/src/main.tsx",
             "backend/probes/gateway.py",
@@ -2107,13 +2133,14 @@
             "A2"
           ],
           "defects": [],
-          "remaining": "Reconcile exact-commit Linux CI.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "remaining": "",
+          "ci_status": "SUCCESS_ALL_10_JOBS",
           "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
           "acceptance_criteria": [
             "Display server-accounted usage and remaining budget on reconnect.",
             "Do not display the prior identity's incident details after tenant or credential changes."
-          ]
+          ],
+          "commit": "9b96427761fc2cc84a56d22ddf6083999dff389a"
         },
         {
           "id": "P1-07",
@@ -2140,8 +2167,9 @@
           ],
           "defects": [],
           "remaining": "Add next-step guidance and visible provider fallback before completing operator handoff.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
-          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43"
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
+          "commit": "9b96427761fc2cc84a56d22ddf6083999dff389a"
         },
         {
           "id": "P1-08",
@@ -2307,8 +2335,9 @@
           ],
           "defects": [],
           "remaining": "Complete operator navigation and review control behavior for pending and disputed outcomes.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
-          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43"
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "pdf_reference": "Section 2.9.1–2.9.5, PDF pages 41–43",
+          "commit": "9b96427761fc2cc84a56d22ddf6083999dff389a"
         },
         {
           "id": "P1-15",
@@ -2390,24 +2419,28 @@
           "implementation": [
             "backend/api.py",
             "backend/plans.py",
-            "frontend/src/main.tsx"
+            "frontend/src/main.tsx",
+            "frontend/src/api.ts"
           ],
           "consumers": [
             "GET /v1/plans/{id}; React approval review card"
           ],
           "tests": [
             "tests/test_api_contract.py",
-            "tests/test_plans.py"
+            "tests/test_plans.py",
+            "frontend/tests/api.test.mjs"
           ],
-          "evidence": "Preview exposes action, target, expected version, digest, evidence, and approval metadata. React renders the expected version and digest.",
+          "evidence": "The scoped plan preview reads the plan, approval and pinned policy in one statement, and shows the typed simulator postcondition. FastAPI and Chrome verified the displayed values.",
           "dependencies": [
             "P1",
             "A3"
           ],
           "defects": [
-            "Structured canonical action/postcondition and pinned policy details are missing from the preview response."
+            "The preview previously omitted pinned policy and typed postcondition. Repaired locally."
           ],
-          "remaining": "Expose simulator postcondition and exact policy context in preview with a UI contract test."
+          "remaining": "Reconcile exact-commit CI. Verify explicit policy-version binding in approvals as authorized rollout variants are implemented.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.10.1–2.10.5, PDF pages 44–46"
         },
         {
           "id": "P2-02",
@@ -2518,23 +2551,27 @@
           "status": "PARTIALLY IMPLEMENTED",
           "implementation": [
             "backend/api.py",
-            "frontend/src/main.tsx"
+            "frontend/src/main.tsx",
+            "frontend/src/api.ts"
           ],
           "consumers": [
             "decide_incident_plan 409 and React decide handler"
           ],
           "tests": [
             "tests/test_api_contract.py",
-            "tests/test_plans.py"
+            "tests/test_plans.py",
+            "frontend/tests/api.test.mjs"
           ],
-          "evidence": "Backend returns a 409 string for stale options; React refreshes after success. Browser catch uses an error string without explicit refresh or bundled current snapshot.",
+          "evidence": "A competing rejection committed through the real FastAPI endpoint. Chrome received 409 for the stale approval and displayed the current durable REJECTED state without a manual refresh. The shared frontend response handler also refreshes on 403.",
           "dependencies": [
             "P1"
           ],
           "defects": [
-            "Blueprint stale/rejected path calls for the current snapshot."
+            "After a stale decision the old preview stayed visible. Repaired locally."
           ],
-          "remaining": "Refresh authoritative preview on conflict and add a UI regression that keeps a stale button from being used again."
+          "remaining": "Reconcile exact-commit CI.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING",
+          "pdf_reference": "Section 2.10.1–2.10.5, PDF pages 44–46"
         },
         {
           "id": "P2-07",
@@ -5472,6 +5509,10 @@
       "P1-07",
       "P1-14"
     ],
+    "frontend/src/api.ts": [
+      "P2-01",
+      "P2-06"
+    ],
     "frontend/src/incidentStream.ts": [
       "P1-09",
       "P1-10",
@@ -5520,7 +5561,9 @@
       "P1-10",
       "P1-11",
       "P1-13",
-      "P1-14"
+      "P1-14",
+      "P2-01",
+      "P2-06"
     ],
     "frontend/tests/lineagePages.test.mjs": [
       "P3-09",

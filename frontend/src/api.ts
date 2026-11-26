@@ -67,6 +67,18 @@ export function detail(value: unknown): string {
   return "Request failed";
 }
 
+export async function finishReview(
+  response: Response, refresh: () => Promise<void>,
+): Promise<void> {
+  if (response.ok) {
+    await refresh();
+    return;
+  }
+  const body: unknown = await response.json();
+  if (response.status === 409 || response.status === 403) await refresh();
+  throw new Error(detail(body));
+}
+
 async function readJson<T>(path: string, headers: Record<string, string>): Promise<T> {
   const response = await fetch(path, { headers });
   const body: unknown = await response.json();

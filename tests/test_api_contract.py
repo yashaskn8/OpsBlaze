@@ -199,6 +199,58 @@ async def test_plan_decision_requires_distinct_reviewer_token(api_client):
 
 
 @pytest.mark.asyncio
+async def test_plan_preview_shows_scoped_postcondition_and_current_conflicting_decision(
+    api_client, sessions_fixture,
+):
+    from uuid import UUID
+
+    from backend.models import Incident, IncidentPlan
+    from backend.policy.constants import INCUMBENT_POLICY_ID
+
+    created = await api_client.post(
+        "/v1/incidents", json={"target_id": "checkout"},
+        headers=headers("alpha", **{"Idempotency-Key": "review-preview"}),
+    )
+    assert created.status_code == 202, created.text
+    incident_id = UUID(created.json()["id"])
+    plan_id = uuid4()
+    async with sessions_fixture.begin() as session:
+        incident = await session.get(Incident, incident_id)
+        incident.status_projection = "AWAITING_APPROVAL"
+        session.add(IncidentPlan(
+            id=plan_id, tenant_id="alpha", incident_id=incident_id, target_id="checkout",
+            action_id="SIMULATOR_MARK_HEALTHY", plan_digest="a" * 64, expected_version=4,
+            evidence_ids=[], status="PROPOSED", version=1,
+        ))
+
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        local_token=TOKEN, review_token="separate-reviewer-credential",
+        environment="development",
+    )
+    path = f"/v1/plans/{plan_id}"
+    response = await api_client.get(path, headers=headers("alpha"))
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    assert preview["incident_id"] == str(incident_id)
+    assert preview["policy_id"] == INCUMBENT_POLICY_ID
+    assert preview["postcondition"] == {"healthy": True, "version": 5}
+    assert preview["approval"] is None
+    assert (await api_client.get(path, headers=headers("other"))).status_code == 404
+
+    reviewer = headers("alpha", **{
+        "If-Match": "1", "X-OpsBlaze-Reviewer-Token": "separate-reviewer-credential",
+    })
+    rejected = await api_client.post(path + "/decisions", headers=reviewer, json={"decision": "REJECT"})
+    assert rejected.status_code == 201, rejected.text
+    stale = await api_client.post(path + "/decisions", headers=reviewer, json={"decision": "APPROVE"})
+    assert stale.status_code == 409
+    fresh = (await api_client.get(path, headers=headers("alpha"))).json()
+    assert (fresh["status"], fresh["version"], fresh["approval"]["state"]) == ("REJECTED", 2, "REJECTED")
+    assert fresh["plan_digest"] == preview["plan_digest"]
+
+
+
+@pytest.mark.asyncio
 async def test_review_actions_require_separate_local_reviewer(api_client):
     reviewer_routes = [
         ("post", f"/v1/outcomes/{uuid4()}/feedback",

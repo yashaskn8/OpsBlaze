@@ -1455,29 +1455,37 @@ async def plan_preview(
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    from sqlalchemy import select
-    from backend.models import ApprovalGrant, IncidentPlan
+    from sqlalchemy import and_, select
+    from backend.models import ApprovalGrant, IncidentPlan, PolicyAssignment
 
-    plan = await session.scalar(
-        select(IncidentPlan).where(
+    preview = (await session.execute(
+        select(IncidentPlan, ApprovalGrant, PolicyAssignment.policy_id)
+        .outerjoin(ApprovalGrant, and_(
+            ApprovalGrant.plan_id == IncidentPlan.id, ApprovalGrant.tenant_id == IncidentPlan.tenant_id,
+        ))
+        .outerjoin(PolicyAssignment, and_(
+            PolicyAssignment.tenant_id == IncidentPlan.tenant_id,
+            PolicyAssignment.incident_id == IncidentPlan.incident_id,
+        ))
+        .where(
             IncidentPlan.id == plan_id,
             IncidentPlan.tenant_id == tenant_id,
         )
-    )
-    if plan is None:
+    )).one_or_none()
+    if preview is None:
         raise HTTPException(404, "plan not found")
-    approval = await session.scalar(
-        select(ApprovalGrant).where(
-            ApprovalGrant.plan_id == plan_id,
-            ApprovalGrant.tenant_id == tenant_id,
-        )
-    )
+    plan, approval, policy_id = preview
+    postcondition = None
+    if plan.action_id == "SIMULATOR_MARK_HEALTHY":
+        postcondition = {"healthy": True, "version": plan.expected_version + 1}
     return {
         "id": str(plan.id), "incident_id": str(plan.incident_id),
         "action_id": plan.action_id, "target_id": plan.target_id,
         "plan_digest": plan.plan_digest, "expected_version": plan.expected_version,
         "evidence_ids": plan.evidence_ids, "status": plan.status,
         "version": plan.version,
+        "policy_id": policy_id,
+        "postcondition": postcondition,
         "approval": (
             {
                 "id": str(approval.id),

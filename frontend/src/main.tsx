@@ -6,7 +6,7 @@ import { authManager, oidcConfigError, usingOidc } from "./auth";
 import { consumeIncidentStream } from "./incidentStream";
 import { InvestigationPanel } from "./InvestigationPanel";
 import {
-  detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation,
+  detail, fetchQueueHealth, fetchDeadLetters, fetchInvestigation, finishReview,
   type Incident, type Investigation,
   type QueueHealth, type ExperienceDeadLetter, type ExperienceDeadLetterPage,
 } from "./api";
@@ -38,7 +38,12 @@ type Approval = {
   reason: string;
 };
 
-type PlanDetail = Plan & { approval: Approval | null };
+type PlanDetail = Plan & {
+  incident_id: string;
+  approval: Approval | null;
+  policy_id: string | null;
+  postcondition: { healthy: boolean; version: number } | null;
+};
 
 type Evidence = {
   id: string;
@@ -117,8 +122,10 @@ function App() {
   const [target, setTarget] = useState("checkout");
   const [key, setKey] = useState(() => crypto.randomUUID());
   const [incident, setIncident] = useState<Incident | null>(null);
-  const [plan, setPlan] = useState<Plan | null>(null);
-  const [approval, setApproval] = useState<Approval | null>(null);
+  const [reviewSnapshot, setReviewSnapshot] = useState<{
+    scope: object; incidentId: string; plan: PlanDetail | null;
+  } | null>(null);
+  const [reviewStale, setReviewStale] = useState(false);
   const [decisionReason, setDecisionReason] = useState(
     "Reviewed simulator evidence and expected target version"
   );
@@ -146,6 +153,10 @@ function App() {
   const [events, setEvents] = useState<UIEvent[]>([]);
   const [connection, setConnection] = useState<"SYNCING" | "LIVE" | "STALE">("SYNCING");
   const authScope = useMemo(() => ({}), [tenant, token, accessToken, identity?.actor_id]);
+  const selectedReview = reviewSnapshot?.scope === authScope && reviewSnapshot.incidentId === incident?.id
+    ? reviewSnapshot : null;
+  const plan = selectedReview?.plan ?? null;
+  const approval = plan?.approval ?? null;
   const [investigation, setInvestigation] = useState<{ scope: object; report: Investigation } | null>(null);
   const [replayFixture, setReplayFixture] = useState<ReplayFixture>("recoverable-v1");
   const [replaySeed, setReplaySeed] = useState("42");
@@ -263,8 +274,7 @@ function App() {
     setAccessToken("");
     setIdentity(null);
     setIncident(null);
-    setPlan(null);
-    setApproval(null);
+    setReviewSnapshot(null);
     setEvents([]);
     setConnection("SYNCING");
   }
@@ -282,8 +292,8 @@ function App() {
       const data: unknown = await response.json();
       if (!response.ok) throw new Error(detail(data));
       setIncident(data as Incident);
-      setPlan(null);
-      setApproval(null);
+      setReviewSnapshot(null);
+      setReviewStale(false);
       setEvidence([]);
       setEffects([]);
       setLineage(null);
@@ -320,17 +330,20 @@ function App() {
         getList<Evidence>("evidence"),
         getList<Effect>("effects")
       ]);
-      setPlan(plans[0] ?? null);
+      let preview: PlanDetail | null = null;
       if (plans[0]) {
         const planResponse = await fetch("/v1/plans/" + plans[0].id, {
           headers: headers()
         });
         const detailBody: unknown = await planResponse.json();
         if (!planResponse.ok) throw new Error(detail(detailBody));
-        setApproval((detailBody as PlanDetail).approval);
-      } else {
-        setApproval(null);
+        preview = detailBody as PlanDetail;
+        if (preview.id !== plans[0].id || preview.incident_id !== incident.id) {
+          throw new Error("Plan preview did not match the selected incident");
+        }
       }
+      setReviewSnapshot({ scope: authScope, incidentId: incident.id, plan: preview });
+      setReviewStale(false);
       setEvidence(proof);
       setEffects(receipts);
       const lineageResponse = await fetch(
@@ -545,8 +558,8 @@ function App() {
 
   function chooseIncident(item: Incident) {
     setIncident(item);
-    setPlan(null);
-    setApproval(null);
+    setReviewSnapshot(null);
+    setReviewStale(false);
     setEvidence([]);
     setEffects([]);
     setLineage(null);
@@ -706,8 +719,10 @@ function App() {
 
 
   async function decidePlan(choice: "APPROVE" | "REJECT") {
-    if (!plan || !incident || !canReview) return;
+    if (!plan || !incident || !canReview || reviewStale || connection !== "LIVE") return;
+    if (choice === "APPROVE" && (!plan.policy_id || !plan.postcondition)) return;
     setBusy(true);
+    setReviewStale(true);
     setError("");
     try {
       const response = await fetch("/v1/plans/" + plan.id + "/decisions", {
@@ -722,12 +737,7 @@ function App() {
           decision: choice, reason: decisionReason.trim()
         })
       });
-      const data: unknown = await response.json();
-      if (!response.ok) throw new Error(detail(data));
-      setPlan({ ...plan, status: choice === "APPROVE" ? "APPROVED" : "REJECTED",
-                version: plan.version + 1 });
-      // A refreshed snapshot is required before any other decision.
-      await refresh();
+      await finishReview(response, refresh);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
@@ -738,12 +748,13 @@ function App() {
 
 
   async function revokeApproval() {
-    if (!approval || !plan) return;
+    if (!approval || !plan || !canReview || reviewStale || connection !== "LIVE") return;
     if (revocationReason.trim().length < 8) {
       setError("Revocation reason must be at least 8 characters.");
       return;
     }
     setBusy(true);
+    setReviewStale(true);
     setError("");
     try {
       const response = await fetch(
@@ -758,9 +769,7 @@ function App() {
           body: JSON.stringify({ reason: revocationReason.trim() })
         }
       );
-      const data: unknown = await response.json();
-      if (!response.ok) throw new Error(detail(data));
-      await refresh();
+      await finishReview(response, refresh);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Approval revocation failed");
     } finally {
@@ -840,7 +849,7 @@ function App() {
             <p className="key">Idempotency key <code>{key}</code></p>
             <div className="actions">
               <button type="submit" disabled={busy || !canOperate}>{busy ? "Working..." : "Admit incident"}</button>
-              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setPlan(null); setApproval(null); setEvidence([]); setEffects([]); setLineage(null); setLineagePages({ incidentId: "", pages: {} }); setEvents([]); setConnection("SYNCING"); setError(""); }}>New request key</button>
+              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setReviewSnapshot(null); setReviewStale(false); setEvidence([]); setEffects([]); setLineage(null); setLineagePages({ incidentId: "", pages: {} }); setEvents([]); setConnection("SYNCING"); setError(""); }}>New request key</button>
             </div>
           </form>
         </section>
@@ -865,11 +874,11 @@ function App() {
               <button type="button" className="secondary" disabled={busy} onClick={refresh}>Refresh status</button>
               {incident.status_projection === "AWAITING_APPROVAL" && (
                 <>
-                  {!plan && <button type="button" disabled={busy || !canOperate || connection !== "LIVE"} onClick={() => decide("acknowledge")}>Acknowledge review</button>}
+                  {selectedReview && !plan && <button type="button" disabled={busy || reviewStale || !canOperate || connection !== "LIVE"} onClick={() => decide("acknowledge")}>Acknowledge review</button>}
                 </>
               )}
               {["DISPATCH_PENDING", "INVESTIGATING", "AWAITING_APPROVAL"].includes(incident.status_projection) && (
-                <button type="button" className="secondary" disabled={busy || connection !== "LIVE"} onClick={() => decide("cancel")}>Request cancellation</button>
+                <button type="button" className="secondary" disabled={busy || !canOperate || connection !== "LIVE"} onClick={() => decide("cancel")}>Request cancellation</button>
               )}
             </div>
             {authenticated && investigation?.scope === authScope
@@ -880,6 +889,10 @@ function App() {
               <h3>Proposed simulator plan</h3>
               <p><strong>{plan.action_id}</strong> for {plan.target_id}</p>
               <p className="muted">Plan state: {plan.status} · Expected target version: {plan.expected_version}</p>
+              <p>Pinned policy: {plan.policy_id ?? "Unavailable"}</p>
+              <p>Expected postcondition: {plan.postcondition
+                ? `Simulator target healthy at version ${plan.postcondition.version}` : "Unavailable"}</p>
+              {reviewStale && <p role="status" className="muted">Refresh the plan before reviewing it again.</p>}
               <p className="muted">Digest</p><code>{plan.plan_digest}</code>
               {plan.status === "PROPOSED" && incident.status_projection === "AWAITING_APPROVAL" &&
                 <label className="review-reason">Review reason
@@ -890,8 +903,8 @@ function App() {
                 </label>}
               {plan.status === "PROPOSED" && incident.status_projection === "AWAITING_APPROVAL" &&
                 <div className="actions">
-                  <button type="button" disabled={busy || connection !== "LIVE" || !canReview || decisionReason.trim().length < 8} onClick={() => decidePlan("APPROVE")}>Approve simulator plan</button>
-                  <button type="button" className="secondary" disabled={busy || connection !== "LIVE" || !canReview || decisionReason.trim().length < 8} onClick={() => decidePlan("REJECT")}>Reject</button>
+                  <button type="button" disabled={busy || reviewStale || connection !== "LIVE" || !canReview || !plan.policy_id || !plan.postcondition || decisionReason.trim().length < 8} onClick={() => decidePlan("APPROVE")}>Approve simulator plan</button>
+                  <button type="button" className="secondary" disabled={busy || reviewStale || connection !== "LIVE" || !canReview || decisionReason.trim().length < 8} onClick={() => decidePlan("REJECT")}>Reject</button>
                 </div>
               }
               {approval && <div className="approval-review">
@@ -909,7 +922,7 @@ function App() {
                     />
                   </label>
                   <button type="button" className="secondary"
-                    disabled={busy || connection !== "LIVE" || !canReview || revocationReason.trim().length < 8}
+                    disabled={busy || reviewStale || connection !== "LIVE" || !canReview || revocationReason.trim().length < 8}
                     onClick={revokeApproval}>
                     Revoke unconsumed approval
                   </button>
