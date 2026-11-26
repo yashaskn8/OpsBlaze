@@ -129,8 +129,8 @@ export async function finishReview(
   throw new Error(detail(body));
 }
 
-async function readJson<T>(path: string, headers: Record<string, string>): Promise<T> {
-  const response = await fetch(path, { headers });
+async function readJson<T>(path: string, headers: Record<string, string>, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, signal ? { headers, signal } : { headers });
   const body: unknown = await response.json();
   if (!response.ok) throw new Error(detail(body));
   return body as T;
@@ -182,12 +182,14 @@ export function fetchEvidencePage(
   headers: Record<string, string>,
   cursor?: string | null,
   limit = 25,
+  signal?: AbortSignal,
 ): Promise<EvidencePage> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
   return readJson<EvidencePage>(
     `/v1/incidents/${encodeURIComponent(incidentId)}/evidence/page?` + params.toString(),
     headers,
+    signal,
   );
 }
 
@@ -204,9 +206,11 @@ export async function handoffIncident(
   reasonCode: HandoffReasonCode,
   note: string,
   headers: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<Incident & { reason_code: HandoffReasonCode; next_steps: string[]; evidence_ids: string[] }> {
   const response = await fetch(`/v1/incidents/${encodeURIComponent(incidentId)}/handoff`, {
     method: "POST",
+    ...(signal ? { signal } : {}),
     headers: {
       ...headers,
       "Content-Type": "application/json",

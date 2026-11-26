@@ -170,3 +170,14 @@ test("evidence paging preserves cursor and non-sensitive client diagnostics stay
   assert.equal(snapshotAgeSeconds(diag, 1_000), 0);
   assert.equal("secret-tok" in diag, false);
 });
+
+test("evidence requests use the selected incident's cancellation signal", async (t) => {
+  const controller = new AbortController();
+  t.mock.method(globalThis, "fetch", (_path, { signal }) => new Promise((_, reject) => {
+    assert.equal(signal, controller.signal);
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  }));
+  const response = fetchEvidencePage("inc-1", {}, "ev-0", undefined, controller.signal);
+  controller.abort();
+  await assert.rejects(response, { name: "AbortError" });
+});

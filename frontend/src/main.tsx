@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import { evidenceProjectionWarning, replaceLineagePage, type EvidenceProjectionStatus } from "./lineagePages";
@@ -129,7 +129,8 @@ function App() {
 
   const [target, setTarget] = useState("checkout");
   const [key, setKey] = useState(() => crypto.randomUUID());
-  const [incident, setIncident] = useState<Incident | null>(null);
+  const [selectedIncident, setIncident] = useState<Incident | null>(null);
+  const [selectionScope, setSelectionScope] = useState<object | null>(null);
   const [reviewSnapshot, setReviewSnapshot] = useState<{
     scope: object; incidentId: string; plan: PlanDetail | null; expiresAt: number | null;
   } | null>(null);
@@ -173,7 +174,10 @@ function App() {
   const deadLetterRequestVersion = useRef(0);
   const [events, setEvents] = useState<UIEvent[]>([]);
   const [connection, setConnection] = useState<"SYNCING" | "LIVE" | "STALE">("SYNCING");
-  const authScope = useMemo(() => ({}), [tenant, token, accessToken, identity?.actor_id]);
+  const authScope = useMemo(() => ({}), [tenant, token, accessToken, identity?.tenant_id, identity?.actor_id]);
+  const incident = selectionScope === authScope ? selectedIncident : null;
+  const authRequests = useRef(new AbortController());
+  const incidentRequests = useRef(new AbortController());
   const selectedReview = reviewSnapshot?.scope === authScope && reviewSnapshot.incidentId === incident?.id
     ? reviewSnapshot : null;
   const plan = selectedReview?.plan ?? null;
@@ -309,57 +313,47 @@ function App() {
     await authManager?.removeUser();
     setAccessToken("");
     setIdentity(null);
-    setIncident(null);
-    setReviewSnapshot(null);
-    setEvents([]);
-    setConnection("SYNCING");
   }
 
   async function admit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const { signal } = incidentRequests.current;
     setBusy(true);
     setError("");
     try {
       const response = await fetch("/v1/incidents", {
         method: "POST",
+        signal,
         headers: { ...headers(), "Content-Type": "application/json", "Idempotency-Key": key },
         body: JSON.stringify({ target_id: target.trim() })
       });
       const data: unknown = await response.json();
       if (!response.ok) throw new Error(detail(data));
-      setIncident(data as Incident);
-      setReviewSnapshot(null);
-      setReviewStale(false);
-      setEvidence([]);
-      setEvidenceCursor(null);
-      setEffects([]);
-      setLineage(null);
-      setLineagePages({ incidentId: "", pages: {} });
-      setEvents([]);
-      setHandoffInfo(null);
-      setClientDiag(emptyDiagnostics());
+      if (!signal.aborted) chooseIncident(data as Incident);
     } catch (cause) {
+      if (signal.aborted) return;
       setClientDiag(prev => ({ ...prev, clientErrors: prev.clientErrors + 1 }));
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   }
 
-  async function refresh() {
+  async function refresh(signal = incidentRequests.current.signal) {
     // Viewer and reviewer roles may inspect authoritative evidence.
     // Only the API grants mutation rights; this is read-only.
-    if (!incident || !authenticated) return;
+    if (!incident || !authenticated || signal.aborted) return;
     setBusy(true);
     setError("");
     try {
-      const response = await fetch("/v1/incidents/" + incident.id, { headers: headers() });
+      const response = await fetch("/v1/incidents/" + incident.id, { headers: headers(), signal });
       const data: unknown = await response.json();
       if (!response.ok) throw new Error(detail(data));
-      setIncident(data as Incident);
+      if (signal.aborted) return;
+      acceptIncident(data as Incident);
       const getList = async <T,>(kind: string): Promise<T[]> => {
         const res = await fetch("/v1/incidents/" + incident.id + "/" + kind, {
-          headers: headers()
+          headers: headers(), signal,
         });
         const body: unknown = await res.json();
         if (!res.ok) throw new Error(detail(body));
@@ -367,14 +361,14 @@ function App() {
       };
       const [plans, proofPage, receipts] = await Promise.all([
         getList<Plan>("plans"),
-        fetchEvidencePage(incident.id, headers()),
+        fetchEvidencePage(incident.id, headers(), null, undefined, signal),
         getList<Effect>("effects")
       ]);
       let preview: PlanDetail | null = null;
       let expiresAt: number | null = null;
       if (plans[0]) {
         const planResponse = await fetch("/v1/plans/" + plans[0].id, {
-          headers: headers()
+          headers: headers(), signal,
         });
         const receivedAt = performance.now();
         const detailBody: unknown = await planResponse.json();
@@ -388,33 +382,38 @@ function App() {
           expiresAt = receivedAt + remaining;
         }
       }
+      if (signal.aborted) return;
       setReviewSnapshot({ scope: authScope, incidentId: incident.id, plan: preview, expiresAt });
       setReviewStale(false);
       setEvidence(proofPage.items);
       setEvidenceCursor(proofPage.next_cursor);
       setEffects(receipts);
       const lineageResponse = await fetch(
-        "/v1/incidents/" + incident.id + "/lineage", { headers: headers() }
+        "/v1/incidents/" + incident.id + "/lineage", { headers: headers(), signal }
       );
       const lineageBody: unknown = await lineageResponse.json();
       if (!lineageResponse.ok) throw new Error(detail(lineageBody));
+      if (signal.aborted) return;
       setLineage(lineageBody as Lineage);
       setLineagePages({ incidentId: "", pages: {} });
       setClientDiag(prev => ({ ...prev, lastSnapshotAtMs: Date.now() }));
     } catch (cause) {
+      if (signal.aborted) return;
       setClientDiag(prev => ({ ...prev, clientErrors: prev.clientErrors + 1 }));
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   }
 
   async function loadMoreEvidence() {
     if (!incident || !authenticated || !evidenceCursor || evidencePaging) return;
+    const { signal } = incidentRequests.current;
     setEvidencePaging(true);
     setError("");
     try {
-      const page = await fetchEvidencePage(incident.id, headers(), evidenceCursor);
+      const page = await fetchEvidencePage(incident.id, headers(), evidenceCursor, undefined, signal);
+      if (signal.aborted) return;
       setEvidence(previous => {
         const seen = new Set(previous.map(item => item.id));
         const merged = [...previous, ...page.items.filter(item => !seen.has(item.id))];
@@ -422,10 +421,11 @@ function App() {
       });
       setEvidenceCursor(page.next_cursor);
     } catch (cause) {
+      if (signal.aborted) return;
       setClientDiag(prev => ({ ...prev, clientErrors: prev.clientErrors + 1 }));
       setError(cause instanceof Error ? cause.message : "Could not load evidence page");
     } finally {
-      setEvidencePaging(false);
+      if (!signal.aborted) setEvidencePaging(false);
     }
   }
 
@@ -439,43 +439,54 @@ function App() {
     const firstPageLast = lineage.nodes.filter(node => node.kind === kind).at(-1);
     const cursor = previous?.next_cursor ?? firstPageLast?.id.split(":")[1];
     if (!cursor) return;
+    const { signal } = incidentRequests.current;
     setBusy(true);
     setError("");
     try {
       const query = new URLSearchParams({ kind, cursor, limit: "50" });
       const response = await fetch(
         "/v1/incidents/" + incident.id + "/lineage/records?" + query.toString(),
-        { headers: headers() }
+        { headers: headers(), signal }
       );
       const result: unknown = await response.json();
       if (!response.ok) throw new Error(detail(result));
+      if (signal.aborted) return;
       const page = result as LineagePage;
       if (page.incident_id !== incident.id || page.kind !== kind) {
         throw new Error("Lineage page did not match the selected incident");
       }
       setLineagePages(current => replaceLineagePage(current, page));
     } catch (cause) {
+      if (signal.aborted) return;
       setError(cause instanceof Error ? cause.message : "Could not load lineage page");
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   }
 
-  useEffect(() => {
-    // Never display a queue snapshot under different browser credentials.
+  useLayoutEffect(() => {
+    // Clear scoped views before paint without remounting the credential inputs.
+    const auth = new AbortController();
+    authRequests.current = auth;
+    resetIncident(null);
+    setKey(crypto.randomUUID());
+    setRecent([]);
+    setReplay(null);
+    setReplayError("");
+    setReplayBusy(false);
     queueRequestVersion.current += 1;
     deadLetterRequestVersion.current += 1;
-    recordRequestVersion.current += 1;
     setQueueHealth(null);
     setQueueError("");
     setQueueBusy(false);
     setDeadLetterPage(null);
     setDeadLetterError("");
     setDeadLetterBusy(false);
-    setSelectedRecord(null);
-    setRecordError("");
-    setRecordBusy(false);
-  }, [tenant, token, accessToken]);
+    return () => {
+      auth.abort();
+      incidentRequests.current.abort();
+    };
+  }, [authScope]);
 
   async function inspectLineageNode(kind: string, recordId: string) {
     if (!incident || !authenticated || kind === "incident") return;
@@ -640,29 +651,55 @@ function App() {
   }
 
   async function loadRecent() {
+    const { signal } = authRequests.current;
     setError("");
     try {
-      const response = await fetch("/v1/incidents", { headers: headers() });
+      const response = await fetch("/v1/incidents", { headers: headers(), signal });
       const data: unknown = await response.json();
       if (!response.ok) throw new Error(detail(data));
-      setRecent(data as Incident[]);
+      if (!signal.aborted) setRecent(data as Incident[]);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not list incidents");
+      if (!signal.aborted) setError(cause instanceof Error ? cause.message : "Could not list incidents");
     }
   }
 
+  function acceptIncident(incoming: Incident) {
+    setIncident(previous =>
+      previous?.id === incoming.id && previous.status_version <= incoming.status_version
+        ? incoming : previous
+    );
+  }
+
   function chooseIncident(item: Incident) {
+    if (incident?.id === item.id) acceptIncident(item);
+    else resetIncident(item);
+  }
+
+  function resetIncident(item: Incident | null) {
+    incidentRequests.current.abort();
+    incidentRequests.current = new AbortController();
+    recordRequestVersion.current += 1;
+    setSelectionScope(item ? authScope : null);
     setIncident(item);
     setReviewSnapshot(null);
+    setExpiredReview(null);
     setReviewStale(false);
     setEvidence([]);
     setEvidenceCursor(null);
+    setEvidencePaging(false);
     setEffects([]);
     setLineage(null);
     setLineagePages({ incidentId: "", pages: {} });
+    setSelectedRecord(null);
+    setRecordError("");
+    setRecordBusy(false);
+    setHandoffInfo(null);
+    setInvestigation(null);
     setEvents([]);
     setClientDiag(emptyDiagnostics());
     setConnection("SYNCING");
+    setError("");
+    setBusy(false);
   }
 
   useEffect(() => {
@@ -671,7 +708,7 @@ function App() {
     return () => window.clearInterval(timer);
   }, [incident?.id, clientDiag.lastSnapshotAtMs]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const selectedId = incident?.id;
     if (!selectedId || !authenticated) return;
     const incidentId = selectedId;
@@ -689,10 +726,7 @@ function App() {
       setClientDiag(prev => ({ ...prev, lastSnapshotAtMs: Date.now() }));
       setDiagNowMs(Date.now());
       const incoming = snapshot.incident;
-      setIncident(previous =>
-        previous?.id === incoming.id && previous.status_version <= incoming.status_version
-          ? incoming : previous
-      );
+      acceptIncident(incoming);
       setInvestigation(previous =>
         previous?.scope === authScope && previous.report.incident.id === incoming.id
           && previous.report.incident.status_version > incoming.status_version
@@ -816,26 +850,29 @@ function App() {
 
   async function decide(action: "cancel" | "acknowledge") {
     if (!incident) return;
+    const { signal } = incidentRequests.current;
     setBusy(true);
     setError("");
     try {
       const response = await fetch("/v1/incidents/" + incident.id + "/" + action, {
         method: "POST",
+        signal,
         headers: { ...headers(), "If-Match": String(incident.status_version) }
       });
       const data: unknown = await response.json();
       if (!response.ok) throw new Error(detail(data));
-      setIncident(data as Incident);
+      if (!signal.aborted) acceptIncident(data as Incident);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Request failed");
+      if (!signal.aborted) setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   }
 
 
   async function escalateHandoff() {
     if (!incident || !canOperate || connection !== "LIVE") return;
+    const { signal } = incidentRequests.current;
     setBusy(true);
     setError("");
     try {
@@ -845,23 +882,26 @@ function App() {
         handoffReason,
         `Operator escalation (${handoffReason})`,
         headers(),
+        signal,
       );
-      setIncident({
+      if (signal.aborted) return;
+      acceptIncident({
         ...incident,
         status_projection: result.status_projection,
         status_version: result.status_version,
       });
       setHandoffInfo({ reason_code: result.reason_code, next_steps: result.next_steps });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Handoff failed");
+      if (!signal.aborted) setError(cause instanceof Error ? cause.message : "Handoff failed");
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   }
 
   async function decidePlan(choice: "APPROVE" | "REJECT") {
     if (!plan || !incident || !canReview || reviewStale || connection !== "LIVE") return;
     if (choice === "APPROVE" && (!plan.policy_id || !plan.postcondition)) return;
+    const { signal } = incidentRequests.current;
     reviewStatus.current?.focus();
     setBusy(true);
     setReviewStale(true);
@@ -869,6 +909,7 @@ function App() {
     try {
       const response = await fetch("/v1/plans/" + plan.id + "/decisions", {
         method: "POST",
+        signal,
         headers: {
           ...headers(),
           "Content-Type": "application/json",
@@ -879,11 +920,11 @@ function App() {
           decision: choice, reason: decisionReason.trim()
         })
       });
-      await finishReview(response, refresh);
+      await finishReview(response, () => refresh(signal));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Request failed");
+      if (!signal.aborted) setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   }
 
@@ -895,6 +936,7 @@ function App() {
       setError("Revocation reason must be at least 8 characters.");
       return;
     }
+    const { signal } = incidentRequests.current;
     reviewStatus.current?.focus();
     setBusy(true);
     setReviewStale(true);
@@ -903,6 +945,7 @@ function App() {
       const response = await fetch(
         "/v1/approvals/" + approval.id + "/revoke", {
           method: "POST",
+          signal,
           headers: {
             ...headers(),
             ...(usingOidc ? {} : { "X-OpsBlaze-Reviewer-Token": reviewToken }),
@@ -912,11 +955,11 @@ function App() {
           body: JSON.stringify({ reason: revocationReason.trim() })
         }
       );
-      await finishReview(response, refresh);
+      await finishReview(response, () => refresh(signal));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Approval revocation failed");
+      if (!signal.aborted) setError(cause instanceof Error ? cause.message : "Approval revocation failed");
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   }
 
@@ -927,12 +970,14 @@ function App() {
       setReplayError("Seed must be an integer from 0 to 1,000,000.");
       return;
     }
+    const { signal } = authRequests.current;
     setReplayBusy(true);
     setReplayError("");
     setReplay(null);
     try {
       const created = await fetch("/v1/experiments", {
         method: "POST",
+        signal,
         headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({ fixture_id: replayFixture, seed })
       });
@@ -940,15 +985,15 @@ function App() {
       if (!created.ok) throw new Error(detail(started));
       const id = (started as { id: string }).id;
       const response = await fetch("/v1/experiments/" + id + "/results", {
-        headers: headers()
+        headers: headers(), signal,
       });
       const result: unknown = await response.json();
       if (!response.ok) throw new Error(detail(result));
-      setReplay(result as ReplayReport);
+      if (!signal.aborted) setReplay(result as ReplayReport);
     } catch (cause) {
-      setReplayError(cause instanceof Error ? cause.message : "Replay failed");
+      if (!signal.aborted) setReplayError(cause instanceof Error ? cause.message : "Replay failed");
     } finally {
-      setReplayBusy(false);
+      if (!signal.aborted) setReplayBusy(false);
     }
   }
 
@@ -992,7 +1037,7 @@ function App() {
             <p className="key">Idempotency key <code>{key}</code></p>
             <div className="actions">
               <button type="submit" disabled={busy || !canOperate}>{busy ? "Working..." : "Admit incident"}</button>
-              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); setIncident(null); setReviewSnapshot(null); setReviewStale(false); setEvidence([]); setEffects([]); setLineage(null); setLineagePages({ incidentId: "", pages: {} }); setEvents([]); setConnection("SYNCING"); setError(""); }}>New request key</button>
+              <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); resetIncident(null); }}>New request key</button>
             </div>
           </form>
         </section>
@@ -1017,7 +1062,7 @@ function App() {
               <dt>Created</dt><dd>{new Date(incident.created_at).toLocaleString()}</dd>
             </dl>
             <div className="actions">
-              <button type="button" className="secondary" disabled={busy} onClick={refresh}>Refresh status</button>
+              <button type="button" className="secondary" disabled={busy} onClick={() => void refresh()}>Refresh status</button>
               {incident.status_projection === "AWAITING_APPROVAL" && (
                 <>
                   {selectedReview && !plan && <button type="button" disabled={busy || reviewStale || !canOperate || connection !== "LIVE"} onClick={() => decide("acknowledge")}>Acknowledge review</button>}
