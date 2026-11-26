@@ -97,6 +97,26 @@ async def test_approved_plan_does_not_execute_after_evidence_is_tampered(propose
         assert (await session.scalars(select(EffectReceipt))).all() == []
 
 
+async def test_approved_plan_does_not_dispatch_after_evidence_retention_deadline(proposed_lab):
+    from datetime import UTC, datetime, timedelta
+    from uuid import UUID
+
+    sessions, incident_id, plan_id = proposed_lab
+    async with sessions() as session:
+        plan = await decide_plan(session, "a", plan_id, 1, "APPROVE")
+        evidence_id = UUID(plan.evidence_ids[0])
+    assert (await execute_suite(sessions)).state == "LAB_PASS"
+    async with sessions.begin() as session:
+        evidence = await session.get(Evidence, evidence_id)
+        assert evidence.validity == "VALID"
+        evidence.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    assert await execute_approved_simulator_plan(sessions, "a", incident_id, plan_id) == "NEEDS_REVIEW"
+    async with sessions() as session:
+        assert await session.scalar(select(EffectReceipt.id).where(EffectReceipt.incident_id == incident_id)) is None
+        target = await session.get(SimulatorTarget, ("a", "checkout"))
+        assert (target.version, target.healthy) == (3, False)
+
+
 @pytest.mark.asyncio
 async def test_approval_rejects_modified_plan_digest(proposed_lab):
     sessions, incident_id, plan_id = proposed_lab

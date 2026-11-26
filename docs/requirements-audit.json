@@ -13,8 +13,10 @@
   },
   "production_acceptance": "BLOCKED",
   "status_counts": {
-    "VERIFIED WORKING": 154,
-    "EXTERNALLY BLOCKED": 22
+    "EXTERNALLY BLOCKED": 19,
+    "LOCALLY UNVERIFIED": 1,
+    "PARTIALLY IMPLEMENTED": 2,
+    "VERIFIED WORKING": 154
   },
   "verification": {
     "native_postgresql": {
@@ -235,6 +237,23 @@
       },
       "external_independence": false,
       "promotion_eligible": false
+    },
+    "closure_accessibility": {
+      "tool": "Playwright MCP",
+      "viewport_width_px": 390,
+      "verified": [
+        "skip link focus",
+        "accessible review control names",
+        "Tab order",
+        "keyboard rejection"
+      ]
+    },
+    "closure_migration_0054": {
+      "migration_count": 54,
+      "native_unscrubbed_expiry_test": "PASS",
+      "windows_focused_evidence_plan_workbench_lineage_lesson_tests": 67,
+      "frontend_node_tests_passed": 16,
+      "typescript_vite_build": "PASS"
     }
   },
   "findings": [
@@ -434,72 +453,33 @@
     {
       "order": 1,
       "requirements": [
-        "P3-06",
-        "P3-14"
+        "E5-05",
+        "A3-08",
+        "E7-08"
       ],
-      "execution": "Native Codex",
-      "action": "Verify incident membership parity for all supported record kinds. Continue with trace references, collector-outage and measured recovery load."
+      "execution": "Native Windows and exact Linux CI",
+      "action": "Reconcile exact-commit native integration, restore, and release checks after the E5 fixture and migration 0054 repairs."
     },
     {
       "order": 2,
       "requirements": [
-        "E7-03",
-        "E7-05",
-        "A4-04"
+        "A1-10",
+        "E4-07",
+        "P2-08"
       ],
-      "execution": "Native Codex",
-      "action": "Expand E7 persisted risk, freshness and eligible memory context after related dependencies are verified."
+      "execution": "Native tests and isolated Playwright MCP",
+      "action": "Verify comparative repeatability and memory attribution, then verify review focus and screen-reader behavior."
     },
     {
       "order": 3,
       "requirements": [
-        "P1-05",
-        "P1-06",
-        "P1-07",
-        "P2-01",
-        "P2-06",
-        "P2-07",
-        "P3-16"
+        "B1-06",
+        "B4-03",
+        "A4-06",
+        "E8-06"
       ],
-      "execution": "Direct GitHub for isolated changes when applicable checks can run; native Codex for browser and runtime verification",
-      "action": "Reconcile exact-commit outcome workbench CI, connect remaining scoped graph sources, and progress A1–A3."
-    },
-    {
-      "order": 4,
-      "requirements": [
-        "A1-03",
-        "A2-02",
-        "A3-03"
-      ],
-      "execution": "Native Codex",
-      "action": "Deliver a dependency-complete read-only investigation increment with evidence versioning, scoped capabilities and a replay-safe probe budget."
-    },
-    {
-      "order": 5,
-      "requirements": [
-        "P1-15",
-        "P3-18"
-      ],
-      "execution": "Native Codex",
-      "action": "Complete many-client SSE and mixed large-history database and browser measurements against a declared load shape."
-    },
-    {
-      "order": 6,
-      "requirements": [
-        "B2-05",
-        "S1-06",
-        "S1-07",
-        "E5-06",
-        "E5-07"
-      ],
-      "execution": "Native Codex",
-      "action": "Close the reservation visibility, distinct paired replay, and durable held-out execution gaps alongside their existing simulator entry points."
-    },
-    {
-      "order": 7,
-      "requirements": [],
-      "execution": "Independent external authorization and evidence",
-      "action": "Obtain witnessed identity, provider, multi-host recovery, held-out evaluation, human rollout, privacy and operational acceptance for G1–G6."
+      "execution": "Native fault evidence and externally controlled verification",
+      "action": "Reconcile local retry, replay, calibration and simulator retention results with G1–G6 evidence requirements."
     }
   ],
   "capabilities": [
@@ -652,7 +632,7 @@
             "G3"
           ],
           "defects": [],
-          "remaining": "External gate G1: multi-host independently witnessed recovery requires separate physical/isolated hosts; local interruption across INVESTIGATING, AWAITING_APPROVAL, and EXECUTING and PG two-worker failover are verified."
+          "remaining": "G3 requires independent multi-host recovery evidence. Pinned history replay and local worker interruption checks exist."
         },
         {
           "id": "B1-07",
@@ -1935,16 +1915,22 @@
             "backend/probes/gateway.py",
             "backend/api.py",
             "backend/workers/retention.py",
-            "backend/telemetry.py"
+            "backend/telemetry.py",
+            "migrations/versions/0054_evidence_lifecycle.py",
+            "backend/workbench.py",
+            "backend/lineage.py",
+            "backend/experiences.py",
+            "backend/plans.py"
           ],
           "consumers": [
             "Synthetic probe creates redacted minimal JSON and exposes it by scoped API; retention workers handle capsules and lessons"
           ],
           "tests": [
             "tests/test_probes.py",
-            "tests/test_retention.py"
+            "tests/test_retention.py",
+            "tests/test_plans.py"
           ],
-          "evidence": "Synthetic strings contain only simulator facts; the retention test verifies capsule/lesson behavior, not A3 evidence-payload expiry or redaction of external input.",
+          "evidence": "Migration 0054 adds expiration and metadata-only access audits. Native PostgreSQL and SQLite verify that expired unswept excerpts are masked on list, page, investigation and lineage detail. Probe retries and new approvals reject expired evidence. The approval regression also verifies that a previously granted plan cannot dispatch after evidence expires.",
           "dependencies": [
             "G2",
             "G6"
@@ -1952,7 +1938,8 @@
           "defects": [
             "No dedicated evidence-payload retention, restricted-evidence access audit, or calibrated redaction failure metrics were found."
           ],
-          "remaining": "Implement evidence lifecycle bounds locally and get independently approved privacy/source evidence."
+          "remaining": "Exact-commit Linux CI and externally approved privacy and provider source evidence.",
+          "local_verification": "FOCUSED_PASS_EXACT_CI_PENDING"
         }
       ]
     },
@@ -2115,14 +2102,14 @@
             "tests/test_assessments.py",
             "tests/test_heldout.py"
           ],
-          "evidence": "Current features identify an uncalibrated hard gate and use 0/100 scores. Offline evaluator enforces family separation and reports decision counts; no calibrated candidate trial or threshold freeze evidence was found.",
+          "evidence": "The development calibration test freezes a threshold using disjoint development families and reports held-out risk and coverage. The runtime hard gates continue to use conservative simulator assessments.",
           "dependencies": [
             "S1",
             "E5",
             "G4"
           ],
           "defects": [],
-          "remaining": "Implement local threshold-freeze and risk/coverage comparison with independent custody for production evidence."
+          "remaining": "G4 requires a protected independently held-out calibration cohort and adjudicated evidence."
         },
         {
           "id": "A4-07",
@@ -2790,7 +2777,7 @@
         {
           "id": "P2-08",
           "requirement": "Prove keyboard/screen-reader behavior, externally trusted identity, human governance, and release independence",
-          "status": "EXTERNALLY BLOCKED",
+          "status": "PARTIALLY IMPLEMENTED",
           "implementation": [
             "frontend/src/main.tsx",
             "backend/auth.py",
@@ -2803,14 +2790,14 @@
             "tests/test_oidc_auth.py",
             "tests/test_api_contract.py"
           ],
-          "evidence": "Local synthetic issuer tests cover token semantics; no external IdP real browser enrollment or independently authorized release evidence was available.",
+          "evidence": "Isolated Playwright MCP against FastAPI verified the skip link moves focus, the review controls have accessible names, Tab reaches Approve and Reject in order, and keyboard rejection removes the stale actions at a 390 px viewport. Synthetic issuer tests cover token semantics.",
           "dependencies": [
             "G1",
             "G5",
             "G6"
           ],
           "defects": [],
-          "remaining": "Measure local browser acceptance independently of external identity/release qualification."
+          "remaining": "Verify predictable focus after review controls disappear and actual screen-reader announcements. G1 and G6 require external identity and release governance evidence."
         }
       ]
     },
@@ -4319,7 +4306,7 @@
         {
           "id": "E4-07",
           "requirement": "Demonstrate latency and measured benefit over no-memory with held-out memory evaluations",
-          "status": "EXTERNALLY BLOCKED",
+          "status": "PARTIALLY IMPLEMENTED",
           "implementation": [
             "backend/memory/lessons.py",
             "backend/evaluation/smoke.py"
@@ -4340,7 +4327,7 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "External gate G4: independent held-out real memory vs no-memory efficacy corpus is external; local simulator latency benchmark and no-memory isolation are verified."
+          "remaining": "Verify benchmark repeatability and report actual retrieval, decisions and resource consumption. G4 requires a protected independent memory efficacy comparison."
         }
       ]
     },
@@ -4450,7 +4437,7 @@
         {
           "id": "E5-05",
           "requirement": "Evaluate measured verified recovery per total cost and family safety/latency/cost nonregression.",
-          "status": "EXTERNALLY BLOCKED",
+          "status": "LOCALLY UNVERIFIED",
           "implementation": [
             "backend/evaluation/recovery_cost.py",
             "backend/evaluation/heldout.py",
@@ -4473,8 +4460,8 @@
             "G4"
           ],
           "defects": [],
-          "remaining": "Reconcile exact GitHub CI for the native paired repair. G4 still requires protected independently supplied observations, held-out cases and actual audited cost evidence.",
-          "local_verification": "FOCUSED_PASS_EXACT_CI_PENDING"
+          "remaining": "Prior exact CI failed because the new E5 test left a pooled connection attached to its closed event loop. Verify fixture teardown on exact Linux CI. G4 still requires protected independent held-out and audited cost evidence.",
+          "local_verification": "NATIVE_LAB_PASS_PRIOR_EXACT_CI_FAILED"
         },
         {
           "id": "E5-06",
@@ -5378,6 +5365,7 @@
       "P1-16"
     ],
     "backend/experiences.py": [
+      "A3-08",
       "E1-01",
       "E1-02",
       "E1-03",
@@ -5467,6 +5455,7 @@
     ],
     "backend/lineage.py": [
       "A3-05",
+      "A3-08",
       "P1-05",
       "P3-01",
       "P3-06",
@@ -5577,6 +5566,7 @@
       "B2-04",
       "B3-05",
       "A3-02",
+      "A3-08",
       "P1-12",
       "P2-01",
       "P2-02",
@@ -5679,6 +5669,7 @@
       "P3-19"
     ],
     "backend/workbench.py": [
+      "A3-08",
       "A4-04",
       "P1-05",
       "P1-06",
@@ -5959,6 +5950,9 @@
       "E4-02",
       "E5-06",
       "E8-05"
+    ],
+    "migrations/versions/0054_evidence_lifecycle.py": [
+      "A3-08"
     ],
     "scripts/pg_restore_smoke.py": [
       "B1-08",
@@ -6280,6 +6274,7 @@
     ],
     "tests/test_plans.py": [
       "A3-02",
+      "A3-08",
       "P2-01",
       "P2-02",
       "P2-03",

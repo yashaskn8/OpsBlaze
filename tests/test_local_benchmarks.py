@@ -10,6 +10,16 @@ from backend.evaluation.local_benchmarks import (
 )
 
 
+@pytest.fixture
+async def benchmark_database():
+    from backend.database import get_engine, get_session_maker
+
+    try:
+        yield get_session_maker()
+    finally:
+        await get_engine().dispose()
+
+
 @pytest.mark.asyncio
 async def test_executable_local_comparative_benchmarks_all_pass(sessions_fixture):
     a1 = await run_a1_strategy_comparison(sessions_fixture, "bench-a1")
@@ -71,7 +81,9 @@ async def test_executable_local_comparative_benchmarks_all_pass(sessions_fixture
 
 @pytest.mark.integration
 @pytest.mark.pg_e2e
-async def test_postgres_temporal_e5_counts_only_authorized_witnessed_recovery(monkeypatch, record_property):
+async def test_postgres_temporal_e5_counts_only_authorized_witnessed_recovery(
+    benchmark_database, monkeypatch, record_property,
+):
     import json
 
     from httpx import ASGITransport, AsyncClient
@@ -83,7 +95,6 @@ async def test_postgres_temporal_e5_counts_only_authorized_witnessed_recovery(mo
     from backend.adapters.simulator import SimulatorAdapter
     from backend.api import app
     from backend.benchmarks.paired_simulator import run_e5_with_temporal
-    from backend.database import get_session_maker
     from backend.models import IncidentPlan
     from backend.settings import get_settings
     from backend.workflows.activities import (
@@ -93,7 +104,7 @@ async def test_postgres_temporal_e5_counts_only_authorized_witnessed_recovery(mo
     from backend.workflows.incident import IncidentWorkflow
 
     settings = get_settings()
-    sessions = get_session_maker()
+    sessions = benchmark_database
     assert settings.database_url.startswith("postgresql+asyncpg:")
     assert (await execute_suite(sessions)).state == "LAB_PASS"
 

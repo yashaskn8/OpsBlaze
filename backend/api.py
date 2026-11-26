@@ -231,7 +231,7 @@ async def incident_evidence(
 ) -> list[dict]:
     from sqlalchemy import select
     from backend.models import Evidence
-    from backend.probes.gateway import classify_evidence_freshness
+    from backend.probes.gateway import evidence_display
 
     incident = await find_incident(session, tenant_id, incident_id)
     if incident is None:
@@ -245,9 +245,8 @@ async def incident_evidence(
     payload = [
         {"id": str(row.id), "source": row.source,
          "target_version": row.target_version, "sha256": row.sha256,
-         "validity": row.validity, "freshness": classify_evidence_freshness(row),
+         "validity": row.validity, **evidence_display(row),
          "supersedes_evidence_id": str(row.supersedes_evidence_id) if row.supersedes_evidence_id else None,
-         "redacted_excerpt": row.redacted_excerpt,
          "expires_at": row.expires_at.isoformat() if row.expires_at else None,
          "captured_at": row.captured_at.isoformat()}
         for row in items
@@ -269,7 +268,7 @@ async def incident_evidence_page(
 ) -> dict:
     from sqlalchemy import select
     from backend.models import Evidence
-    from backend.probes.gateway import classify_evidence_freshness
+    from backend.probes.gateway import evidence_display
 
     incident = await find_incident(session, tenant_id, incident_id)
     if incident is None:
@@ -292,11 +291,10 @@ async def incident_evidence_page(
                 "target_version": row.target_version,
                 "sha256": row.sha256,
                 "validity": row.validity,
-                "freshness": classify_evidence_freshness(row),
+                **evidence_display(row),
                 "supersedes_evidence_id": (
                     str(row.supersedes_evidence_id) if row.supersedes_evidence_id else None
                 ),
-                "redacted_excerpt": row.redacted_excerpt,
                 "expires_at": row.expires_at.isoformat() if row.expires_at else None,
                 "captured_at": row.captured_at.isoformat(),
             }

@@ -22,7 +22,7 @@ from backend.plan_proposals import (
     digest_plan,
     propose_simulator_plan as propose_simulator_plan,
 )
-from backend.probes.gateway import evidence_links_intact
+from backend.probes.gateway import classify_evidence_freshness, evidence_links_intact
 from backend.settings import get_settings
 
 
@@ -97,12 +97,11 @@ async def current_plan_evidence_is_intact(
     if (
         {row.source for row in items} != {"simulator.health", "simulator.version"}
         or any(
-            row.validity != "VALID"
+            classify_evidence_freshness(row, now=now) != "FRESH"
             or row.source_version != "simulator-v1"
             or row.classification != "INTERNAL"
             or row.target_id != plan.target_id
             or row.target_version != plan.expected_version
-            or not timedelta(0) <= now - utc(row.observed_at) <= timedelta(minutes=5)
             or hashlib.sha256(row.redacted_excerpt.encode()).hexdigest() != row.sha256
             for row in items
         )

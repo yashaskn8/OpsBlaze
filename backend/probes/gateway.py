@@ -109,6 +109,14 @@ def classify_evidence_freshness(
     return "STALE"
 
 
+def evidence_display(row: Evidence) -> dict[str, str]:
+    freshness = classify_evidence_freshness(row)
+    return {
+        "freshness": freshness,
+        "redacted_excerpt": EXPIRED_EXCERPT if freshness == "EXPIRED" else row.redacted_excerpt,
+    }
+
+
 async def issue_incident_capabilities(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: str,
@@ -376,9 +384,11 @@ async def invoke_probe(
                         or evidence.source != catalog_id
                         or evidence.source_version != "simulator-v1"
                         or evidence.classification != "INTERNAL"
-                        or hashlib.sha256(evidence.redacted_excerpt.encode()).hexdigest()
-                            != evidence.sha256
                     ):
+                        raise ProbeDenied("recorded probe evidence failed integrity checks")
+                    if classify_evidence_freshness(evidence) == "EXPIRED":
+                        raise ProbeDenied("recorded probe evidence expired")
+                    if hashlib.sha256(evidence.redacted_excerpt.encode()).hexdigest() != evidence.sha256:
                         raise ProbeDenied("recorded probe evidence failed integrity checks")
                     try:
                         observation = json.loads(evidence.redacted_excerpt)

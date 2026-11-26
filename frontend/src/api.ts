@@ -16,7 +16,7 @@ export type Investigation = {
     probe_id: string;
     hypotheses: string[];
     incomplete_evidence: boolean;
-    evidence: { id: string; source: string; validity: string; redacted_excerpt: string }[];
+    evidence: { id: string; source: string; validity: string; freshness?: string; redacted_excerpt: string }[];
   }[];
   steps_truncated: boolean;
   latest_assessment: { reason: string; outcome: string; step_no: number } | null;

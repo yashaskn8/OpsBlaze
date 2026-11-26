@@ -14,6 +14,7 @@ from backend.models import (
     Evidence, ExperienceCapsule, ExperienceConsent, Incident, OperationalLesson,
     OutcomeRevision, TenantExperienceConsent,
 )
+from backend.probes.gateway import classify_evidence_freshness
 from backend.settings import get_settings
 from backend.telemetry import trace_operation
 
@@ -295,6 +296,7 @@ def capsule_evidence_matches(
     refs = capsule_evidence_refs(capsule)
     if refs is None:
         return False
+    now = datetime.now(timezone.utc)
     for ref in refs:
         proof = proofs.get(ref)
         if (
@@ -303,6 +305,7 @@ def capsule_evidence_matches(
             or proof.incident_id != capsule.incident_id
             or proof.target_id != target_id
             or proof.validity != "VALID"
+            or classify_evidence_freshness(proof, now=now) == "EXPIRED"
             or proof.classification != "INTERNAL"
             or not isinstance(proof.redacted_excerpt, str)
             or hashlib.sha256(proof.redacted_excerpt.encode("utf-8")).hexdigest()

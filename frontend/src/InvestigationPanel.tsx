@@ -73,7 +73,7 @@ export function InvestigationPanel({ report, stale }: { report: Investigation; s
       {step.evidence.length > 0 && <details>
         <summary>Evidence for step {step.step_no}</summary>
         {step.evidence.map(item => <div key={item.id}>
-          <p>{item.source} · {item.validity}</p><code>{item.redacted_excerpt}</code>
+          <p>{item.source} · {item.freshness === "EXPIRED" ? item.freshness : item.validity}</p><code>{item.redacted_excerpt}</code>
         </div>)}
       </details>}
       {step.incomplete_evidence && <p className="muted">Some evidence references are unavailable.</p>}

@@ -15,6 +15,7 @@ from backend.lineage_refs import MAX_EVIDENCE_REFS, bounded_evidence_refs, refer
 from backend.lineage_projection import check_evidence_projection
 from backend.effect_lineage import effect_relationships
 from backend.trace_refs import graph_trace_refs
+from backend.probes.gateway import evidence_display
 from backend.models import (
     ApprovalGrant, Evidence, EffectReceipt, ExperienceCapsule,
     FailureCase, HypothesisStep, Incident, IncidentPlan,
@@ -361,7 +362,7 @@ async def read_lineage_record_detail(
             "classification": row.classification,
             "observed_at": _iso(row.observed_at),
             "sha256": row.sha256,
-            "redacted_excerpt": row.redacted_excerpt,
+            **evidence_display(row),
         }
     elif kind == "hypothesis":
         details = {

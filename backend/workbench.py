@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.lineage_refs import MAX_EVIDENCE_REFS, bounded_evidence_refs, reference_uuid
 from backend.models import DecisionAssessment, EffectReceipt, Evidence, HypothesisStep, ModelAdvisory
 from backend.outcomes import recorded_recovery_timing
+from backend.probes.gateway import evidence_display
 from backend.schemas import IncidentView
 from backend.services import find_incident
 
@@ -50,7 +51,7 @@ async def read_investigation(
     if evidence_ids:
         evidence = {
             row.id: {"id": str(row.id), "source": row.source, "validity": row.validity,
-                     "redacted_excerpt": row.redacted_excerpt}
+                     **evidence_display(row)}
             for row in (await session.scalars(select(Evidence).where(
                 Evidence.incident_id == incident.id, Evidence.tenant_id == tenant_id,
                 Evidence.id.in_(evidence_ids),
