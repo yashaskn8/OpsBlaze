@@ -27,6 +27,7 @@ from backend.models import (
     ExperienceConsent,
     IdentityProviderEvent,
     Incident,
+    LineageEdge,
     OutboxEntry,
     OutcomeRevision,
     RevokedIdentity,
@@ -226,6 +227,22 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
                 ExperienceCapsule.evidence_ids,
             ).where(ExperienceCapsule.id == capsule_id))).one_or_none()
             assert capsule == ("REVOKED", "", []), "revoked capsule was rehydrated"
+            edge = (await conn.execute(select(
+                LineageEdge.to_type, LineageEdge.to_id, LineageEdge.relation,
+            ).where(
+                LineageEdge.tenant_id == tenant, LineageEdge.incident_id == incident_id,
+                LineageEdge.from_type == "experience", LineageEdge.from_id == capsule_id,
+            ))).one_or_none()
+            assert edge == ("outcome", outcome_id, "DERIVED_FROM"), "experience lineage was lost"
+            assert await conn.scalar(text("""
+                SELECT NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.aclexplode(
+                        coalesce(f.proacl, pg_catalog.acldefault('f', f.proowner))
+                    ) AS acl WHERE acl.grantee <> f.proowner
+                )
+                FROM pg_catalog.pg_proc AS f
+                WHERE f.oid = 'public.project_experience_lineage()'::regprocedure
+            """)) is True, "restored experience lineage function grants exceed owner scope"
             completed = await conn.scalar(select(OutboxEntry.id).where(
                 OutboxEntry.incident_id == incident_id,
                 OutboxEntry.kind == "PROJECT_EXPERIENCE",
@@ -335,6 +352,10 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
         try:
             async with restricted.connect() as conn:
                 assert await conn.scalar(text("SELECT current_user")) == "opsblaze_projector"
+                assert await conn.scalar(text(
+                    "SELECT has_function_privilege(current_user,"
+                    " 'public.project_experience_lineage()', 'EXECUTE')"
+                )) is False, "restored projector can execute the lineage trigger function"
                 count = await conn.scalar(text("""
                     SELECT count(*) FROM public.outbox
                     WHERE incident_id = :incident
@@ -406,6 +427,8 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
             "unresolved_effect_state_preserved": "UNKNOWN",
             "unresolved_effect_attempt_count": 1,
             "capsule_status": "REVOKED",
+            "experience_lineage_preserved": True,
+            "experience_lineage_function_owner_only": True,
             "completed_projection_preserved": True,
             "pending_temporal_start_preserved": True,
             "pending_attempt_count": 2,

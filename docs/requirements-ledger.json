@@ -274,7 +274,7 @@
         "G6"
       ],
       "acceptance_criteria": "Tenant-scoped complete causal lineage, cross-process traces and privacy review.",
-      "remaining_validation": "Learning relation constraints, transactional failure/lesson links and owner-side experience rebuild added; exact candidate CI pending. Automatic experience and incident membership edges, runtime recovery, other trace kinds, performance, collector and accessibility remain.",
+      "remaining_validation": "Migration 0046 automatically projects new experience edges. Exact-commit Linux CI is required. Incident membership, bounded runtime recovery, other trace kinds, performance, collector and accessibility remain.",
       "evidence": [
         {
           "kind": "implementation_status_reference",
@@ -310,6 +310,12 @@
           "kind": "implementation_status_reference",
           "commit": "308ec9475ca493bec7b064903613b9a010a613ab",
           "path": "backend/lineage_projection.py",
+          "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+        },
+        {
+          "kind": "implementation_status_reference",
+          "commit": "98936fcc35e85e5badfbc50b24714b916d84fb97",
+          "path": "migrations/versions/0045_learning_lineage.py",
           "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
         }
       ]
@@ -545,7 +551,7 @@
     }
   ],
   "checkpoint": {
-    "base_commit": "308ec9475ca493bec7b064903613b9a010a613ab",
+    "base_commit": "98936fcc35e85e5badfbc50b24714b916d84fb97",
     "implemented_changes": [
       {
         "commit": "9310682c08fa6605b09b412347d290163b5c2ae7",
@@ -595,11 +601,18 @@
         "change": "Historical effect links and relation-aware drift",
         "workflow_run": 45603581347,
         "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+      },
+      {
+        "commit": "98936fcc35e85e5badfbc50b24714b916d84fb97",
+        "requirement": "P3",
+        "change": "Learning relationship constraints, transactional lesson and failure links, and bounded experience rebuild",
+        "workflow_run": 45605792134,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
       }
     ],
     "next_actions": [
-      "Verify exact candidate migration 0045, lesson/failure writes, consent revocation, owner-side experience rebuild and restricted role tests; repair failures.",
-      "Integrate automatic experience and incident membership projection using existing privilege boundaries, and bounded runtime recovery.",
+      "Reconcile exact-commit Linux CI for migration 0046, including restricted projector, migration rollback, and restore checks.",
+      "Assess incident membership projection and bounded runtime recovery against blueprint section 2.11 before implementation.",
       "Complete remaining trace kinds, workload evidence, independent collector/retention and accessibility; G1–G6 remain blocked."
     ]
   }

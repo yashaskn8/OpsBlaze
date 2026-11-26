@@ -33,6 +33,10 @@ GRANT USAGE ON SCHEMA public TO opsblaze_projector;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM opsblaze_projector;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM opsblaze_projector;
 
+-- A --no-acl restore reinstates PostgreSQL's default PUBLIC EXECUTE.
+-- Reapply the trigger function restriction before starting the projector.
+REVOKE ALL ON FUNCTION public.project_experience_lineage() FROM PUBLIC, opsblaze_projector;
+
 -- Source reads are column-limited. Adding a source field must require a
 -- deliberate grant and an updated PostgreSQL negative regression test.
 GRANT SELECT (id, tenant_id, target_id)

@@ -1,5 +1,6 @@
 """E1 restricted PostgreSQL account: real DB grants, not mocked roles."""
 
+import asyncio
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from backend.experiences import set_consent, set_tenant_consent
 from backend.models import (
-    ExperienceCapsule, Evidence, OutboxEntry, OutcomeRevision,
+    ExperienceCapsule, Evidence, LineageEdge, OutboxEntry, OutcomeRevision,
 )
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
@@ -57,6 +58,26 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
                 assert await conn.scalar(text(
                     "SELECT has_table_privilege(current_user, 'public.lineage_edge', :privilege)"
                 ), {"privilege": privilege}) is False
+            for privilege in ("SELECT", "INSERT", "UPDATE", "REFERENCES"):
+                assert await conn.scalar(text(
+                    "SELECT has_any_column_privilege(current_user, 'public.lineage_edge', :privilege)"
+                ), {"privilege": privilege}) is False
+            assert await conn.scalar(text(
+                "SELECT has_function_privilege(current_user,"
+                " 'public.project_experience_lineage()', 'EXECUTE')"
+            )) is False
+            assert await conn.scalar(text("""
+                SELECT f.prosecdef AND f.proowner = t.relowner
+                       AND f.proconfig = ARRAY['search_path=pg_catalog, pg_temp']
+                       AND NOT EXISTS (
+                           SELECT 1 FROM pg_catalog.aclexplode(
+                               coalesce(f.proacl, pg_catalog.acldefault('f', f.proowner))
+                           ) AS acl WHERE acl.grantee <> f.proowner
+                       )
+                FROM pg_catalog.pg_proc AS f, pg_catalog.pg_class AS t
+                WHERE f.oid = 'public.project_experience_lineage()'::regprocedure
+                  AND t.oid = 'public.lineage_edge'::regclass
+            """)) is True
             # Allow only capture inputs, not origin actor, raw probe excerpts
             # or the adjudicator's free-form outcome rationale.
             for table, column, allowed in (
@@ -199,14 +220,50 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
                 assert prior.delivered_at is None
                 prior.delivered_at = datetime.now(timezone.utc)
 
-        # This actually uses the separately scoped PostgreSQL identity.
-        assert await run_projector_once(projected, tenant_filter=tenant)
+        # Fail the edge write after the restricted role inserts its capsule.
+        async with main_engine.begin() as conn:
+            await conn.exec_driver_sql(
+                "ALTER TABLE public.lineage_edge ADD CONSTRAINT test_projection_failure "
+                f"CHECK (incident_id <> '{incident.id}'::uuid) NOT VALID"
+            )
+        try:
+            assert await run_projector_once(projected, tenant_filter=tenant)
+            async with main.begin() as session:
+                intent = await session.scalar(select(OutboxEntry).where(
+                    OutboxEntry.incident_id == incident.id, OutboxEntry.kind == "PROJECT_EXPERIENCE",
+                ))
+                assert intent.attempt == 1 and intent.delivered_at is None
+                assert intent.dead_lettered_at is None
+                assert await session.scalar(select(ExperienceCapsule.id).where(
+                    ExperienceCapsule.incident_id == incident.id,
+                )) is None
+                assert await session.scalar(select(LineageEdge.from_id).where(
+                    LineageEdge.incident_id == incident.id,
+                )) is None
+                intent.available_at = datetime.now(timezone.utc)
+        finally:
+            async with main_engine.begin() as conn:
+                await conn.exec_driver_sql(
+                    "ALTER TABLE public.lineage_edge DROP CONSTRAINT test_projection_failure"
+                )
+
+        # Only one restricted worker may claim the retry.
+        attempts = await asyncio.gather(*(
+            run_projector_once(projected, tenant_filter=tenant) for _ in range(2)
+        ))
+        assert sorted(attempts) == [False, True]
         await record_heartbeat(projected, "experience_projector")
         async with main() as session:
             capsule = await session.scalar(select(ExperienceCapsule).where(
                 ExperienceCapsule.incident_id == incident.id,
             ))
             assert capsule is not None and capsule.outcome_revision_id == outcome_id
+            edge = (await session.scalars(select(LineageEdge).where(
+                LineageEdge.incident_id == incident.id,
+            ))).one()
+            assert (edge.tenant_id, edge.from_type, edge.from_id, edge.to_type, edge.to_id, edge.relation) == (
+                tenant, "experience", capsule.id, "outcome", outcome_id, "DERIVED_FROM",
+            )
             rows = (await session.scalars(select(OutboxEntry).where(
                 OutboxEntry.incident_id == incident.id,
             ))).all()
