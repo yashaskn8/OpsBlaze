@@ -21,7 +21,9 @@ async def benchmark_database():
 
 
 @pytest.mark.asyncio
-async def test_executable_local_comparative_benchmarks_all_pass(sessions_fixture):
+async def test_executable_local_comparative_benchmarks_all_pass(sessions_fixture, record_property):
+    import json
+
     a1 = await run_a1_strategy_comparison(sessions_fixture, "bench-a1")
     assert a1["scope"] == "SIMULATOR_LAB_ONLY"
     assert a1["measured_ai_comparison"] is False
@@ -42,6 +44,10 @@ async def test_executable_local_comparative_benchmarks_all_pass(sessions_fixture
     assert by_case["revoked-control"]["with_memory_modes"] == ["NO_MEMORY", "NO_MEMORY"]
     assert by_case["revoked-control"]["with_memory_lesson_ids"] == []
     assert by_case["no-lesson"]["with_memory_modes"] == ["NO_MEMORY", "NO_MEMORY"]
+    repeated = await run_e4_memory_ablation(sessions_fixture, "bench-e4")
+    assert repeated["active_lesson_id"] != e4["active_lesson_id"]
+    assert repeated["probe_counts"] == e4["probe_counts"] == {"with_memory": 6, "no_memory": 6}
+    assert all(row["with_memory_outcome"] == row["no_memory_outcome"] for row in repeated["pairs"])
 
     e5 = await run_e5_paired_recovery_cost(sessions_fixture, "bench-e5")
     assert e5["scope"] == "SIMULATOR_LAB_ONLY"
@@ -77,6 +83,7 @@ async def test_executable_local_comparative_benchmarks_all_pass(sessions_fixture
         "CHEAPEST_FIRST": 3, "NO_INVESTIGATION": 3,
     }
     assert e7["arms"]["FIXED_RUNBOOK"]["total_probes"] == e7["arms"]["ADAPTIVE"]["total_probes"] + 1
+    record_property("local_comparisons", json.dumps({"a1": a1, "e4": e4, "e7": e7}))
 
 
 @pytest.mark.integration

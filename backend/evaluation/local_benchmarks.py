@@ -11,6 +11,7 @@ from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import math
+from statistics import median
 import time
 from typing import Literal
 from uuid import UUID, uuid4
@@ -25,7 +26,7 @@ from backend.investigator.baseline import inspect as inspect_incident
 from backend.memory.lessons import create_draft, revoke_lesson, validate_draft
 from backend.models import (
     ApprovalGrant, ContextManifest, EffectReceipt, Incident, IncidentPlan, OperationalLesson,
-    OutcomeRevision, PolicyAssignment, ResourceEpoch, SimulatorAppliedEffect, SimulatorTarget,
+    OutcomeRevision, PolicyAssignment, ProbeCall, ResourceEpoch, SimulatorAppliedEffect, SimulatorTarget,
 )
 from backend.policy.constants import INCUMBENT_POLICY_ID
 from backend.routing.decision import ROUTER_POLICY_ID, pinned_runbook_strategy, select_route
@@ -60,10 +61,7 @@ def _p95(values: list[float]) -> float:
 
 
 def _p50(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    return float(ordered[len(ordered) // 2])
+    return float(median(values)) if values else 0.0
 
 
 async def _ensure_target(
@@ -249,10 +247,11 @@ async def run_a1_strategy_comparison(
         SimulatorScenario("a1-unhealthy-3", "recoverable", True, False, 3, "PROPOSE", False),
     )
     strategies: dict[str, dict] = {}
+    prefix = "a1-" + canonical_digest(tenant_id)[:10] + "-" + uuid4().hex[:10]
     for strategy in ("ADAPTIVE", "FIXED_RUNBOOK", "CHEAPEST_FIRST"):
         rows = [
             await _execute_simulator_case(
-                sessions, f"{tenant_id}-a1-{strategy.lower()}", sc,
+                sessions, f"{prefix}-{strategy.lower()}", sc,
                 key_suffix=strategy.lower(), strategy=strategy,  # type: ignore[arg-type]
             )
             for sc in scenarios
@@ -281,7 +280,9 @@ async def run_e4_memory_ablation(
     tenant_id: str,
 ) -> dict:
     """E4-07: end-to-end A1 investigation ablation with validated vs no vs revoked lessons."""
-    seeded_tenant = f"{tenant_id}-e4"
+    if get_settings().environment != "development":
+        raise ValueError("E4 local memory fixtures require development settings")
+    seeded_tenant = "e4-" + canonical_digest(tenant_id)[:10] + "-" + uuid4().hex[:10]
     async with sessions() as session:
         await set_tenant_consent(session, seeded_tenant, 0, True)
     await _ensure_target(sessions, seeded_tenant, "tgt-active", healthy=False, version=1)
@@ -296,13 +297,15 @@ async def run_e4_memory_ablation(
             )
         async with sessions() as session:
             await set_consent(session, seeded_tenant, src.id, 0, True)
+        if await inspect_incident(sessions, seeded_tenant, src.id, allow_memory=False) != "SIMULATOR_REVIEW_REQUIRED":
+            raise RuntimeError("E4 fixture source investigation failed")
         async with sessions() as session:
             async with session.begin():
                 session.add(OutcomeRevision(
                     id=uuid4(), tenant_id=seeded_tenant, incident_id=src.id,
                     effect_id=None, revision=1, label="VERIFIED",
-                    witness_source="SIMULATOR_WITNESS", observed_version=2,
-                    reason="e4 benchmark verified seed",
+                    witness_source="LAB_FIXTURE", observed_version=None,
+                    reason="synthetic prerequisite for retrieval ablation",
                 ))
         async with sessions() as session:
             capsule = await capture_capsule(session, seeded_tenant, src.id)
@@ -316,6 +319,7 @@ async def run_e4_memory_ablation(
             async with session.begin():
                 row = await session.get(OperationalLesson, validated.id)
                 assert row is not None
+                # Seed the retrieval fixture without activating a release policy.
                 row.status = "ACTIVE"
         if revoke:
             async with sessions() as session:
@@ -331,12 +335,9 @@ async def run_e4_memory_ablation(
     with_mem_lat: list[float] = []
     no_mem_lat: list[float] = []
     pairs: list[dict] = []
-    for label, target_id, healthy in (
-        ("active-lesson", "tgt-active", False),
-        ("revoked-control", "tgt-revoked", False),
-        ("no-lesson", "tgt-none", False),
-    ):
-        await _ensure_target(sessions, seeded_tenant, target_id, healthy=healthy, version=1)
+    for index, (label, target_id) in enumerate((
+        ("active-lesson", "tgt-active"), ("revoked-control", "tgt-revoked"), ("no-lesson", "tgt-none"),
+    )):
         async with sessions() as session:
             inc_mem = await admit_incident(
                 session, seeded_tenant, f"e4-mem-{label}-{uuid4().hex[:6]}",
@@ -346,24 +347,29 @@ async def run_e4_memory_ablation(
                 session, seeded_tenant, f"e4-ctrl-{label}-{uuid4().hex[:6]}",
                 IncidentCreate(target_id=target_id),
             )
-        t0 = time.perf_counter()
-        res_mem = await inspect_incident(sessions, seeded_tenant, inc_mem.id, allow_memory=True)
-        with_mem_lat.append((time.perf_counter() - t0) * 1000.0)
-        t1 = time.perf_counter()
-        res_ctrl = await inspect_incident(sessions, seeded_tenant, inc_ctrl.id, allow_memory=False)
-        no_mem_lat.append((time.perf_counter() - t1) * 1000.0)
+        outcomes = {}
+        arms = ((inc_mem, True, with_mem_lat), (inc_ctrl, False, no_mem_lat))
+        for incident, use_memory, times in (arms if index % 2 == 0 else reversed(arms)):
+            started = time.perf_counter()
+            outcomes[use_memory] = await inspect_incident(sessions, seeded_tenant, incident.id, allow_memory=use_memory)
+            times.append((time.perf_counter() - started) * 1000.0)
 
         async with sessions() as session:
             man_mem = list((await session.scalars(
-                select(ContextManifest).where(ContextManifest.incident_id == inc_mem.id)
+                select(ContextManifest).where(ContextManifest.incident_id == inc_mem.id).order_by(ContextManifest.step_no)
             )).all())
             man_ctrl = list((await session.scalars(
-                select(ContextManifest).where(ContextManifest.incident_id == inc_ctrl.id)
+                select(ContextManifest).where(ContextManifest.incident_id == inc_ctrl.id).order_by(ContextManifest.step_no)
             )).all())
+            probes = dict((await session.execute(select(ProbeCall.incident_id, func.count()).where(
+                ProbeCall.incident_id.in_((inc_mem.id, inc_ctrl.id)),
+            ).group_by(ProbeCall.incident_id))).all())
         pairs.append({
             "case": label,
-            "with_memory_outcome": res_mem,
-            "no_memory_outcome": res_ctrl,
+            "with_memory_outcome": outcomes[True],
+            "no_memory_outcome": outcomes[False],
+            "with_memory_probe_calls": probes.get(inc_mem.id, 0),
+            "no_memory_probe_calls": probes.get(inc_ctrl.id, 0),
             "with_memory_modes": [m.memory_mode for m in man_mem],
             "with_memory_lesson_ids": [lid for m in man_mem for lid in (m.lesson_ids or [])],
             "no_memory_modes": [m.memory_mode for m in man_ctrl],
@@ -376,6 +382,10 @@ async def run_e4_memory_ablation(
         "promotion_eligible": False,
         "active_lesson_id": active_lesson_id,
         "pairs": pairs,
+        "probe_counts": {
+            "with_memory": sum(row["with_memory_probe_calls"] for row in pairs),
+            "no_memory": sum(row["no_memory_probe_calls"] for row in pairs),
+        },
         "with_memory_p50_ms": round(_p50(with_mem_lat), 3),
         "with_memory_p95_ms": round(_p95(with_mem_lat), 3),
         "no_memory_p50_ms": round(_p50(no_mem_lat), 3),

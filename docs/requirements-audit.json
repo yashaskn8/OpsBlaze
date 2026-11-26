@@ -7,14 +7,13 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "0aae1c0f8ecd96da3c6203a2e90f75b898852cab",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45804120216",
+    "commit": "5e7a3298d2a2a0003cdf6c414558880cdd69865e",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45811978863",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
   "status_counts": {
-    "EXTERNALLY BLOCKED": 19,
-    "LOCALLY UNVERIFIED": 1,
+    "EXTERNALLY BLOCKED": 20,
     "PARTIALLY IMPLEMENTED": 2,
     "VERIFIED WORKING": 154
   },
@@ -245,7 +244,8 @@
         "skip link focus",
         "accessible review control names",
         "Tab order",
-        "keyboard rejection"
+        "keyboard rejection",
+        "focus retained on the live result after keyboard rejection"
       ]
     },
     "closure_migration_0054": {
@@ -253,7 +253,121 @@
       "native_unscrubbed_expiry_test": "PASS",
       "windows_focused_evidence_plan_workbench_lineage_lesson_tests": 67,
       "frontend_node_tests_passed": 16,
-      "typescript_vite_build": "PASS"
+      "typescript_vite_build": "PASS",
+      "native_suite_and_restore": "27_PASSED_RESTORE_AND_DOWNGRADE_PASS"
+    },
+    "closure_local_comparisons": {
+      "focused_windows_backend_tests": 61,
+      "native_temporal_restart_tests": 5,
+      "native_pg_tests_at_baseline": 27,
+      "a1": {
+        "ADAPTIVE": {
+          "cases": 6,
+          "correct": 6,
+          "accuracy": 1.0,
+          "unsafe_proposals": 0,
+          "total_probes": 9,
+          "p50_latency_ms": 45.0,
+          "p95_latency_ms": 101.0,
+          "target_mutations": 0
+        },
+        "FIXED_RUNBOOK": {
+          "cases": 6,
+          "correct": 6,
+          "accuracy": 1.0,
+          "unsafe_proposals": 0,
+          "total_probes": 11,
+          "p50_latency_ms": 57.0,
+          "p95_latency_ms": 81.0,
+          "target_mutations": 0
+        },
+        "CHEAPEST_FIRST": {
+          "cases": 6,
+          "correct": 6,
+          "accuracy": 1.0,
+          "unsafe_proposals": 0,
+          "total_probes": 9,
+          "p50_latency_ms": 43.5,
+          "p95_latency_ms": 81.0,
+          "target_mutations": 0
+        }
+      },
+      "e4": {
+        "probe_counts": {
+          "with_memory": 6,
+          "no_memory": 6
+        },
+        "with_memory_p50_ms": 60.615,
+        "with_memory_p95_ms": 67.059,
+        "no_memory_p50_ms": 56.348,
+        "no_memory_p95_ms": 58.792
+      },
+      "e7": {
+        "ADAPTIVE": {
+          "cases": 6,
+          "attribution_matches": true,
+          "policy_pins_valid": true,
+          "correct": 6,
+          "unsafe_proposals": 0,
+          "total_probes": 5,
+          "route_counts": {
+            "ADAPTIVE": 3,
+            "HANDOFF": 3
+          },
+          "executed_strategy_counts": {
+            "ADAPTIVE": 3,
+            "NO_INVESTIGATION": 3
+          }
+        },
+        "FIXED_RUNBOOK": {
+          "cases": 6,
+          "attribution_matches": true,
+          "policy_pins_valid": true,
+          "correct": 6,
+          "unsafe_proposals": 0,
+          "total_probes": 6,
+          "route_counts": {
+            "RUNBOOK": 3,
+            "HANDOFF": 3
+          },
+          "executed_strategy_counts": {
+            "FIXED_RUNBOOK": 3,
+            "NO_INVESTIGATION": 3
+          }
+        },
+        "CHEAPEST_FIRST": {
+          "cases": 6,
+          "attribution_matches": true,
+          "policy_pins_valid": true,
+          "correct": 6,
+          "unsafe_proposals": 0,
+          "total_probes": 5,
+          "route_counts": {
+            "CHEAPEST_FIRST": 3,
+            "HANDOFF": 3
+          },
+          "executed_strategy_counts": {
+            "CHEAPEST_FIRST": 3,
+            "NO_INVESTIGATION": 3
+          }
+        },
+        "DEFAULT_RUNBOOK": {
+          "cases": 6,
+          "attribution_matches": true,
+          "policy_pins_valid": true,
+          "correct": 6,
+          "unsafe_proposals": 0,
+          "total_probes": 5,
+          "route_counts": {
+            "RUNBOOK": 3,
+            "HANDOFF": 3
+          },
+          "executed_strategy_counts": {
+            "ADAPTIVE": 3,
+            "NO_INVESTIGATION": 3
+          }
+        }
+      }
     }
   },
   "findings": [
@@ -453,33 +567,26 @@
     {
       "order": 1,
       "requirements": [
-        "E5-05",
-        "A3-08",
-        "E7-08"
+        "E4-07",
+        "A1-10",
+        "P2-08"
       ],
-      "execution": "Native Windows and exact Linux CI",
-      "action": "Reconcile exact-commit native integration, restore, and release checks after the E5 fixture and migration 0054 repairs."
+      "execution": "Native and exact Linux CI",
+      "action": "Reconcile exact CI for repeatable comparisons and review focus. Validate spoken output with a real screen reader."
     },
     {
       "order": 2,
       "requirements": [
-        "A1-10",
-        "E4-07",
-        "P2-08"
-      ],
-      "execution": "Native tests and isolated Playwright MCP",
-      "action": "Verify comparative repeatability and memory attribution, then verify review focus and screen-reader behavior."
-    },
-    {
-      "order": 3,
-      "requirements": [
         "B1-06",
         "B4-03",
+        "A3-08",
         "A4-06",
+        "E5-05",
+        "E7-08",
         "E8-06"
       ],
-      "execution": "Native fault evidence and externally controlled verification",
-      "action": "Reconcile local retry, replay, calibration and simulator retention results with G1–G6 evidence requirements."
+      "execution": "Externally controlled verification",
+      "action": "Collect independent provider, privacy, held-out evaluation, and multi-host recovery evidence under G1–G6."
     }
   ],
   "capabilities": [
@@ -627,7 +734,7 @@
             "tests/test_temporal_worker_restart.py",
             "tests/test_pg_two_worker_failover.py"
           ],
-          "evidence": "CI generated and replayed histories from pinned source and ran worker restart tests. The tested restart cases center on approval waiting. Exact-main Linux CI 45771805410 (3c0a17c) passed.",
+          "evidence": "CI generated and replayed histories from pinned source and ran worker restart tests. The tested restart cases center on approval waiting. Exact-main Linux CI 45771805410 (3c0a17c) passed. Five native Windows restart cases passed. The 27-test PostgreSQL campaign also covered two-worker handoff and restored the single-host sentinel.",
           "dependencies": [
             "G3"
           ],
@@ -1128,7 +1235,7 @@
             "tests/test_probes.py",
             "tests/test_pg_temporal_e2e.py"
           ],
-          "evidence": "The tests verify reserved slots, durable retries and one PG probe reservation under concurrent retries. End-to-end external-provider cost limits are not proven.",
+          "evidence": "The tests verify reserved slots, durable retries and one PG probe reservation under concurrent retries. End-to-end external-provider cost limits are not proven. Focused Windows verification passed concurrent budget exhaustion, retained retry accounting, and a fresh sessionmaker restart using synthetic provider calls.",
           "dependencies": [
             "A1",
             "A2",
@@ -1938,8 +2045,9 @@
           "defects": [
             "No dedicated evidence-payload retention, restricted-evidence access audit, or calibrated redaction failure metrics were found."
           ],
-          "remaining": "Exact-commit Linux CI and externally approved privacy and provider source evidence.",
-          "local_verification": "FOCUSED_PASS_EXACT_CI_PENDING"
+          "remaining": "External G6 privacy and approved source evidence. Local expiry, redaction, scoped access and decline checks passed.",
+          "local_verification": "SUCCESS_ALL_10_EXACT_COMMIT_JOBS",
+          "commit": "5e7a3298d2a2a0003cdf6c414558880cdd69865e"
         }
       ]
     },
@@ -2790,14 +2898,15 @@
             "tests/test_oidc_auth.py",
             "tests/test_api_contract.py"
           ],
-          "evidence": "Isolated Playwright MCP against FastAPI verified the skip link moves focus, the review controls have accessible names, Tab reaches Approve and Reject in order, and keyboard rejection removes the stale actions at a 390 px viewport. Synthetic issuer tests cover token semantics.",
+          "evidence": "Isolated Playwright MCP against FastAPI verified the skip link moves focus, the review controls have accessible names, Tab reaches Approve and Reject in order, and keyboard rejection removes the stale actions at a 390 px viewport. Synthetic issuer tests cover token semantics. After the review buttons disappear, keyboard focus remains on the live Review status that receives the authoritative result.",
           "dependencies": [
             "G1",
             "G5",
             "G6"
           ],
           "defects": [],
-          "remaining": "Verify predictable focus after review controls disappear and actual screen-reader announcements. G1 and G6 require external identity and release governance evidence."
+          "remaining": "Verify actual screen-reader announcements. G1 and G6 require external identity and independently authorized release evidence.",
+          "local_verification": "PLAYWRIGHT_MCP_PASS_EXACT_CI_PENDING"
         }
       ]
     },
@@ -4309,16 +4418,18 @@
           "status": "PARTIALLY IMPLEMENTED",
           "implementation": [
             "backend/memory/lessons.py",
-            "backend/evaluation/smoke.py"
+            "backend/evaluation/smoke.py",
+            "backend/evaluation/local_benchmarks.py"
           ],
           "consumers": [
             "No measured E4 workload entry point evidenced"
           ],
           "tests": [
             "tests/test_lessons.py",
-            "tests/test_evaluation_smoke.py"
+            "tests/test_evaluation_smoke.py",
+            "tests/test_local_benchmarks.py"
           ],
-          "evidence": "Focused eligibility checks and generic synthetic evaluation do not exercise an end-to-end A1 context lookup and ablation.",
+          "evidence": "Two consecutive runs in the same disposable SQLite database used distinct fixtures. The eligible arm cited the scoped active lesson and the revoked and missing controls cited none. Both arms used six probe calls and had identical decisions. The seeded outcome is ordinary lab fixture data. It supplies no recovery or independence evidence.",
           "dependencies": [
             "A1",
             "E5",
@@ -4327,7 +4438,8 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Verify benchmark repeatability and report actual retrieval, decisions and resource consumption. G4 requires a protected independent memory efficacy comparison."
+          "remaining": "Reconcile exact Linux CI. G4 requires protected independent memory efficacy evidence; the local sample showed no decision or probe-count improvement.",
+          "local_verification": "FOCUSED_PASS_EXACT_CI_PENDING"
         }
       ]
     },
@@ -4437,7 +4549,7 @@
         {
           "id": "E5-05",
           "requirement": "Evaluate measured verified recovery per total cost and family safety/latency/cost nonregression.",
-          "status": "LOCALLY UNVERIFIED",
+          "status": "EXTERNALLY BLOCKED",
           "implementation": [
             "backend/evaluation/recovery_cost.py",
             "backend/evaluation/heldout.py",
@@ -4460,8 +4572,9 @@
             "G4"
           ],
           "defects": [],
-          "remaining": "Prior exact CI failed because the new E5 test left a pooled connection attached to its closed event loop. Verify fixture teardown on exact Linux CI. G4 still requires protected independent held-out and audited cost evidence.",
-          "local_verification": "NATIVE_LAB_PASS_PRIOR_EXACT_CI_FAILED"
+          "remaining": "G4 requires protected independent held-out outcomes and actual audited costs. Exact CI passed the native approvals, unknown-outcome control and witnessed benchmark regression.",
+          "local_verification": "SUCCESS_ALL_10_EXACT_COMMIT_JOBS",
+          "commit": "5e7a3298d2a2a0003cdf6c414558880cdd69865e"
         },
         {
           "id": "E5-06",
@@ -4985,8 +5098,9 @@
             "G5"
           ],
           "defects": [],
-          "remaining": "Reconcile exact GitHub CI. G4 requires protected independent comparison with actual provider and production evidence.",
-          "local_verification": "FOCUSED_PASS_EXACT_CI_PENDING"
+          "remaining": "G4 requires protected independent comparison with actual authorized provider and production evidence.",
+          "local_verification": "SUCCESS_ALL_10_EXACT_COMMIT_JOBS",
+          "commit": "5e7a3298d2a2a0003cdf6c414558880cdd69865e"
         }
       ]
     },
@@ -5137,7 +5251,7 @@
             "tests/test_adapter_conformance.py",
             "tests/test_external_adapter_qualification.py"
           ],
-          "evidence": "Harness simulates retention gaps and recovery, and verifier checks a retention profile. Actual elapsed provider retention and genuine partial-commit evidence are unavailable.",
+          "evidence": "Harness simulates retention gaps and recovery, and verifier checks a retention profile. Actual elapsed provider retention and genuine partial-commit evidence are unavailable. Native PostgreSQL conformance passed the retention-horizon contract and safe handling of partial/expired status.",
           "dependencies": [
             "B3",
             "G2"
@@ -5336,6 +5450,7 @@
     ],
     "backend/evaluation/local_benchmarks.py": [
       "A1-10",
+      "E4-07",
       "E5-05",
       "E7-08"
     ],
@@ -6164,6 +6279,7 @@
     ],
     "tests/test_local_benchmarks.py": [
       "A1-10",
+      "E4-07",
       "E5-05",
       "E7-08"
     ],

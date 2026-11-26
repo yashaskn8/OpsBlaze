@@ -135,6 +135,7 @@ function App() {
   } | null>(null);
   const [expiredReview, setExpiredReview] = useState<typeof reviewSnapshot>(null);
   const [reviewStale, setReviewStale] = useState(false);
+  const reviewStatus = useRef<HTMLParagraphElement>(null);
   const [decisionReason, setDecisionReason] = useState(
     "Reviewed simulator evidence and expected target version"
   );
@@ -857,6 +858,7 @@ function App() {
   async function decidePlan(choice: "APPROVE" | "REJECT") {
     if (!plan || !incident || !canReview || reviewStale || connection !== "LIVE") return;
     if (choice === "APPROVE" && (!plan.policy_id || !plan.postcondition)) return;
+    reviewStatus.current?.focus();
     setBusy(true);
     setReviewStale(true);
     setError("");
@@ -889,6 +891,7 @@ function App() {
       setError("Revocation reason must be at least 8 characters.");
       return;
     }
+    reviewStatus.current?.focus();
     setBusy(true);
     setReviewStale(true);
     setError("");
@@ -1042,7 +1045,7 @@ function App() {
               <h3>Proposed simulator plan</h3>
               <p><strong>{plan.action_id}</strong> for {plan.target_id}</p>
               <p className="muted">Plan state: {plan.status} · Expected target version: {plan.expected_version}</p>
-              <p aria-live="polite">Review status: {reviewState}</p>
+              <p ref={reviewStatus} tabIndex={-1} role="status">Review status: {reviewState}</p>
               {plan.review.pending_since && <p className="muted">
                 Pending since {new Date(plan.review.pending_since).toLocaleString()}
               </p>}
