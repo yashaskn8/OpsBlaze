@@ -1,6 +1,7 @@
 
-"""A4 deterministic hard gates; risk scores are NOT calibrated probabilities."""
+"""A4 deterministic hard gates and development-only ordinal threshold calibration."""
 
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,164 @@ from backend.settings import get_settings
 
 FEATURE_VERSION = "simulator-evidence-v1"
 THRESHOLD_VERSION = "UNCALIBRATED-hard-gates-v1"
+CALIBRATION_SCORE_KIND = "uncalibrated_ordinal_risk_score"
+
+
+@dataclass(frozen=True)
+class CalibrationCase:
+    case_id: str
+    family: str
+    expected: Literal["PROPOSE", "ABSTAIN"]
+    evidence_age_seconds: int
+    probe_denials: int
+    version_drift: bool
+    disputed_history: bool
+    missing_evidence: bool
+
+
+DEFAULT_DEV_CALIBRATION_FIXTURES: tuple[CalibrationCase, ...] = (
+    CalibrationCase("dev-1", "dev-recoverable", "PROPOSE", 15, 0, False, False, False),
+    CalibrationCase("dev-2", "dev-recoverable", "PROPOSE", 45, 0, False, False, False),
+    CalibrationCase("dev-3", "dev-recoverable", "PROPOSE", 120, 0, False, False, False),
+    CalibrationCase("dev-4", "dev-drift", "ABSTAIN", 20, 0, True, False, False),
+    CalibrationCase("dev-5", "dev-stale", "ABSTAIN", 600, 0, False, False, False),
+    CalibrationCase("dev-6", "dev-missing", "ABSTAIN", 0, 1, False, False, True),
+)
+
+DEFAULT_EVAL_CALIBRATION_FIXTURES: tuple[CalibrationCase, ...] = (
+    CalibrationCase("eval-1", "eval-fault-a", "PROPOSE", 10, 0, False, False, False),
+    CalibrationCase("eval-2", "eval-fault-a", "PROPOSE", 90, 0, False, False, False),
+    CalibrationCase("eval-3", "eval-fault-b", "PROPOSE", 60, 0, False, False, False),
+    CalibrationCase("eval-4", "eval-disputed", "ABSTAIN", 30, 0, False, True, False),
+    CalibrationCase("eval-5", "eval-expired", "ABSTAIN", 900, 0, False, False, False),
+    CalibrationCase("eval-6", "eval-denied", "ABSTAIN", 25, 1, False, False, False),
+)
+
+
+def compute_abstention_risk_score(case: CalibrationCase) -> int:
+    """Compute a bounded ordinal risk score (0-100); NOT a calibrated probability."""
+    score = 0
+    if case.evidence_age_seconds > 300:
+        score += 35
+    if case.probe_denials > 0:
+        score += 35
+    if case.version_drift:
+        score += 40
+    if case.disputed_history:
+        score += 35
+    if case.missing_evidence:
+        score += 50
+    return min(100, score)
+
+
+def _score_threshold(cases: list[CalibrationCase], threshold: int) -> dict:
+    proposed = 0
+    abstained = 0
+    unsafe = 0
+    for case in cases:
+        score = compute_abstention_risk_score(case)
+        decision = "PROPOSE" if score <= threshold else "ABSTAIN"
+        if decision == "PROPOSE":
+            proposed += 1
+            if case.expected == "ABSTAIN":
+                unsafe += 1
+        else:
+            abstained += 1
+    total = len(cases)
+    coverage = round(proposed / total, 4) if total else 0.0
+    selective_risk = round(unsafe / proposed, 4) if proposed else 0.0
+    unsafe_rate = round(unsafe / total, 4) if total else 0.0
+    return {
+        "threshold": threshold,
+        "pairs": total,
+        "proposed": proposed,
+        "abstained": abstained,
+        "coverage": coverage,
+        "selective_risk": selective_risk,
+        "unsafe_proposals": unsafe,
+        "unsafe_rate": unsafe_rate,
+    }
+
+
+def freeze_dev_threshold(
+    dev_cases: list[CalibrationCase],
+    *,
+    max_unsafe_rate: float = 0.0,
+) -> dict:
+    """A4-06: select and freeze an ordinal threshold exclusively on development cases."""
+    if not dev_cases:
+        raise ValueError("development calibration corpus must not be empty")
+    if not 0.0 <= max_unsafe_rate <= 1.0:
+        raise ValueError("max_unsafe_rate must be between 0 and 1")
+    dev_ids = [case.case_id for case in dev_cases]
+    if len(set(dev_ids)) != len(dev_ids):
+        raise ValueError("duplicate development calibration case_id")
+    dev_families = sorted({case.family for case in dev_cases})
+    best: dict | None = None
+    for candidate in range(0, 101, 5):
+        summary = _score_threshold(dev_cases, candidate)
+        if summary["unsafe_rate"] <= max_unsafe_rate and (
+            best is None
+            or summary["coverage"] > best["coverage"]
+            or (
+                summary["coverage"] == best["coverage"]
+                and summary["threshold"] < best["threshold"]
+            )
+        ):
+            best = summary
+    if best is None:
+        best = _score_threshold(dev_cases, 0)
+    dev_digest = hashlib.sha256(
+        json.dumps([asdict(c) for c in dev_cases], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return {
+        "threshold": best["threshold"],
+        "score_kind": CALIBRATION_SCORE_KIND,
+        "is_calibrated_probability": False,
+        "promotion_eligible": False,
+        "dev_digest": dev_digest,
+        "dev_case_ids": sorted(dev_ids),
+        "dev_families": dev_families,
+        "dev_metrics": best,
+    }
+
+
+def evaluate_frozen_threshold(
+    frozen: dict,
+    eval_cases: list[CalibrationCase],
+) -> dict:
+    """A4-06: evaluate frozen threshold on strictly disjoint evaluation families/cases."""
+    if not eval_cases:
+        raise ValueError("evaluation calibration corpus must not be empty")
+    eval_ids = {case.case_id for case in eval_cases}
+    if len(eval_ids) != len(eval_cases):
+        raise ValueError("duplicate evaluation calibration case_id")
+    eval_families = {case.family for case in eval_cases}
+    if eval_ids & set(frozen["dev_case_ids"]) or eval_families & set(frozen["dev_families"]):
+        raise ValueError("development and evaluation split contamination detected")
+
+    threshold = int(frozen["threshold"])
+    overall = _score_threshold(eval_cases, threshold)
+    by_family: dict[str, dict] = {}
+    for family in sorted(eval_families):
+        subset = [case for case in eval_cases if case.family == family]
+        by_family[family] = _score_threshold(subset, threshold)
+
+    curve = [_score_threshold(eval_cases, cut) for cut in (10, 25, 40, 60, 80)]
+    eval_digest = hashlib.sha256(
+        json.dumps([asdict(c) for c in eval_cases], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return {
+        "threshold": threshold,
+        "score_kind": CALIBRATION_SCORE_KIND,
+        "is_calibrated_probability": False,
+        "promotion_eligible": False,
+        "dev_digest": frozen["dev_digest"],
+        "eval_digest": eval_digest,
+        "overall": overall,
+        "family_metrics": by_family,
+        "risk_coverage_curve": curve,
+    }
 
 
 async def accepted_snapshot_is_still_safe(

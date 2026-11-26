@@ -3,6 +3,7 @@
 import hashlib
 import json
 import time
+from typing import Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -237,25 +238,31 @@ async def inspect(
     allow_memory: bool = True,
     lesson_ids: list[str] | None = None,
     memory_mode: str | None = None,
+    strategy: Literal["ADAPTIVE", "FIXED_RUNBOOK", "CHEAPEST_FIRST"] = "ADAPTIVE",
 ) -> str:
     """Choose a second read based on the first observation. Never perform an effect."""
     from backend.memory.lessons import retrieve_cited_memory_context
 
+    if strategy in {"FIXED_RUNBOOK", "CHEAPEST_FIRST"}:
+        allow_memory = False
+        advisory_model = None
+        reuse_legacy_advice = False
     started = time.perf_counter()
     if lesson_ids is None or memory_mode is None:
         resolved_lessons: list[str] = []
         resolved_mode = "NO_MEMORY_CONTROL" if not allow_memory else "NO_MEMORY"
-        async with sessions() as session:
-            target_id = await session.scalar(
-                select(Incident.target_id).where(
-                    Incident.id == incident_id, Incident.tenant_id == tenant_id,
+        if allow_memory:
+            async with sessions() as session:
+                target_id = await session.scalar(
+                    select(Incident.target_id).where(
+                        Incident.id == incident_id, Incident.tenant_id == tenant_id,
+                    )
                 )
-            )
-            if target_id is not None:
-                cited, resolved_mode = await retrieve_cited_memory_context(
-                    session, tenant_id, target_id, limit=4, allow_memory=allow_memory,
-                )
-                resolved_lessons = [item["lesson_id"] for item in cited]
+                if target_id is not None:
+                    cited, resolved_mode = await retrieve_cited_memory_context(
+                        session, tenant_id, target_id, limit=4, allow_memory=allow_memory,
+                    )
+                    resolved_lessons = [item["lesson_id"] for item in cited]
         lesson_ids = resolved_lessons if lesson_ids is None else lesson_ids
         memory_mode = resolved_mode if memory_mode is None else memory_mode
     try:
@@ -285,6 +292,26 @@ async def inspect(
 
     current = json.loads(health.excerpt)
     if current.get("healthy", False):
+        if strategy == "FIXED_RUNBOOK":
+            try:
+                version_extra = await invoke_probe(
+                    sessions, tenant_id, incident_id, 2, "simulator.version",
+                )
+                if version_extra.evidence_id:
+                    ids.append(str(version_extra.evidence_id))
+            except ProbeDenied:
+                pass
+            await assess_decision(sessions, tenant_id, incident_id, 2, ids, handoff_reason="TARGET_ALREADY_HEALTHY")
+            await write_step(
+                sessions, incident_id, 2, ids, "ABSTAINED_NO_FAILURE",
+                {"no_simulated_fault": 1}, "simulator.version",
+                competing_hypotheses=build_competing_hypotheses(
+                    health_evidence_id=health_id, healthy=True,
+                ),
+                elapsed_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                lesson_ids=lesson_ids, memory_mode=memory_mode,
+            )
+            return "ABSTAINED"
         await assess_decision(sessions, tenant_id, incident_id, 1, ids, handoff_reason="TARGET_ALREADY_HEALTHY")
         await write_step(
             sessions, incident_id, 1, ids, "ABSTAINED_NO_FAILURE",

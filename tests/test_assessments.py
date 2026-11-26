@@ -277,3 +277,38 @@ async def test_probe_handoff_cannot_reuse_a_positive_assessment(assessment_lab):
     async with sessions() as session:
         persisted = await session.get(DecisionAssessment, accepted.id)
         assert persisted.outcome == "PROPOSED" and persisted.evidence_digest == accepted.evidence_digest
+
+
+def test_a4_06_dev_threshold_freeze_split_isolation_and_risk_coverage():
+    from backend.investigator.abstain import (
+        DEFAULT_DEV_CALIBRATION_FIXTURES,
+        DEFAULT_EVAL_CALIBRATION_FIXTURES,
+        CalibrationCase,
+        evaluate_frozen_threshold,
+        freeze_dev_threshold,
+    )
+
+    frozen = freeze_dev_threshold(list(DEFAULT_DEV_CALIBRATION_FIXTURES), max_unsafe_rate=0.0)
+    assert frozen["is_calibrated_probability"] is False
+    assert frozen["promotion_eligible"] is False
+    assert frozen["score_kind"] == "uncalibrated_ordinal_risk_score"
+    assert 0 <= frozen["threshold"] <= 100
+
+    report = evaluate_frozen_threshold(frozen, list(DEFAULT_EVAL_CALIBRATION_FIXTURES))
+    assert report["is_calibrated_probability"] is False
+    assert report["promotion_eligible"] is False
+    assert report["overall"]["pairs"] == len(DEFAULT_EVAL_CALIBRATION_FIXTURES)
+    assert report["overall"]["unsafe_proposals"] == 0
+    assert report["overall"]["coverage"] == 0.5
+    assert set(report["family_metrics"]) == {
+        "eval-denied", "eval-disputed", "eval-expired", "eval-fault-a", "eval-fault-b",
+    }
+    assert len(report["risk_coverage_curve"]) == 5
+
+    # Reproducibility check on the exact frozen inputs.
+    assert evaluate_frozen_threshold(frozen, list(DEFAULT_EVAL_CALIBRATION_FIXTURES)) == report
+
+    # Development/evaluation family contamination must fail closed.
+    contaminated = CalibrationCase("eval-dup", "dev-recoverable", "PROPOSE", 10, 0, False, False, False)
+    with pytest.raises(ValueError, match="contamination"):
+        evaluate_frozen_threshold(frozen, [contaminated])

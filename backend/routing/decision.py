@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+from typing import Literal
 from uuid import UUID, NAMESPACE_URL, uuid5
 
 from sqlalchemy import func, select
@@ -39,6 +40,8 @@ async def read_route(session: AsyncSession, tenant_id: str, incident_id: UUID) -
 async def select_route(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: str, incident_id: UUID,
+    *,
+    strategy_mode: Literal["DEFAULT", "FIXED_RUNBOOK", "CHEAPEST_FIRST", "ADAPTIVE"] = "DEFAULT",
 ) -> RouteDecision | None:
     async with sessions() as session:
         async with session.begin():
@@ -125,15 +128,26 @@ async def select_route(
             elif budget < 2:
                 route, reason = "HANDOFF", "PROBE_BUDGET_INSUFFICIENT"
                 cost_cap = 0
-            elif 1 <= len(model) <= 64 and settings.ai_token_limit_per_minute >= MAX_RESERVE_TOKENS:
+            elif 1 <= len(model) <= 64 and settings.ai_token_limit_per_minute >= MAX_RESERVE_TOKENS and strategy_mode in {"DEFAULT", "ADAPTIVE"}:
                 route, reason = "AGENT_NO_MEMORY", "DEVELOPMENT_READ_ONLY_ADVISORY"
                 cost_cap = 2
                 model_id = model
                 reservation = MAX_RESERVE_TOKENS
+            elif strategy_mode == "CHEAPEST_FIRST":
+                route, reason = "CHEAPEST_FIRST", "APPROVED_CHEAPEST_FIRST_BASELINE"
+                cost_cap = 2
+            elif strategy_mode == "ADAPTIVE":
+                route, reason = "ADAPTIVE", "APPROVED_SIMULATOR_ADAPTIVE"
+                cost_cap = 2
             else:
                 route, reason = "RUNBOOK", "APPROVED_SIMULATOR_BASELINE"
                 cost_cap = 2
 
+            selected_strategy = (
+                "AGENT_NO_MEMORY"
+                if route == "AGENT_NO_MEMORY"
+                else ("HANDOFF" if route == "HANDOFF" else route)
+            )
             context = {
                 "tenant": tenant_id,
                 "target": incident.target_id,
@@ -152,6 +166,11 @@ async def select_route(
                 "advisory_model": model,
                 "tenant_token_limit": settings.ai_token_limit_per_minute,
                 "router_version": ROUTER_VERSION,
+                **(
+                    {"strategy_mode": strategy_mode}
+                    if strategy_mode != "DEFAULT"
+                    else {}
+                ),
             }
             encoded = json.dumps(context, sort_keys=True, separators=(",", ":")).encode()
             digest = hashlib.sha256(encoded).hexdigest()
@@ -165,6 +184,7 @@ async def select_route(
                 "eligible_lesson_ids": eligible_memory_ids,
                 "probe_limit": budget,
                 "target_available": target is not None,
+                "selected_strategy": selected_strategy,
             }
             selected = RouteDecision(
                 id=uuid5(NAMESPACE_URL, f"opsblaze/route/{tenant_id}/{incident_id}/1"),
