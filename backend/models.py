@@ -221,6 +221,9 @@ class SimulatorAppliedEffect(Base):
     target_id: Mapped[str] = mapped_column(String(256), nullable=False)
     observed_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     permit_digest: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
 
 
 class EffectReceipt(Base):
@@ -262,6 +265,7 @@ class Evidence(Base):
     __tablename__ = "evidence"
     __table_args__ = (
         Index("ix_evidence_scoped", "tenant_id", "incident_id", "captured_at", "id"),
+        Index("ix_evidence_expires", "validity", "expires_at"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -273,12 +277,37 @@ class Evidence(Base):
     target_version: Mapped[int | None] = mapped_column(BigInteger)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     redacted_excerpt: Mapped[str] = mapped_column(String(512), nullable=False)
     classification: Mapped[str] = mapped_column(String(24), nullable=False)
     validity: Mapped[str] = mapped_column(String(24), nullable=False)
     supersedes_evidence_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("evidence.id", name="fk_evidence_supersedes"),
+    )
+
+
+class EvidenceAccessAudit(Base):
+    """A3-08: tenant-scoped record of evidence reads without storing raw payloads."""
+
+    __tablename__ = "evidence_access_audit"
+    __table_args__ = (
+        Index("ix_evidence_access_scoped", "tenant_id", "incident_id", "accessed_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    incident_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("incident.id"), nullable=False,
+    )
+    evidence_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("evidence.id"), nullable=False,
+    )
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    action: Mapped[str] = mapped_column(String(24), nullable=False)
+    classification: Mapped[str] = mapped_column(String(24), nullable=False)
+    accessed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
 
 

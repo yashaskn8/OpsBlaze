@@ -2,15 +2,16 @@
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.database import get_session_maker
 from backend.models import (
-    ExperienceCapsule, OperationalLesson, TenantExperienceConsent,
+    Evidence, ExperienceCapsule, OperationalLesson, TenantExperienceConsent,
 )
+from backend.probes.gateway import EVIDENCE_RETENTION_DAYS, EXPIRED_EXCERPT
 
 
 async def expire_capsules(
@@ -110,8 +111,58 @@ async def scrub_revoked_tenant_capsules(
             }
 
 
+async def expire_evidence_payloads(
+    sessions: async_sessionmaker[AsyncSession],
+    now: datetime | None = None,
+    *,
+    default_ttl_days: int = EVIDENCE_RETENTION_DAYS,
+) -> dict[str, int]:
+    """A3-08: scrub expired evidence excerpts while preserving authoritative history IDs."""
+    if default_ttl_days < 1:
+        raise ValueError("evidence retention TTL must be at least 1 day")
+    cutoff = now or datetime.now(timezone.utc)
+    if cutoff.tzinfo is None:
+        raise ValueError("expiry cutoff must have timezone")
+    fallback_cutoff = cutoff - timedelta(days=default_ttl_days)
+    async with sessions() as session:
+        async with session.begin():
+            ids = list((await session.scalars(
+                select(Evidence.id)
+                .where(
+                    Evidence.validity != "EXPIRED",
+                    or_(
+                        and_(
+                            Evidence.expires_at.is_not(None),
+                            Evidence.expires_at <= cutoff,
+                        ),
+                        and_(
+                            Evidence.expires_at.is_(None),
+                            Evidence.captured_at <= fallback_cutoff,
+                        ),
+                    ),
+                )
+                .order_by(Evidence.id)
+                .limit(500)
+            )).all())
+            if not ids:
+                return {"evidence_scrubbed": 0}
+            await session.execute(
+                update(Evidence)
+                .where(Evidence.id.in_(ids))
+                .values(
+                    validity="EXPIRED",
+                    redacted_excerpt=EXPIRED_EXCERPT,
+                    expires_at=cutoff,
+                )
+            )
+            return {"evidence_scrubbed": len(ids)}
+
+
 async def main() -> None:
-    print(json.dumps(await expire_capsules(get_session_maker())))
+    sessions = get_session_maker()
+    capsules = await expire_capsules(sessions)
+    evidence = await expire_evidence_payloads(sessions)
+    print(json.dumps({**capsules, **evidence}))
 
 
 if __name__ == "__main__":

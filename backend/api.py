@@ -194,6 +194,35 @@ async def incident_investigation(
     return report
 
 
+async def _record_evidence_access(
+    session: AsyncSession,
+    tenant_id: str,
+    incident_id: UUID,
+    actor: str,
+    action: str,
+    rows: list[tuple[UUID, str]],
+) -> None:
+    """Persist bounded metadata-only evidence access audits on read paths."""
+    from uuid import uuid4
+    from backend.models import EvidenceAccessAudit
+
+    if not rows:
+        return
+    for evidence_id, classification in rows[:50]:
+        session.add(
+            EvidenceAccessAudit(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                incident_id=incident_id,
+                evidence_id=evidence_id,
+                actor=actor[:64],
+                action=action[:24],
+                classification=(classification or "INTERNAL")[:24],
+            )
+        )
+    await session.commit()
+
+
 @app.get("/v1/incidents/{incident_id}/evidence")
 async def incident_evidence(
     incident_id: UUID,
@@ -213,15 +242,21 @@ async def incident_evidence(
         .order_by(Evidence.captured_at, Evidence.id)
         .limit(50)
     )).all()
-    return [
+    payload = [
         {"id": str(row.id), "source": row.source,
          "target_version": row.target_version, "sha256": row.sha256,
          "validity": row.validity, "freshness": classify_evidence_freshness(row),
          "supersedes_evidence_id": str(row.supersedes_evidence_id) if row.supersedes_evidence_id else None,
          "redacted_excerpt": row.redacted_excerpt,
+         "expires_at": row.expires_at.isoformat() if row.expires_at else None,
          "captured_at": row.captured_at.isoformat()}
         for row in items
     ]
+    await _record_evidence_access(
+        session, tenant_id, incident_id, "tenant-reader", "LIST",
+        [(row.id, row.classification) for row in items],
+    )
+    return payload
 
 
 @app.get("/v1/incidents/{incident_id}/evidence/page")
@@ -248,7 +283,7 @@ async def incident_evidence_page(
         stmt.order_by(Evidence.id).limit(limit + 1)
     )).all())
     visible = rows[:limit]
-    return {
+    payload = {
         "items": [
             {
                 "id": str(row.id),
@@ -262,12 +297,18 @@ async def incident_evidence_page(
                     str(row.supersedes_evidence_id) if row.supersedes_evidence_id else None
                 ),
                 "redacted_excerpt": row.redacted_excerpt,
+                "expires_at": row.expires_at.isoformat() if row.expires_at else None,
                 "captured_at": row.captured_at.isoformat(),
             }
             for row in visible
         ],
         "next_cursor": str(visible[-1].id) if len(rows) > limit else None,
     }
+    await _record_evidence_access(
+        session, tenant_id, incident_id, "tenant-reader", "PAGE",
+        [(row.id, row.classification) for row in visible],
+    )
+    return payload
 
 
 @app.post("/v1/incidents/{incident_id}/evidence/{evidence_id}/refresh", status_code=201)
@@ -294,6 +335,73 @@ async def refresh_incident_evidence(
         "evidence_id": str(result.evidence_id) if result.evidence_id else None,
         "supersedes_evidence_id": str(evidence_id),
         "redacted_excerpt": result.excerpt,
+    }
+
+
+@app.get("/v1/incidents/{incident_id}/evidence/lifecycle")
+async def incident_evidence_lifecycle(
+    incident_id: UUID,
+    tenant_id: str = Depends(local_tenant),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """A3-08: expose aggregate evidence freshness, expiry, plan citations, and access audits."""
+    from collections import Counter
+    from sqlalchemy import func, select
+    from backend.models import Evidence, EvidenceAccessAudit, IncidentPlan
+    from backend.probes.gateway import classify_evidence_freshness
+
+    if await find_incident(session, tenant_id, incident_id) is None:
+        raise HTTPException(404, "incident not found")
+    rows = list((await session.scalars(
+        select(Evidence)
+        .where(Evidence.tenant_id == tenant_id, Evidence.incident_id == incident_id)
+        .order_by(Evidence.captured_at.desc(), Evidence.id)
+        .limit(200)
+    )).all())
+    freshness_counts = Counter(classify_evidence_freshness(row) for row in rows)
+    plans = list((await session.scalars(
+        select(IncidentPlan)
+        .where(IncidentPlan.tenant_id == tenant_id, IncidentPlan.incident_id == incident_id)
+        .limit(50)
+    )).all())
+    cited_ids = {str(ref) for plan in plans for ref in (plan.evidence_ids or [])}
+    row_ids = {str(row.id) for row in rows}
+    audit_count = int((await session.scalar(
+        select(func.count(EvidenceAccessAudit.id)).where(
+            EvidenceAccessAudit.tenant_id == tenant_id,
+            EvidenceAccessAudit.incident_id == incident_id,
+        )
+    )) or 0)
+    recent_audits = list((await session.scalars(
+        select(EvidenceAccessAudit)
+        .where(
+            EvidenceAccessAudit.tenant_id == tenant_id,
+            EvidenceAccessAudit.incident_id == incident_id,
+        )
+        .order_by(EvidenceAccessAudit.accessed_at.desc(), EvidenceAccessAudit.id)
+        .limit(20)
+    )).all())
+    return {
+        "incident_id": str(incident_id),
+        "total": len(rows),
+        "valid": sum(1 for row in rows if row.validity == "VALID"),
+        "fresh": freshness_counts.get("FRESH", 0),
+        "stale": freshness_counts.get("STALE", 0),
+        "expired": freshness_counts.get("EXPIRED", 0),
+        "unavailable": freshness_counts.get("UNAVAILABLE", 0),
+        "cited_in_plans": len(cited_ids & row_ids),
+        "access_audit_count": audit_count,
+        "recent_accesses": [
+            {
+                "id": str(item.id),
+                "evidence_id": str(item.evidence_id),
+                "actor": item.actor,
+                "action": item.action,
+                "classification": item.classification,
+                "accessed_at": item.accessed_at.isoformat(),
+            }
+            for item in recent_audits
+        ],
     }
 
 
@@ -1394,6 +1502,16 @@ async def incident_lineage_record_detail(
     )
     if record is None:
         raise HTTPException(404, "lineage record not found")
+    if kind == "evidence":
+        details = record.get("details") or {}
+        await _record_evidence_access(
+            session,
+            tenant_id,
+            incident_id,
+            "tenant-reader",
+            "DETAIL",
+            [(record_id, str(details.get("classification", "INTERNAL")))],
+        )
     return record
 
 

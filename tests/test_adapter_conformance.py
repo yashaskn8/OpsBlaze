@@ -100,3 +100,29 @@ async def test_scoped_conformance_registry_and_lab_only_enablement(sessions_fixt
             assert blocked_ext.status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_simulator_adapter_refuses_expired_retention_horizon(sessions_fixture):
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
+    from backend.adapters.simulator import SimulatorAdapter
+    from backend.models import SimulatorAppliedEffect
+
+    expired_id = uuid4()
+    fresh_id = uuid4()
+    now = datetime.now(timezone.utc)
+    async with sessions_fixture.begin() as session:
+        session.add(SimulatorAppliedEffect(
+            id=expired_id, tenant_id="t-ret", target_id="checkout",
+            observed_version=2, permit_digest="a" * 64,
+            created_at=now - timedelta(seconds=700),
+        ))
+        session.add(SimulatorAppliedEffect(
+            id=fresh_id, tenant_id="t-ret", target_id="checkout",
+            observed_version=3, permit_digest="b" * 64,
+            created_at=now - timedelta(seconds=100),
+        ))
+    adapter = SimulatorAdapter(sessions_fixture, retention_seconds=600)
+    assert await adapter.query_effect(expired_id, now=now) is None
+    assert await adapter.query_effect(fresh_id, now=now) == 3

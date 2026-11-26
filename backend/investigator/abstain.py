@@ -65,6 +65,7 @@ async def accepted_snapshot_is_still_safe(
     now = datetime.now(timezone.utc)
     if any(
         row.validity != "VALID"
+        or (row.expires_at is not None and utc(row.expires_at) <= now)
         or row.target_id != incident.target_id
         or row.target_version != target.version
         or row.source_version != "simulator-v1"
@@ -165,7 +166,17 @@ async def assess_decision(
                             )
                         )).all()
                         sources = {row.source for row in evidence}
+                        now = datetime.now(timezone.utc)
                         if (
+                            len(evidence) == 2
+                            and any(
+                                row.validity == "EXPIRED"
+                                or (row.expires_at is not None and utc(row.expires_at) <= now)
+                                for row in evidence
+                            )
+                        ):
+                            reason = "EXPIRED_EVIDENCE"
+                        elif (
                             len(evidence) != 2
                             or sources != {"simulator.health", "simulator.version"}
                             or any(

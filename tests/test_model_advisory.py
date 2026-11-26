@@ -143,3 +143,37 @@ async def test_advisory_budget_and_structured_contract_survive_session_restart(
         assert row is not None and row.state == "FAILED" and row.tokens_reserved == 512
     assert await advise_after_unhealthy(sessions_fixture, "t-restart", incident.id, bad) is None
     assert bad.responses.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_b4_concurrent_budget_cap_exhaustion_and_fresh_sessionmaker_restart(
+    sessions_fixture, monkeypatch,
+):
+    import asyncio
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    from backend.budgets import current_window, reserve_model_tokens
+
+    monkeypatch.setattr(
+        "backend.budgets.get_settings",
+        lambda: Settings(ai_token_limit_per_minute=1024),
+    )
+    window = current_window()
+
+    async def attempt_reserve() -> bool:
+        async with sessions_fixture() as session:
+            async with session.begin():
+                return await reserve_model_tokens(session, "t-conc", window, 512)
+
+    outcomes = await asyncio.gather(*(attempt_reserve() for _ in range(4)))
+    assert outcomes.count(True) == 2
+    assert outcomes.count(False) == 2
+
+    # Simulate process restart with a freshly constructed sessionmaker on the same DB.
+    restarted = async_sessionmaker(
+        sessions_fixture.kw["bind"], class_=AsyncSession, expire_on_commit=False,
+    )
+    async with restarted() as session:
+        async with session.begin():
+            assert await reserve_model_tokens(session, "t-conc", window, 512) is False
+        row = await session.get(ModelTokenWindow, ("t-conc", window))
+        assert row is not None and row.reserved_tokens == 1024

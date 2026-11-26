@@ -71,9 +71,18 @@ def permit_digest(permit: Permit) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+RETENTION_SECONDS = 86400
+
+
 class SimulatorAdapter:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]):
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        retention_seconds: int = RETENTION_SECONDS,
+    ):
         self.sessions = sessions
+        self.retention_seconds = max(1, int(retention_seconds))
 
     async def apply(self, effect_id: UUID, permit: Permit) -> int:
         """Check fence + target version immediately before the simulated effect."""
@@ -129,10 +138,21 @@ class SimulatorAdapter:
                 reservation.state = "RELEASED"
                 return target.version
 
-    async def query_effect(self, effect_id: UUID) -> int | None:
+    async def query_effect(
+        self,
+        effect_id: UUID,
+        *,
+        now: datetime | None = None,
+    ) -> int | None:
         async with self.sessions() as session:
             row = await session.get(SimulatorAppliedEffect, effect_id)
             if row is None:
+                return None
+            observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+            if (
+                row.created_at is not None
+                and (observed - utc(row.created_at)).total_seconds() > self.retention_seconds
+            ):
                 return None
             # Direct disposable conformance checks have no receipt. For
             # gateway-managed effects the exact original permit digest is

@@ -6,7 +6,10 @@ from backend.investigator.baseline import inspect
 from backend.models import (
     Evidence, HypothesisStep, Incident, ProbeCall, ProbeCapability, SimulatorTarget
 )
-from backend.probes.gateway import ProbeDenied, invoke_probe, reserve_external_probe_intent
+from backend.probes.gateway import (
+    ProbeDenied, invoke_probe, redact_evidence_excerpt,
+    reserve_external_probe_intent,
+)
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 
@@ -183,3 +186,22 @@ async def test_external_probe_intent_commits_reservation_before_read_and_survive
         await reserve_external_probe_intent(
             sessions_fixture, "t-ext", incident.id, 1, "simulator.health"
         )
+
+
+def test_redact_evidence_excerpt_strips_secrets_and_bounds_size():
+    clean, hits = redact_evidence_excerpt('{"healthy":false}')
+    assert clean == '{"healthy":false}' and hits == 0
+
+    noisy = (
+        "auth=Bearer secret_tok_abc123 key=sk-abcdefghijklm "
+        "password=hunter2 -----BEGIN PRIVATE KEY-----abc-----END PRIVATE KEY-----"
+    )
+    redacted, red_hits = redact_evidence_excerpt(noisy)
+    assert red_hits >= 4
+    assert "secret_tok_abc123" not in redacted
+    assert "sk-abcdefghijklm" not in redacted
+    assert "hunter2" not in redacted
+    assert "BEGIN PRIVATE KEY" not in redacted
+
+    with pytest.raises(ProbeDenied, match="maximum size"):
+        redact_evidence_excerpt("x" * 600, max_bytes=512)

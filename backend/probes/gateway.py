@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import re
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
@@ -17,6 +18,21 @@ from backend.settings import get_settings
 CATALOG_VERSION = "simulator-catalog-v1"
 ALLOWED_PROBES = {"simulator.health", "simulator.version"}
 FRESHNESS_WINDOW = timedelta(minutes=5)
+EVIDENCE_RETENTION_DAYS = 30
+EXPIRED_EXCERPT = "[EXPIRED_REDACTED]"
+
+_REDACTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"Bearer\s+[A-Za-z0-9._\-+/=]+", re.IGNORECASE), "Bearer [REDACTED]"),
+    (re.compile(r"\bsk-[A-Za-z0-9_\-]{8,}"), "[REDACTED_KEY]"),
+    (
+        re.compile(r"(?i)\b(password|secret|token|api_key|credential)\s*([:=])\s*([^\s,\"'}]+)"),
+        r"\1\2[REDACTED]",
+    ),
+    (
+        re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)"),
+        "[REDACTED_PRIVATE_KEY]",
+    ),
+)
 
 PROBE_CATALOG: dict[str, dict] = {
     "simulator.health": {
@@ -62,13 +78,31 @@ def catalog_metadata() -> list[dict]:
     return [dict(PROBE_CATALOG[key]) for key in sorted(PROBE_CATALOG)]
 
 
+def redact_evidence_excerpt(raw: str, *, max_bytes: int = 512) -> tuple[str, int]:
+    """A3-08: strip credential/secret tokens from probe text before persistence."""
+    if not isinstance(raw, str):
+        raise ProbeDenied("probe payload must be text")
+    redacted = raw
+    hits = 0
+    for pattern, repl in _REDACTION_PATTERNS:
+        redacted, count = pattern.subn(repl, redacted)
+        hits += count
+    if len(redacted.encode("utf-8")) > max_bytes:
+        raise ProbeDenied("redacted probe payload exceeds maximum size")
+    return redacted, hits
+
+
 def classify_evidence_freshness(
     row: Evidence, *, now: datetime | None = None,
 ) -> str:
-    """A3-03: explicitly label fresh, stale, or unavailable evidence."""
+    """A3-03/A3-08: explicitly label expired, unavailable, fresh, or stale evidence."""
+    observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if row.validity == "EXPIRED" or (
+        row.expires_at is not None and utc(row.expires_at) <= observed
+    ):
+        return "EXPIRED"
     if row.validity != "VALID":
         return "UNAVAILABLE"
-    observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     age = observed - utc(row.observed_at)
     if timedelta(0) <= age <= FRESHNESS_WINDOW:
         return "FRESH"
@@ -485,8 +519,12 @@ async def invoke_probe(
                     observation = {"version": target.version}
                     validity = "VALID"
 
-                excerpt = json.dumps(observation, sort_keys=True, separators=(",", ":"))
-                if len(excerpt.encode("utf-8")) > cap.max_response_bytes:
+                raw_excerpt = json.dumps(observation, sort_keys=True, separators=(",", ":"))
+                try:
+                    excerpt, _ = redact_evidence_excerpt(
+                        raw_excerpt, max_bytes=cap.max_response_bytes,
+                    )
+                except ProbeDenied:
                     session.add(
                         ProbeCall(id=uuid4(), incident_id=incident_id, step_no=step_no,
                                   catalog_id=catalog_id, outcome="DENIED")
@@ -506,6 +544,7 @@ async def invoke_probe(
                         source_version="simulator-v1",
                         target_version=version,
                         observed_at=observed,
+                        expires_at=observed + timedelta(days=EVIDENCE_RETENTION_DAYS),
                         sha256=digest,
                         redacted_excerpt=excerpt,
                         classification="INTERNAL",

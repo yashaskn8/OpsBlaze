@@ -359,14 +359,32 @@ async def execute_suite(
         recovered_eight = await reconcile_effect(sessions, adapter, effect_eight)
         async with sessions() as session:
             rec_eight = await session.get(EffectReceipt, effect_eight)
+
+        # Verify simulator explicitly refuses status lookup once retention TTL elapses.
+        expired_adapter = SimulatorAdapter(sessions, retention_seconds=600)
+        expired_id = uuid4()
+        async with sessions() as session:
+            async with session.begin():
+                session.add(
+                    SimulatorAppliedEffect(
+                        id=expired_id,
+                        tenant_id=tenant,
+                        target_id=target_id,
+                        observed_version=99,
+                        permit_digest="e" * 64,
+                        created_at=datetime.now(timezone.utc) - timedelta(seconds=601),
+                    )
+                )
+        expired_lookup = await expired_adapter.query_effect(expired_id)
         outcome(
             "retention-horizon-contract",
             RETENTION_SECONDS > 600
             and partial_state == after_lookup == "UNKNOWN"
             and recovered_eight == "VERIFIED"
             and rec_eight is not None
-            and rec_eight.attempt_count == 1,
-            "retention exceeds reconciliation horizon and partial-commit stays safe",
+            and rec_eight.attempt_count == 1
+            and expired_lookup is None,
+            "retention exceeds reconciliation horizon and partial/expired status stays safe",
         )
     finally:
         # Remove disposable fixture rows. Keep only the digest + scenario report.
