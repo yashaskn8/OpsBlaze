@@ -114,6 +114,20 @@ class LineageEdge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class LineageRecoveryCheckpoint(Base):
+    """Owner-only cursor for the bounded P3 repair sweep."""
+
+    __tablename__ = "lineage_recovery_checkpoint"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_lineage_recovery_singleton"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    incident_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    phase: Mapped[str | None] = mapped_column(String(16))
+    source_cursor: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    edge_cursor: Mapped[list[str] | None] = mapped_column(JSON)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class OutboxEntry(Base):
     __tablename__ = "outbox"
     __table_args__ = (

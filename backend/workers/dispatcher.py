@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from contextlib import suppress
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -17,6 +16,7 @@ from backend.trace_refs import admission_parent
 from backend.temporal_connection import connect_temporal
 from backend.workflows.incident import IncidentWorkflow
 from backend.workers.heartbeat import heartbeat_loop
+from backend.workers.lineage_recovery import lineage_recovery_loop
 from backend.workers.outbox import acknowledge_claim, claim_intent
 
 log = logging.getLogger(__name__)
@@ -125,17 +125,14 @@ async def main() -> None:
     initialize_tracing(settings)
     client = await connect_temporal(settings)
     sessions = get_session_maker()
-    heartbeat = asyncio.create_task(heartbeat_loop("dispatcher"))
     log.info("Outbox dispatcher started")
-    try:
+    async with asyncio.TaskGroup() as tasks:
+        tasks.create_task(heartbeat_loop("dispatcher"))
+        tasks.create_task(lineage_recovery_loop(sessions))
         while True:
             found = await dispatch_once(client, sessions)
             if not found:
                 await asyncio.sleep(1)
-    finally:
-        heartbeat.cancel()
-        with suppress(asyncio.CancelledError):
-            await heartbeat
 
 
 if __name__ == "__main__":

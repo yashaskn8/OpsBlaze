@@ -7,8 +7,8 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "3c0a17cf32b6c1aae7b02fe5c439478df8352173",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45771805410",
+    "commit": "573c74a9f61d0a4975d320fd4180bc0376e158bb",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45775483667",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
@@ -17,8 +17,8 @@
     "EXTERNALLY BLOCKED": 17,
     "IMPLEMENTED BUT DISCONNECTED": 1,
     "LOCALLY UNVERIFIED": 3,
-    "NOT IMPLEMENTED": 12,
-    "PARTIALLY IMPLEMENTED": 58,
+    "NOT IMPLEMENTED": 11,
+    "PARTIALLY IMPLEMENTED": 59,
     "VERIFIED WORKING": 84
   },
   "verification": {
@@ -99,6 +99,12 @@
           "max_response_bytes": 11472
         }
       }
+    },
+    "lineage_recovery_0048": {
+      "native_suite_tests_passed": 23,
+      "focused_final_native_tests_passed": 2,
+      "focused_windows_tests_passed": 61,
+      "migration_upgrade_schema_drift_downgrade_restore": "PASS"
     }
   },
   "findings": [
@@ -262,7 +268,7 @@
         "P3-14"
       ],
       "execution": "Native Codex",
-      "action": "Confirm incident membership kinds, then implement transactionally bounded projection recovery with durable resume and interruption tests."
+      "action": "Reconcile exact-commit CI for bounded recovery, then verify incident membership parity for all supported record kinds."
     },
     {
       "order": 2,
@@ -2682,7 +2688,7 @@
             "B1"
           ],
           "defects": [],
-          "remaining": "Confirm the required membership kinds against §2.11 and add bounded durable projection where required."
+          "remaining": "Section 2.11 and ADR-21 require scoped causal provenance over durable records. Incident membership is read from scoped foreign keys. Validate parity for each displayed record kind before certifying membership coverage."
         },
         {
           "id": "P3-07",
@@ -2846,25 +2852,34 @@
         {
           "id": "P3-14",
           "requirement": "Resume bounded projection recovery automatically after a crash.",
-          "status": "NOT IMPLEMENTED",
+          "status": "PARTIALLY IMPLEMENTED",
           "implementation": [
             "backend/lineage_projection.py",
-            "backend/workers/lineage_rebuild.py",
-            "backend/workers/maintenance.py"
+            "backend/workers/lineage_recovery.py",
+            "backend/workers/dispatcher.py",
+            "migrations/versions/0048_lineage_recovery.py"
           ],
           "consumers": [
-            "Operator CLI is the repair consumer; scheduled maintenance runs retention work."
+            "Dispatcher supervised lineage recovery loop"
           ],
           "tests": [
-            "tests/test_lineage_projection.py"
+            "tests/test_lineage_recovery.py",
+            "tests/test_pg_projector_role.py"
           ],
-          "evidence": "The repository has an explicit rebuild cursor, but no durable automatic recovery intent or service invoking the reconstruction after a crash.",
+          "evidence": "Locally verified: native PostgreSQL contention, committed page resume after a forced database write failure, keyset orphan cleanup, restricted role, migration and restore. Dispatcher entrypoint starts the same loop and repairs its database without the operator CLI.",
           "dependencies": [
             "B1",
             "G3"
           ],
           "defects": [],
-          "remaining": "Implement a bounded durable recovery cursor and test interrupted resume before changing automation."
+          "remaining": "Reconcile exact-commit Linux CI. Larger concurrent sweep workload and production recovery evidence remain under P3-18 and G3.",
+          "acceptance_criteria": [
+            "Bound each source and orphan page to 20 items or fewer.",
+            "Commit the page and its cursor atomically and retry the same page after rollback.",
+            "Keep recovered edges tenant-scoped and leave source rows authoritative."
+          ],
+          "pdf_reference": "Section 2.11.4–2.11.5, PDF pages 48–49",
+          "ci_status": "EXACT_COMMIT_CI_PENDING"
         },
         {
           "id": "P3-15",
@@ -5273,7 +5288,8 @@
     "backend/workers/dispatcher.py": [
       "B1-03",
       "B1-07",
-      "P2-04"
+      "P2-04",
+      "P3-14"
     ],
     "backend/workers/experience_projector.py": [
       "E1-01",
@@ -5289,11 +5305,12 @@
       "B4-04"
     ],
     "backend/workers/lineage_rebuild.py": [
-      "P3-13",
+      "P3-13"
+    ],
+    "backend/workers/lineage_recovery.py": [
       "P3-14"
     ],
     "backend/workers/maintenance.py": [
-      "P3-14",
       "E1-07",
       "E1-08"
     ],
@@ -5472,6 +5489,9 @@
       "E2-05",
       "E3-03"
     ],
+    "migrations/versions/0048_lineage_recovery.py": [
+      "P3-14"
+    ],
     "scripts/pg_restore_smoke.py": [
       "B1-08",
       "E1-05",
@@ -5643,8 +5663,10 @@
       "P3-02",
       "P3-12",
       "P3-13",
-      "P3-14",
       "E4-06"
+    ],
+    "tests/test_lineage_recovery.py": [
+      "P3-14"
     ],
     "tests/test_local_capacity.py": [
       "B4-06",
@@ -5692,6 +5714,7 @@
     ],
     "tests/test_pg_projector_role.py": [
       "P3-04",
+      "P3-14",
       "E1-04",
       "E1-05"
     ],

@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.lineage_projection_refs import EDGE_SPECS, evidence_candidates, projection_status
@@ -85,16 +85,23 @@ async def replace_record_edges(
             target.incident_id == incident_id,
         ))).all() if ids else []
         links = [(target_kind, target_id, relation) for target_id in known]
-    await session.execute(delete(LineageEdge).where(
+    current = (await session.scalars(select(LineageEdge).where(
         LineageEdge.tenant_id == tenant_id, LineageEdge.incident_id == incident_id,
         LineageEdge.from_type == kind, LineageEdge.from_id == source.id,
-    ))
+    ))).all()
+    expected = set(links)
+    for edge in current:
+        key = (edge.to_type, edge.to_id, edge.relation)
+        if key in expected:
+            expected.remove(key)
+        else:
+            await session.delete(edge)
     session.add_all([
         LineageEdge(
             tenant_id=tenant_id, incident_id=incident_id,
             from_type=kind, from_id=source.id, to_type=target_kind,
             to_id=target_id, relation=relation,
-        ) for target_kind, target_id, relation in links
+        ) for target_kind, target_id, relation in expected
     ])
 
 
@@ -162,6 +169,42 @@ async def prune_orphan_edges(
         await session.delete(row)
     await session.flush()
     return {"removed": min(len(rows), limit), "more": len(rows) > limit}
+
+
+async def scan_orphan_edges(
+    session: AsyncSession, tenant_id: str, incident_id: UUID,
+    cursor: list[str] | None, limit: int,
+) -> tuple[int, list[str] | None]:
+    """Inspect a bounded primary-key page, including edges that need no cleanup."""
+    key = (
+        LineageEdge.from_type, LineageEdge.from_id, LineageEdge.to_type,
+        LineageEdge.to_id, LineageEdge.relation,
+    )
+    stmt = select(LineageEdge).where(
+        LineageEdge.tenant_id == tenant_id, LineageEdge.incident_id == incident_id,
+    )
+    if cursor is not None:
+        source, source_id, target, target_id, relation = cursor
+        after = tuple_(source, UUID(source_id), target, UUID(target_id), relation)
+        stmt = stmt.where(tuple_(*key) > after)
+    rows = (await session.scalars(stmt.order_by(*key).limit(limit + 1).with_for_update())).all()
+    visible = rows[:limit]
+    removed = 0
+    for kind in {edge.from_type for edge in visible}:
+        candidates = [edge for edge in visible if edge.from_type == kind]
+        model = SOURCE_MODELS[kind]
+        source_ids = {edge.from_id for edge in candidates}
+        scoped = source_query(kind, tenant_id, incident_id).with_only_columns(model.id)
+        existing = set((await session.scalars(scoped.where(model.id.in_(source_ids)))).all())
+        for edge in candidates:
+            if edge.from_id not in existing:
+                await session.delete(edge)
+                removed += 1
+    next_cursor = None
+    if len(rows) > limit:
+        tail = visible[-1]
+        next_cursor = [tail.from_type, str(tail.from_id), tail.to_type, str(tail.to_id), tail.relation]
+    return removed, next_cursor
 
 
 async def check_evidence_projection(
