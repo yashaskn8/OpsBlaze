@@ -46,6 +46,7 @@ async def test_executable_local_comparative_benchmarks_all_pass(sessions_fixture
     assert by_case["no-lesson"]["with_memory_modes"] == ["NO_MEMORY", "NO_MEMORY"]
     repeated = await run_e4_memory_ablation(sessions_fixture, "bench-e4")
     assert repeated["active_lesson_id"] != e4["active_lesson_id"]
+    assert repeated["design_sha256"] == e4["design_sha256"]
     assert repeated["probe_counts"] == e4["probe_counts"] == {"with_memory": 10, "no_memory": 10}
     assert repeated["decision_counts"] == e4["decision_counts"] == {
         "with_memory_correct": 6, "no_memory_correct": 6, "with_memory_unsafe": 0, "no_memory_unsafe": 0,
@@ -97,9 +98,35 @@ async def test_executable_local_comparative_benchmarks_all_pass(sessions_fixture
 
 @pytest.mark.integration
 @pytest.mark.pg_e2e
-async def test_postgres_e4_memory_ablation_uses_scoped_retrieval_and_controls(benchmark_database, record_property):
+async def test_postgres_e4_memory_ablation_uses_scoped_retrieval_and_controls(
+    benchmark_database, record_property, monkeypatch,
+):
     import json
 
+    from sqlalchemy import event
+
+    from backend.database import get_engine
+    from backend.evaluation import local_benchmarks
+
+    evaluate_lookup = local_benchmarks.evaluate_memory_vs_no_memory
+
+    async def measure_lookup_statements(*args, **kwargs):
+        statements = 0
+
+        def count(*_):
+            nonlocal statements
+            statements += 1
+
+        engine = get_engine().sync_engine
+        event.listen(engine, "before_cursor_execute", count)
+        try:
+            result = await evaluate_lookup(*args, **kwargs)
+        finally:
+            event.remove(engine, "before_cursor_execute", count)
+        result["sql_statements_per_pair"] = statements / result["iterations"]
+        return result
+
+    monkeypatch.setattr(local_benchmarks, "evaluate_memory_vs_no_memory", measure_lookup_statements)
     report = await run_e4_memory_ablation(benchmark_database, "native-e4")
     cases = {row["case"]: row for row in report["pairs"]}
     assert report["scope"] == "SIMULATOR_LAB_ONLY" and report["promotion_eligible"] is False
@@ -115,6 +142,7 @@ async def test_postgres_e4_memory_ablation_uses_scoped_retrieval_and_controls(be
     assert all(row["no_memory_lesson_ids"] == [] for row in report["pairs"])
     assert all(row["with_memory_effect_attempts"] == row["no_memory_effect_attempts"] == 0 for row in report["pairs"])
     record_property("lab_e4_summary", json.dumps(report))
+    assert cases["active-lesson"]["retrieval"]["sql_statements_per_pair"] <= 3
 
 
 @pytest.mark.integration

@@ -276,6 +276,22 @@ async def run_a1_strategy_comparison(
     }
 
 
+E4_DEVELOPMENT_SOURCES = (
+    ("tgt-active", "ACTIVE"), ("tgt-healthy", "ACTIVE"),
+    ("tgt-revoked", "REVOKED"), ("tgt-expired", "EXPIRED"),
+)
+E4_EVALUATION_CASES = (
+    ("active-lesson", "tgt-active", "SIMULATOR_REVIEW_REQUIRED"),
+    ("revoked-control", "tgt-revoked", "SIMULATOR_REVIEW_REQUIRED"),
+    ("expired-control", "tgt-expired", "SIMULATOR_REVIEW_REQUIRED"),
+    ("no-lesson", "tgt-none", "SIMULATOR_REVIEW_REQUIRED"),
+    ("healthy-with-lesson", "tgt-healthy", "ABSTAINED"),
+    ("missing-target", "tgt-missing", "ABSTAINED"),
+)
+E4_LOOKUP_ITERATIONS = 6
+E4_DEVELOPMENT_RULE = "PROBE_HEALTH_FIRST"
+
+
 async def run_e4_memory_ablation(
     sessions: async_sessionmaker[AsyncSession],
     tenant_id: str,
@@ -283,6 +299,11 @@ async def run_e4_memory_ablation(
     """E4-07: evaluate cited memory against isolated no-memory and safety controls."""
     if get_settings().environment != "development":
         raise ValueError("E4 local memory fixtures require development settings")
+    design_sha256 = canonical_digest({
+        "development_sources": E4_DEVELOPMENT_SOURCES, "development_rule": E4_DEVELOPMENT_RULE,
+        "evaluation_cases": E4_EVALUATION_CASES, "lookup_iterations": E4_LOOKUP_ITERATIONS,
+        "arm_order": "ALTERNATING_MEMORY_FIRST", "healthy_control_version": 2,
+    })
     seeded_tenant = "e4-" + canonical_digest(tenant_id)[:10] + "-" + uuid4().hex[:10]
     async with sessions() as session:
         await set_tenant_consent(session, seeded_tenant, 0, True)
@@ -311,7 +332,7 @@ async def run_e4_memory_ablation(
             capsule = await capture_capsule(session, seeded_tenant, src.id)
         assert capsule is not None
         async with sessions() as session:
-            draft = await create_draft(session, seeded_tenant, capsule.id, "PROBE_HEALTH_FIRST")
+            draft = await create_draft(session, seeded_tenant, capsule.id, E4_DEVELOPMENT_RULE)
         async with sessions() as session:
             validated = await validate_draft(session, seeded_tenant, draft.id, draft.version)
         assert validated is not None
@@ -332,23 +353,13 @@ async def run_e4_memory_ablation(
                 )
         return str(validated.id)
 
-    active_lesson_id = await _seed_lesson("tgt-active")
-    await _seed_lesson("tgt-healthy")
-    await _seed_lesson("tgt-revoked", state="REVOKED")
-    await _seed_lesson("tgt-expired", state="EXPIRED")
+    seeded_lessons = {target: await _seed_lesson(target, state=state) for target, state in E4_DEVELOPMENT_SOURCES}
     await _ensure_target(sessions, seeded_tenant, "tgt-healthy", healthy=True, version=2)
 
     with_mem_lat: list[float] = []
     no_mem_lat: list[float] = []
     pairs: list[dict] = []
-    for index, (label, target_id, expected) in enumerate((
-        ("active-lesson", "tgt-active", "SIMULATOR_REVIEW_REQUIRED"),
-        ("revoked-control", "tgt-revoked", "SIMULATOR_REVIEW_REQUIRED"),
-        ("expired-control", "tgt-expired", "SIMULATOR_REVIEW_REQUIRED"),
-        ("no-lesson", "tgt-none", "SIMULATOR_REVIEW_REQUIRED"),
-        ("healthy-with-lesson", "tgt-healthy", "ABSTAINED"),
-        ("missing-target", "tgt-missing", "ABSTAINED"),
-    )):
+    for index, (label, target_id, expected) in enumerate(E4_EVALUATION_CASES):
         async with sessions() as session:
             inc_mem = await admit_incident(
                 session, seeded_tenant, f"e4-mem-{label}-{uuid4().hex[:6]}",
@@ -380,7 +391,9 @@ async def run_e4_memory_ablation(
                 EffectReceipt.incident_id.in_((inc_mem.id, inc_ctrl.id)),
                 EffectReceipt.attempt_count > 0,
             ).group_by(EffectReceipt.incident_id))).all())
-            retrieval = await evaluate_memory_vs_no_memory(session, seeded_tenant, target_id, iterations=6)
+            retrieval = await evaluate_memory_vs_no_memory(
+                session, seeded_tenant, target_id, iterations=E4_LOOKUP_ITERATIONS,
+            )
         pairs.append({
             "case": label,
             "expected_outcome": expected,
@@ -401,7 +414,8 @@ async def run_e4_memory_ablation(
         "scope": "SIMULATOR_LAB_ONLY",
         "measured_ai_comparison": False,
         "promotion_eligible": False,
-        "active_lesson_id": active_lesson_id,
+        "design_sha256": design_sha256,
+        "active_lesson_id": seeded_lessons["tgt-active"],
         "pairs": pairs,
         "decision_counts": {
             **{f"{arm}_correct": sum(row[f"{arm}_outcome"] == row["expected_outcome"] for row in pairs)

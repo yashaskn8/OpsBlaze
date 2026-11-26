@@ -625,8 +625,8 @@
       }
     ],
     "next_actions": [
-      "Reconcile exact-commit Linux CI for expanded E4 safety comparisons and P2 expiry focus.",
-      "Verify actual screen-reader announcements for approval, rejection, expiry and conflict using the README Windows Narrator procedure.",
+      "Reconcile exact-commit Linux CI for the scoped E4 lookup improvement and frozen comparison.",
+      "Track actual approval, rejection, expiry and conflict announcements as deferred manual UI redesign acceptance. The current software gate uses Playwright.",
       "Collect independent external evidence for identity, adapter qualification, privacy, multi-host recovery, held-out evaluation, and release governance. G1–G6 remain blocked."
     ]
   }

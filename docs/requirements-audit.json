@@ -7,8 +7,8 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "7753fd4ad55de52f2bf478f04e3489117acaef2a",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45812657243",
+    "commit": "bb96140ddf8da72d2d9018ba6a7742fe6b42fcdb",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45815042699",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
@@ -470,6 +470,234 @@
       "documented_linux_only_exclusions": 9,
       "temporal_restart_and_signal_tests": 6,
       "pinned_history_replay": "PASS"
+    },
+    "e4_scoped_lookup_comparison": {
+      "design_sha256": "fcff2a5e8f2189b9d5218516d01bfcb0be99b8f51b4bdb28ab14a88bbf756985",
+      "pairs": 6,
+      "runtime": "disposable PostgreSQL 16",
+      "decision_counts": {
+        "with_memory_correct": 6,
+        "no_memory_correct": 6,
+        "with_memory_unsafe": 0,
+        "no_memory_unsafe": 0
+      },
+      "probe_counts": {
+        "with_memory": 10,
+        "no_memory": 10
+      },
+      "before": {
+        "investigation_elapsed_ms": {
+          "with_memory_p50_ms": 54.015,
+          "with_memory_p95_ms": 60.228,
+          "no_memory_p50_ms": 51.515,
+          "no_memory_p95_ms": 276.903
+        },
+        "lookup": {
+          "active-lesson": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "VALIDATED_LESSONS",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 1,
+            "with_memory_p50_ms": 5.035,
+            "with_memory_p95_ms": 5.825,
+            "no_memory_p50_ms": 0.002,
+            "no_memory_p95_ms": 0.002,
+            "latency_overhead_p95_ms": 5.823,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 7.0
+          },
+          "revoked-control": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "NO_MEMORY",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 0,
+            "with_memory_p50_ms": 0.8,
+            "with_memory_p95_ms": 0.828,
+            "no_memory_p50_ms": 0.001,
+            "no_memory_p95_ms": 0.002,
+            "latency_overhead_p95_ms": 0.825,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 1.0
+          },
+          "expired-control": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "NO_MEMORY",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 0,
+            "with_memory_p50_ms": 0.831,
+            "with_memory_p95_ms": 1.106,
+            "no_memory_p50_ms": 0.001,
+            "no_memory_p95_ms": 0.001,
+            "latency_overhead_p95_ms": 1.105,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 1.0
+          },
+          "no-lesson": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "NO_MEMORY",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 0,
+            "with_memory_p50_ms": 0.8,
+            "with_memory_p95_ms": 0.86,
+            "no_memory_p50_ms": 0.001,
+            "no_memory_p95_ms": 0.002,
+            "latency_overhead_p95_ms": 0.858,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 1.0
+          },
+          "healthy-with-lesson": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "VALIDATED_LESSONS",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 1,
+            "with_memory_p50_ms": 4.551,
+            "with_memory_p95_ms": 4.948,
+            "no_memory_p50_ms": 0.001,
+            "no_memory_p95_ms": 0.002,
+            "latency_overhead_p95_ms": 4.946,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 7.0
+          },
+          "missing-target": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "NO_MEMORY",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 0,
+            "with_memory_p50_ms": 0.751,
+            "with_memory_p95_ms": 0.856,
+            "no_memory_p50_ms": 0.001,
+            "no_memory_p95_ms": 0.001,
+            "latency_overhead_p95_ms": 0.855,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 1.0
+          }
+        }
+      },
+      "after": {
+        "investigation_elapsed_ms": {
+          "with_memory_p50_ms": 47.683,
+          "with_memory_p95_ms": 58.988,
+          "no_memory_p50_ms": 51.86,
+          "no_memory_p95_ms": 149.597
+        },
+        "lookup": {
+          "active-lesson": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "VALIDATED_LESSONS",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 1,
+            "with_memory_p50_ms": 4.384,
+            "with_memory_p95_ms": 5.348,
+            "no_memory_p50_ms": 0.002,
+            "no_memory_p95_ms": 0.003,
+            "latency_overhead_p95_ms": 5.345,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 3.0
+          },
+          "revoked-control": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "NO_MEMORY",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 0,
+            "with_memory_p50_ms": 1.068,
+            "with_memory_p95_ms": 1.281,
+            "no_memory_p50_ms": 0.002,
+            "no_memory_p95_ms": 0.003,
+            "latency_overhead_p95_ms": 1.278,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 1.0
+          },
+          "expired-control": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "NO_MEMORY",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 0,
+            "with_memory_p50_ms": 0.773,
+            "with_memory_p95_ms": 0.882,
+            "no_memory_p50_ms": 0.001,
+            "no_memory_p95_ms": 0.002,
+            "latency_overhead_p95_ms": 0.88,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 1.0
+          },
+          "no-lesson": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "NO_MEMORY",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 0,
+            "with_memory_p50_ms": 0.643,
+            "with_memory_p95_ms": 0.706,
+            "no_memory_p50_ms": 0.001,
+            "no_memory_p95_ms": 0.001,
+            "latency_overhead_p95_ms": 0.704,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 1.0
+          },
+          "healthy-with-lesson": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "VALIDATED_LESSONS",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 1,
+            "with_memory_p50_ms": 2.742,
+            "with_memory_p95_ms": 3.233,
+            "no_memory_p50_ms": 0.001,
+            "no_memory_p95_ms": 0.001,
+            "latency_overhead_p95_ms": 3.232,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 3.0
+          },
+          "missing-target": {
+            "scope": "SIMULATOR_LAB_ONLY",
+            "iterations": 6,
+            "memory_mode": "NO_MEMORY",
+            "control_mode": "NO_MEMORY_CONTROL",
+            "cited_lesson_count": 0,
+            "with_memory_p50_ms": 0.604,
+            "with_memory_p95_ms": 0.648,
+            "no_memory_p50_ms": 0.001,
+            "no_memory_p95_ms": 0.001,
+            "latency_overhead_p95_ms": 0.647,
+            "measured_ai_comparison": false,
+            "promotion_eligible": false,
+            "sql_statements_per_pair": 1.0
+          }
+        }
+      },
+      "independent_effectiveness": "UNVERIFIED"
+    },
+    "p2_software_accessibility": {
+      "playwright_mcp": "PASS",
+      "narrow_width_px": 390,
+      "focus_results": [
+        "APPROVED",
+        "REJECTED",
+        "EXPIRED",
+        "REJECTED after HTTP 409"
+      ],
+      "status_semantics": "role=status, programmatic focus, remains outside normal Tab order",
+      "spoken_output": "DEFERRED_UI_REDESIGN_UNVERIFIED"
     }
   },
   "findings": [
@@ -669,12 +897,10 @@
     {
       "order": 1,
       "requirements": [
-        "E4-07",
-        "A1-10",
-        "P2-08"
+        "E4-07"
       ],
       "execution": "Native and exact Linux CI",
-      "action": "Reconcile exact Linux CI for the six-case E4 comparator and expiry focus. Listen to Narrator review announcements using the README procedure."
+      "action": "Reconcile exact Linux CI and continue protected G4 effectiveness evaluation. P2 spoken acceptance is deferred to the UI redesign."
     },
     {
       "order": 2,
@@ -3001,15 +3227,23 @@
             "tests/test_oidc_auth.py",
             "tests/test_api_contract.py"
           ],
-          "evidence": "Isolated Playwright MCP verified keyboard approval and rejection, skip link, named controls, Tab order, and focus on the authoritative result at 390 px. The expiry reproduction lost focus with the revoke button selected. After repair, the button disappears and focus moves to the live expired result. A competing authorized rejection produced a 409 and refreshed the real FastAPI preview.",
+          "evidence": "Playwright verified keyboard order and interaction, names, skip link, live status semantics, narrow layout, stale-control removal, focus after all four review transitions, and a real FastAPI 409 followed by the authoritative rejected decision. Spoken output remains unverified.",
           "dependencies": [
             "G1",
             "G5",
             "G6"
           ],
           "defects": [],
-          "remaining": "Follow the README Windows Narrator procedure and record actual spoken announcements. G1, G5 and G6 require external identity and independently authorized release evidence.",
-          "local_verification": "KEYBOARD_AND_ACCESSIBILITY_TREE_PASS_SPOKEN_OUTPUT_PENDING"
+          "remaining": "Manual spoken-output evidence is deferred to the UI redesign. External identity, governance and release authorization remain under G1, G5 and G6.",
+          "local_verification": "PLAYWRIGHT_KEYBOARD_LIVE_STATUS_AND_FOCUS_PASS",
+          "local_implementation": "COMPLETE_AUTOMATABLE_SOFTWARE",
+          "software_gate": "SATISFIED",
+          "manual_acceptance": {
+            "status": "DEFERRED_UI_REDESIGN",
+            "scope": "Actual spoken approval, rejection, expiry and conflict output",
+            "procedure": "README.md#verify-spoken-approval-announcements-on-windows",
+            "required_for_current_software_gate": false
+          }
         }
       ]
     },
@@ -4526,15 +4760,15 @@
             "backend/investigator/baseline.py"
           ],
           "consumers": [
-            "A1 inspect retrieves authorized lesson context and records lesson IDs in ContextManifest",
-            "run_e4_memory_ablation executes paired A1 investigations; evaluate_memory_vs_no_memory measures lookup latency"
+            "A1 read-only investigation records scoped lower-trust citations in ContextManifest",
+            "run_e4_memory_ablation evaluates distinct source and comparison incidents; evaluate_memory_vs_no_memory measures eligible retrieval"
           ],
           "tests": [
             "tests/test_lessons.py",
             "tests/test_evaluation_smoke.py",
             "tests/test_local_benchmarks.py"
           ],
-          "evidence": "Six non-promoting paired cases use live scoped lookup and investigation on native PostgreSQL. Each arm made six correct decisions, used ten probes, made zero unsafe proposals and attempted no effects. Eligible citations appeared only in the two active cases. Neither arm proposed when the formerly unhealthy target was now healthy. Median investigation was 34.979 ms with memory and 33.110 ms without it. No local efficacy improvement was measured.",
+          "evidence": "The frozen six-case PostgreSQL comparison measured seven to three SQL statements per eligible lookup after combining consent and latest outcome checks. Both arms made six correct decisions, used ten probes, made no unsafe proposals and attempted no effects. Only eligible cases cited lessons. Active memory did not override the fresh healthy observation.",
           "dependencies": [
             "A1",
             "E5",
@@ -4543,9 +4777,10 @@
             "G6"
           ],
           "defects": [],
-          "remaining": "Reconcile exact-commit Linux CI. The local comparator is implemented and repeatable. Measurable benefit has not been established; G4 requires independently held-out efficacy evidence.",
-          "local_verification": "NATIVE_POSTGRESQL_PASS_EXACT_CI_PENDING",
-          "local_implementation": "COMPLETE_DETERMINISTIC_SIMULATOR_COMPARATOR"
+          "remaining": "Reconcile exact Linux CI. The scoped lookup reduction is measured; improved decisions, probe consumption and recovery efficacy remain unverified. G4 requires protected independent evaluation.",
+          "local_verification": "FROZEN_NATIVE_POSTGRESQL_LOOKUP_AND_SAFETY_PASS_EXACT_CI_PENDING",
+          "local_implementation": "COMPLETE_DETERMINISTIC_SIMULATOR_COMPARATOR",
+          "effectiveness": "UNVERIFIED"
         }
       ]
     },

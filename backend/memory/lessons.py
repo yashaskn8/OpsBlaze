@@ -8,7 +8,7 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, NAMESPACE_URL, uuid5
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,7 @@ from backend.adapters.simulator import utc
 from backend.lineage_projection import replace_record_edges
 from backend.models import (
     ExperienceCapsule, ExperienceConsent, Incident, OperationalLesson,
-    OutcomeRevision,
+    OutcomeRevision, TenantExperienceConsent,
 )
 
 LESSON_RULES = {
@@ -33,55 +33,48 @@ class LessonConflict(Exception):
 async def valid_source(
     session: AsyncSession, tenant_id: str, capsule_id: UUID,
 ) -> ExperienceCapsule | None:
-    capsule = await session.scalar(
-        select(ExperienceCapsule).where(
+    latest_outcome_id = (
+        select(OutcomeRevision.id)
+        .where(OutcomeRevision.tenant_id == tenant_id, OutcomeRevision.incident_id == ExperienceCapsule.incident_id)
+        .order_by(OutcomeRevision.revision.desc()).limit(1)
+        .correlate(ExperienceCapsule).scalar_subquery()
+    )
+    source = (await session.execute(
+        select(ExperienceCapsule, Incident.target_id)
+        .join(Incident, and_(Incident.id == ExperienceCapsule.incident_id, Incident.tenant_id == tenant_id))
+        .join(ExperienceConsent, and_(
+            ExperienceConsent.incident_id == Incident.id, ExperienceConsent.tenant_id == tenant_id,
+            ExperienceConsent.allowed.is_(True), ExperienceConsent.epoch == ExperienceCapsule.consent_epoch,
+        ))
+        .outerjoin(TenantExperienceConsent, TenantExperienceConsent.tenant_id == ExperienceCapsule.tenant_id)
+        .join(OutcomeRevision, and_(
+            OutcomeRevision.id == latest_outcome_id,
+            OutcomeRevision.id == ExperienceCapsule.outcome_revision_id,
+            OutcomeRevision.label == "VERIFIED",
+        ))
+        .where(
             ExperienceCapsule.id == capsule_id,
             ExperienceCapsule.tenant_id == tenant_id,
+            ExperienceCapsule.status == "VALID",
+            ExperienceCapsule.expires_at > datetime.now(timezone.utc),
+            or_(
+                and_(TenantExperienceConsent.tenant_id.is_(None), ExperienceCapsule.tenant_consent_epoch == 0),
+                and_(TenantExperienceConsent.allowed.is_(True),
+                     TenantExperienceConsent.epoch == ExperienceCapsule.tenant_consent_epoch),
+            ),
         )
-    )
-    if capsule is None or capsule.status != "VALID":
+        .execution_options(populate_existing=True)
+    )).one_or_none()
+    if source is None:
         return None
-    if utc(capsule.expires_at) <= datetime.now(timezone.utc):
-        return None
-    incident = await session.get(Incident, capsule.incident_id)
-    if (
-        incident is None or incident.tenant_id != tenant_id
-        or capsule.target_digest != hashlib.sha256(
-            f"{tenant_id}:{incident.target_id}".encode("utf-8")
-        ).hexdigest()
-    ):
+    capsule, target_id = source
+    if capsule.target_digest != hashlib.sha256(f"{tenant_id}:{target_id}".encode()).hexdigest():
         # The capsule's untrusted stored target tag must never authorize
         # a lesson for a different incident target.
         return None
-    consent = await session.get(ExperienceConsent, capsule.incident_id)
-    if (
-        consent is None or consent.tenant_id != tenant_id
-        or not consent.allowed or consent.epoch != capsule.consent_epoch
-    ):
-        return None
-    from backend.experiences import current_tenant_consent
-
-    if not await current_tenant_consent(
-        session, tenant_id, capsule.tenant_consent_epoch,
-    ):
-        return None
-    newest = await session.scalar(
-        select(OutcomeRevision)
-        .where(
-            OutcomeRevision.tenant_id == tenant_id,
-            OutcomeRevision.incident_id == capsule.incident_id,
-        )
-        .order_by(OutcomeRevision.revision.desc())
-        .limit(1)
-    )
-    if (
-        newest is None or newest.id != capsule.outcome_revision_id
-        or newest.label != "VERIFIED"
-    ):
-        return None
     from backend.experiences import capsule_evidence_intact
 
-    if not await capsule_evidence_intact(session, capsule, incident.target_id):
+    if not await capsule_evidence_intact(session, capsule, target_id):
         return None
     return capsule
 

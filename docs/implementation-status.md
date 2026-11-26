@@ -94,4 +94,8 @@ The expanded E4 comparator ran six paired cases on native PostgreSQL, including 
 
 The Windows backend campaign passed 764 cases at 78.73% branch-aware coverage. The native PostgreSQL campaign passed 28 cases through migration 0054, schema drift validation, restore and downgrade. A focused E5 rerun verified that a durable reviewer dispute removes recovery credit and retains the charged dispatch attempt. Six Temporal restart and signal tests, pinned history replay, and all 16 frontend tests passed locally.
 
+The `bb96140` baseline passed [all ten exact-commit Linux jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45815042699). E4 now reads the capsule, tenant and incident consent, and latest outcome in one scoped PostgreSQL statement before checking source evidence integrity. The frozen six-case design used separate source and evaluation incidents. An eligible lookup fell from seven SQL statements to three. Active-lesson median lookup fell from 5.035 ms to 4.384 ms in this run. Both evaluation arms made six correct decisions, used ten probes, and attempted no effects. The lower lookup cost is measured. Independent decision, probe and recovery efficacy remain unverified.
+
+P2 automated software acceptance covers keyboard review, named controls, live status semantics, focus after approval, rejection, expiry and conflict, removal of stale controls, and the narrow layout. Spoken screen-reader output is deferred manual acceptance for the UI redesign. The original P2 requirement and production gates remain part of the acceptance record.
+
 The completion definition is **measured acceptance of every relevant test in the PDF**, not the presence of a similarly named file or endpoint.
