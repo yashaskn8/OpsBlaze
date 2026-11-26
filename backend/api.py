@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -1452,14 +1453,19 @@ class RevokeApprovalRequest(BaseModel):
 @app.get("/v1/plans/{plan_id}")
 async def plan_preview(
     plan_id: UUID,
+    response: Response,
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     from sqlalchemy import and_, select
-    from backend.models import ApprovalGrant, IncidentPlan, PolicyAssignment
+    from backend.adapters.simulator import utc
+    from backend.models import ApprovalGrant, Incident, IncidentPlan, PolicyAssignment
 
     preview = (await session.execute(
-        select(IncidentPlan, ApprovalGrant, PolicyAssignment.policy_id)
+        select(IncidentPlan, ApprovalGrant, PolicyAssignment.policy_id, Incident)
+        .join(Incident, and_(
+            Incident.id == IncidentPlan.incident_id, Incident.tenant_id == IncidentPlan.tenant_id,
+        ))
         .outerjoin(ApprovalGrant, and_(
             ApprovalGrant.plan_id == IncidentPlan.id, ApprovalGrant.tenant_id == IncidentPlan.tenant_id,
         ))
@@ -1474,7 +1480,22 @@ async def plan_preview(
     )).one_or_none()
     if preview is None:
         raise HTTPException(404, "plan not found")
-    plan, approval, policy_id = preview
+    response.headers["Cache-Control"] = "no-store"
+    plan, approval, policy_id, incident = preview
+    evaluated_at = datetime.now(UTC)
+    expires_at = utc(approval.expires_at) if approval else None
+    review_state = approval.state if approval else plan.status
+    pending_since = None
+    if review_state == "PROPOSED":
+        if incident.status_projection == "AWAITING_APPROVAL":
+            review_state = "PENDING"
+            pending_since = utc(incident.phase_entered_at).isoformat()
+        elif incident.status_projection in {"DISPATCH_PENDING", "INVESTIGATING"}:
+            review_state = "DRAFT"
+        else:
+            review_state = "INVALIDATED"
+    elif review_state == "APPROVED" and expires_at is not None and expires_at <= evaluated_at:
+        review_state = "EXPIRED"
     postcondition = None
     if plan.action_id == "SIMULATOR_MARK_HEALTHY":
         postcondition = {"healthy": True, "version": plan.expected_version + 1}
@@ -1486,12 +1507,19 @@ async def plan_preview(
         "version": plan.version,
         "policy_id": policy_id,
         "postcondition": postcondition,
+        "review": {
+            "state": review_state,
+            "pending_since": pending_since,
+            "evaluated_at": evaluated_at.isoformat(),
+        },
         "approval": (
             {
                 "id": str(approval.id),
                 "state": approval.state,
                 "version": approval.version,
-                "expires_at": approval.expires_at.isoformat(),
+                "expires_at": expires_at.isoformat(),
+                "decision": approval.decision,
+                "decided_at": utc(approval.created_at).isoformat(),
                 "reviewer": approval.reviewer_id,
                 "scope": approval.scope,
                 "reason": approval.reason,

@@ -7,8 +7,8 @@
     "coverage": "Requirement inventory for all 20 capability sections. Status and evidence apply to individual rows. Cross-volume deployment and independent acceptance evidence is tracked through the existing G1–G6 gates."
   },
   "baseline": {
-    "commit": "9b96427761fc2cc84a56d22ddf6083999dff389a",
-    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45779108327",
+    "commit": "e52e66874ddfb1807ad4cd6374cd44d1b23c4e7a",
+    "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45779838912",
     "successful_jobs": 10
   },
   "production_acceptance": "BLOCKED",
@@ -17,8 +17,8 @@
     "IMPLEMENTED BUT DISCONNECTED": 1,
     "LOCALLY UNVERIFIED": 3,
     "NOT IMPLEMENTED": 9,
-    "PARTIALLY IMPLEMENTED": 58,
-    "VERIFIED WORKING": 88
+    "PARTIALLY IMPLEMENTED": 57,
+    "VERIFIED WORKING": 89
   },
   "verification": {
     "native_postgresql": {
@@ -125,6 +125,13 @@
       "frontend_node_tests_passed": 13,
       "typescript_vite_build": "PASS",
       "chrome": "Competing authorized rejection produced HTTP 409 for the stale browser request. The durable rejected plan, pinned policy and simulator postcondition were shown."
+    },
+    "approval_lifecycle": {
+      "focused_windows_backend_tests_passed": 46,
+      "native_postgresql_temporal_tests_passed": 2,
+      "frontend_node_tests_passed": 13,
+      "typescript_vite_build": "PASS",
+      "chrome": "Saw a pending plan become approved and then expired without another request. A new request displayed expired with the original vote preserved."
     }
   },
   "findings": [
@@ -285,7 +292,7 @@
     {
       "id": "P2-STALE-REVIEW-PREVIEW",
       "severity": "MEDIUM",
-      "status": "LOCALLY_REPAIRED_CI_PENDING",
+      "status": "REPAIRED",
       "requirements": [
         "P2-06"
       ],
@@ -298,7 +305,8 @@
         "tests/test_api_contract.py",
         "frontend/tests/api.test.mjs",
         "Chrome against real FastAPI with competing synthetic reviews"
-      ]
+      ],
+      "exact_commit_ci": "https://github.com/yashaskn8/OpsBlaze/actions/runs/45779838912"
     }
   ],
   "repair_backlog": [
@@ -333,7 +341,7 @@
         "P3-16"
       ],
       "execution": "Direct GitHub for isolated changes when applicable checks can run; native Codex for browser and runtime verification",
-      "action": "Reconcile the approval preview repair's exact CI, then show approval expiry, connect operator handoff guidance, and complete scoped source navigation."
+      "action": "Reconcile exact-commit approval lifecycle CI, connect operator handoff guidance, and complete scoped source navigation."
     },
     {
       "order": 4,
@@ -2435,12 +2443,11 @@
             "P1",
             "A3"
           ],
-          "defects": [
-            "The preview previously omitted pinned policy and typed postcondition. Repaired locally."
-          ],
-          "remaining": "Reconcile exact-commit CI. Verify explicit policy-version binding in approvals as authorized rollout variants are implemented.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
-          "pdf_reference": "Section 2.10.1–2.10.5, PDF pages 44–46"
+          "defects": [],
+          "remaining": "Verify explicit policy-version binding in approvals as authorized rollout variants are implemented.",
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "pdf_reference": "Section 2.10.1–2.10.5, PDF pages 44–46",
+          "commit": "e52e66874ddfb1807ad4cd6374cd44d1b23c4e7a"
         },
         {
           "id": "P2-02",
@@ -2548,7 +2555,7 @@
         {
           "id": "P2-06",
           "requirement": "Return current authoritative snapshot when a stale browser action is rejected",
-          "status": "PARTIALLY IMPLEMENTED",
+          "status": "VERIFIED WORKING",
           "implementation": [
             "backend/api.py",
             "frontend/src/main.tsx",
@@ -2566,12 +2573,11 @@
           "dependencies": [
             "P1"
           ],
-          "defects": [
-            "After a stale decision the old preview stayed visible. Repaired locally."
-          ],
-          "remaining": "Reconcile exact-commit CI.",
-          "ci_status": "EXACT_COMMIT_CI_PENDING",
-          "pdf_reference": "Section 2.10.1–2.10.5, PDF pages 44–46"
+          "defects": [],
+          "remaining": "",
+          "ci_status": "SUCCESS_ALL_10_JOBS",
+          "pdf_reference": "Section 2.10.1–2.10.5, PDF pages 44–46",
+          "commit": "e52e66874ddfb1807ad4cd6374cd44d1b23c4e7a"
         },
         {
           "id": "P2-07",
@@ -2588,17 +2594,17 @@
           ],
           "tests": [
             "tests/test_api_contract.py",
-            "tests/test_plans.py"
+            "tests/test_plans.py",
+            "tests/test_pg_temporal_e2e.py"
           ],
-          "evidence": "Preview serializes actual grant state and expiration separately. Expiry blocks action in test_expired_grant_never_starts_a_new_effect.",
+          "evidence": "The scoped preview shows pending since the workflow entered review and projects expiry without changing the original vote. Chrome observed pending, approved and automatic expiry against FastAPI. The native PostgreSQL and Temporal workflow observed pending, approved and consumed.",
           "dependencies": [
             "P1",
             "G6"
           ],
-          "defects": [
-            "An expired persisted APPROVED vote can still be rendered as APPROVED until another workflow progression; no pending age dashboard was verified."
-          ],
-          "remaining": "Display effective expiry without mutating forensic approval history."
+          "defects": [],
+          "remaining": "Reconcile exact-commit CI and implement pending-age monitoring across the review queue.",
+          "ci_status": "EXACT_COMMIT_CI_PENDING"
         },
         {
           "id": "P2-08",
@@ -5884,6 +5890,7 @@
       "P2-02",
       "P2-04",
       "P2-05",
+      "P2-07",
       "E1-01",
       "E1-03",
       "E2-01",

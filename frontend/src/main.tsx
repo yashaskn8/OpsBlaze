@@ -33,6 +33,8 @@ type Approval = {
   state: "APPROVED" | "REJECTED" | "REVOKED" | "CONSUMED";
   version: number;
   expires_at: string;
+  decision: "APPROVE" | "REJECT";
+  decided_at: string;
   reviewer: string;
   scope: string;
   reason: string;
@@ -41,6 +43,11 @@ type Approval = {
 type PlanDetail = Plan & {
   incident_id: string;
   approval: Approval | null;
+  review: {
+    state: "DRAFT" | "PENDING" | "EXPIRED" | "INVALIDATED" | Approval["state"];
+    pending_since: string | null;
+    evaluated_at: string;
+  };
   policy_id: string | null;
   postcondition: { healthy: boolean; version: number } | null;
 };
@@ -123,8 +130,9 @@ function App() {
   const [key, setKey] = useState(() => crypto.randomUUID());
   const [incident, setIncident] = useState<Incident | null>(null);
   const [reviewSnapshot, setReviewSnapshot] = useState<{
-    scope: object; incidentId: string; plan: PlanDetail | null;
+    scope: object; incidentId: string; plan: PlanDetail | null; expiresAt: number | null;
   } | null>(null);
+  const [expiredReview, setExpiredReview] = useState<typeof reviewSnapshot>(null);
   const [reviewStale, setReviewStale] = useState(false);
   const [decisionReason, setDecisionReason] = useState(
     "Reviewed simulator evidence and expected target version"
@@ -157,6 +165,7 @@ function App() {
     ? reviewSnapshot : null;
   const plan = selectedReview?.plan ?? null;
   const approval = plan?.approval ?? null;
+  const reviewState = selectedReview && expiredReview === selectedReview ? "EXPIRED" : plan?.review.state;
   const [investigation, setInvestigation] = useState<{ scope: object; report: Investigation } | null>(null);
   const [replayFixture, setReplayFixture] = useState<ReplayFixture>("recoverable-v1");
   const [replaySeed, setReplaySeed] = useState("42");
@@ -185,6 +194,13 @@ function App() {
         && !identity.roles.includes("security_admin")
       )
     : Boolean(reviewToken);
+
+  useEffect(() => {
+    const expiresAt = selectedReview?.expiresAt;
+    if (expiresAt == null) return;
+    const timer = window.setTimeout(() => setExpiredReview(selectedReview), expiresAt - performance.now());
+    return () => window.clearTimeout(timer);
+  }, [selectedReview]);
 
   useEffect(() => {
     if (!usingOidc) return;
@@ -331,18 +347,24 @@ function App() {
         getList<Effect>("effects")
       ]);
       let preview: PlanDetail | null = null;
+      let expiresAt: number | null = null;
       if (plans[0]) {
         const planResponse = await fetch("/v1/plans/" + plans[0].id, {
           headers: headers()
         });
+        const receivedAt = performance.now();
         const detailBody: unknown = await planResponse.json();
         if (!planResponse.ok) throw new Error(detail(detailBody));
         preview = detailBody as PlanDetail;
         if (preview.id !== plans[0].id || preview.incident_id !== incident.id) {
           throw new Error("Plan preview did not match the selected incident");
         }
+        if (preview.review.state === "APPROVED" && preview.approval) {
+          const remaining = Date.parse(preview.approval.expires_at) - Date.parse(preview.review.evaluated_at);
+          expiresAt = receivedAt + remaining;
+        }
       }
-      setReviewSnapshot({ scope: authScope, incidentId: incident.id, plan: preview });
+      setReviewSnapshot({ scope: authScope, incidentId: incident.id, plan: preview, expiresAt });
       setReviewStale(false);
       setEvidence(proof);
       setEffects(receipts);
@@ -748,7 +770,7 @@ function App() {
 
 
   async function revokeApproval() {
-    if (!approval || !plan || !canReview || reviewStale || connection !== "LIVE") return;
+    if (!approval || reviewState !== "APPROVED" || !canReview || reviewStale || connection !== "LIVE") return;
     if (revocationReason.trim().length < 8) {
       setError("Revocation reason must be at least 8 characters.");
       return;
@@ -889,6 +911,10 @@ function App() {
               <h3>Proposed simulator plan</h3>
               <p><strong>{plan.action_id}</strong> for {plan.target_id}</p>
               <p className="muted">Plan state: {plan.status} · Expected target version: {plan.expected_version}</p>
+              <p aria-live="polite">Review status: {reviewState}</p>
+              {plan.review.pending_since && <p className="muted">
+                Pending since {new Date(plan.review.pending_since).toLocaleString()}
+              </p>}
               <p>Pinned policy: {plan.policy_id ?? "Unavailable"}</p>
               <p>Expected postcondition: {plan.postcondition
                 ? `Simulator target healthy at version ${plan.postcondition.version}` : "Unavailable"}</p>
@@ -909,12 +935,13 @@ function App() {
               }
               {approval && <div className="approval-review">
                 <h4>Durable reviewer decision</h4>
-                <p className="muted">Status: {approval.state} · Version {approval.version}</p>
+                <p className="muted">Recorded decision: {approval.decision} · Version {approval.version}</p>
+                <p className="muted">Decided: {new Date(approval.decided_at).toLocaleString()}</p>
                 <p className="muted">Reviewer ID: {approval.reviewer}</p>
                 <p className="muted">Scope: {approval.scope}</p>
                 <p className="muted">Expires: {new Date(approval.expires_at).toLocaleString()}</p>
                 <p className="muted">Reason: {approval.reason}</p>
-                {approval.state === "APPROVED" && <>
+                {reviewState === "APPROVED" && <>
                   <label>Revocation reason
                     <textarea minLength={8} maxLength={256}
                       value={revocationReason}

@@ -625,7 +625,7 @@
       }
     ],
     "next_actions": [
-      "Reconcile exact-commit Linux CI for the review preview and conflict refresh. Complete approval expiry presentation and operator handoff guidance, then progress the A1–A3 investigation flow.",
+      "Reconcile exact-commit Linux CI for the approval lifecycle view. Connect operator handoff guidance and scoped source navigation, then progress the A1–A3 investigation flow.",
       "Verify incident membership parity from authoritative records and complete remaining lineage span and operator detail requirements.",
       "Direct GitHub work only when applicable local checks are available: evidence/ledger reconciliation, isolated deterministic helpers and frontend-only changes with actual build/test evidence as required; coordinate one writer on main.",
       "Measure workload and collector-unavailable behavior, validate accessibility and independent acceptance; G1–G6 remain blocked."

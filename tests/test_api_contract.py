@@ -230,11 +230,14 @@ async def test_plan_preview_shows_scoped_postcondition_and_current_conflicting_d
     path = f"/v1/plans/{plan_id}"
     response = await api_client.get(path, headers=headers("alpha"))
     assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
     preview = response.json()
     assert preview["incident_id"] == str(incident_id)
     assert preview["policy_id"] == INCUMBENT_POLICY_ID
     assert preview["postcondition"] == {"healthy": True, "version": 5}
     assert preview["approval"] is None
+    assert preview["review"]["state"] == "PENDING"
+    assert preview["review"]["pending_since"].endswith("+00:00")
     assert (await api_client.get(path, headers=headers("other"))).status_code == 404
 
     reviewer = headers("alpha", **{
@@ -246,8 +249,70 @@ async def test_plan_preview_shows_scoped_postcondition_and_current_conflicting_d
     assert stale.status_code == 409
     fresh = (await api_client.get(path, headers=headers("alpha"))).json()
     assert (fresh["status"], fresh["version"], fresh["approval"]["state"]) == ("REJECTED", 2, "REJECTED")
+    assert fresh["review"]["state"] == "REJECTED"
     assert fresh["plan_digest"] == preview["plan_digest"]
 
+
+@pytest.mark.parametrize("grant_state,expiry_offset,review_state", [
+    (None, 0, "INVALIDATED"),
+    ("APPROVED", 60, "APPROVED"),
+    ("APPROVED", -60, "EXPIRED"),
+    ("CONSUMED", -60, "CONSUMED"),
+    ("REVOKED", -60, "REVOKED"),
+])
+async def test_plan_preview_projects_expiry_without_changing_grant(
+    api_client, sessions_fixture, grant_state, expiry_offset, review_state,
+):
+    from datetime import UTC, datetime, timedelta
+    from uuid import UUID
+
+    from backend.models import ApprovalGrant, Incident, IncidentPlan
+
+    created = await api_client.post(
+        "/v1/incidents", json={"target_id": "checkout"},
+        headers=headers("alpha", **{"Idempotency-Key": "approval-lifecycle"}),
+    )
+    assert created.status_code == 202, created.text
+    plan_id, grant_id = uuid4(), uuid4()
+    incident_id = UUID(created.json()["id"])
+    now = datetime.now(UTC)
+    expiry = now + timedelta(seconds=expiry_offset)
+    async with sessions_fixture.begin() as session:
+        session.add(IncidentPlan(
+            id=plan_id, tenant_id="alpha", incident_id=incident_id,
+            target_id="checkout", action_id="SIMULATOR_MARK_HEALTHY", plan_digest="a" * 64,
+            expected_version=1, evidence_ids=[],
+            status="APPROVED" if grant_state else "PROPOSED", version=2 if grant_state else 1,
+        ))
+        if grant_state is None:
+            incident = await session.get(Incident, incident_id)
+            incident.status_projection = "CANCELLED"
+        else:
+            await session.flush()
+            session.add(ApprovalGrant(
+                id=grant_id, plan_id=plan_id, tenant_id="alpha", plan_digest="a" * 64,
+                reviewer_id="synthetic-reviewer", scope="SIMULATOR_MARK_HEALTHY",
+                decision="APPROVE", state=grant_state, version=2,
+                reason="Reviewed synthetic evidence", expires_at=expiry, created_at=now,
+            ))
+
+    path = f"/v1/plans/{plan_id}"
+    assert (await api_client.get(path, headers=headers("other"))).status_code == 404
+    response = await api_client.get(path, headers=headers("alpha"))
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert plan["review"]["state"] == review_state
+    assert plan["review"]["pending_since"] is None
+    if grant_state is None:
+        assert plan["approval"] is None
+        return
+    assert plan["approval"]["state"] == grant_state
+    assert plan["approval"]["decision"] == "APPROVE"
+    assert plan["approval"]["decided_at"] == now.isoformat()
+    assert plan["approval"]["expires_at"] == expiry.isoformat()
+    async with sessions_fixture() as session:
+        grant = await session.get(ApprovalGrant, grant_id)
+        assert (grant.state, grant.version) == (grant_state, 2)
 
 
 @pytest.mark.asyncio

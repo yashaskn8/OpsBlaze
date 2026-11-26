@@ -113,8 +113,13 @@ async def test_postgres_temporal_simulator_recovery() -> None:
                 assert plans.status_code == 200 and len(plans.json()) == 1
                 plan = plans.json()[0]
                 assert plan["status"] == "PROPOSED"
+                preview_path = f"/v1/plans/{plan['id']}"
+                preview = await client.get(preview_path, headers=headers)
+                assert preview.status_code == 200, preview.text
+                assert preview.json()["review"]["state"] == "PENDING"
+                assert preview.json()["review"]["pending_since"] is not None
                 decision = await client.post(
-                    f"/v1/plans/{plan['id']}/decisions",
+                    preview_path + "/decisions",
                     headers={
                         **headers,
                         "If-Match": str(plan["version"]),
@@ -123,10 +128,17 @@ async def test_postgres_temporal_simulator_recovery() -> None:
                     json={"decision": "APPROVE"},
                 )
                 assert decision.status_code == 201, decision.text
+                preview = await client.get(preview_path, headers=headers)
+                assert preview.status_code == 200, preview.text
+                assert preview.json()["review"]["state"] == "APPROVED"
                 assert await dispatch_once(env.client, sessions, tenant_filter="demo")
 
                 final = await await_state("VERIFIED")
                 assert final["status_projection"] == "VERIFIED"
+                preview = await client.get(preview_path, headers=headers)
+                assert preview.status_code == 200, preview.text
+                assert preview.json()["review"]["state"] == "CONSUMED"
+                assert preview.json()["approval"]["decision"] == "APPROVE"
                 effects = await client.get(
                     f"/v1/incidents/{incident_id}/effects", headers=headers
                 )

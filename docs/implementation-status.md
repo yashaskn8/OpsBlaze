@@ -74,4 +74,6 @@ Migration 0049 passed [all ten exact-commit Linux CI jobs](https://github.com/ya
 
 The live investigation increment passed [all ten exact-commit Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45779108327). Reviewers now see the pinned policy and typed simulator postcondition in the scoped plan preview. Following a competing decision that returns HTTP 409, the workbench reloads the durable plan and approval. A Chrome regression exercised a real competing rejection through FastAPI. Exact-commit CI for the preview repair remains a release check.
 
+The preview repair passed [all ten exact-commit Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/45779838912). The plan preview now shows when review became pending and derives expiry from the server clock. Chrome displayed expiry without a refresh and preserved the recorded decision. The native PostgreSQL and Temporal workflow verified the pending, approved and consumed states. Pending-age monitoring and operator handoff guidance remain open.
+
 The completion definition is **measured acceptance of every relevant test in the PDF**, not the presence of a similarly named file or endpoint.
