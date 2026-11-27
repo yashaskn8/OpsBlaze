@@ -1,0 +1,29 @@
+# Performance & Query Plan Baseline
+
+All measurements below were collected on the native Windows PostgreSQL 16.16 instance (`127.0.0.1:55435`), local Python `.venv`, and in-process FastAPI ASGI transport. They are reproducible development baselines, not multi-host production SLOs (`G3`/`B4-07`).
+
+## 1. Native PostgreSQL 16 `EXPLAIN (ANALYZE, BUFFERS)` Baseline (Post-Restore DB)
+
+| Query Target | Plan Summary | Planning Time | Execution Time |
+|---|---|---:|---:|
+| `incident` (`tenant_id, status_projection ORDER BY created_at DESC LIMIT 20`) | `Seq Scan on incident` (`rows=0` on sentinel DB) | `4.087 ms` | `0.110 ms` |
+| `evidence` (`tenant_id, incident_id ORDER BY captured_at DESC LIMIT 50`) | `Seq Scan on evidence` (`rows=0` on sentinel DB) | `3.899 ms` | `0.148 ms` |
+| `outbox` (`delivered_at IS NULL AND dead_lettered_at IS NULL ORDER BY available_at, id LIMIT 10`) | `Seq Scan on outbox` (`rows=3`) | `5.752 ms` | `0.193 ms` |
+| `operational_lesson` (`tenant_id, target_digest, status = 'ACTIVE' LIMIT 4`) | **`Index Scan using ix_lesson_lookup`** | `2.601 ms` | `0.095 ms` |
+
+## 2. In-Process FastAPI ASGI Endpoint Latency (`n = 30` per endpoint, `b0984ad`)
+
+| Endpoint | Samples | p50 (ms) | p95 (ms) | p99 (ms) | Notes |
+|---|---:|---:|---:|---:|---|
+| `GET /v1/health/ready` | 30 | `4.674` | `6.374` | `677.004` | First-call Temporal fail-fast accounts for p99 cold tail |
+| `POST /v1/incidents` | 30 | `16.969` | `20.224` | `57.206` | Includes atomic admission + quota + outbox commit |
+| `GET /v1/incidents/{id}` | 30 | `7.089` | `8.428` | `9.044` | Scoped single-row snapshot |
+| `GET /v1/incidents/{id}/evidence/lifecycle` | 30 | `10.931` | `25.644` | `68.745` | Aggregate freshness, citations & bounded access audits |
+
+## 3. Historical & Comparative Engineering Measurements (from Audit & Phase Commits)
+- **E4 Scoped Memory Lookup Optimization (`bb96140`)**: Combined capsule, tenant/incident consent, and latest outcome checks reduced eligible PG16 lookup from **7 SQL statements to 3** (`4.384 ms` active-lesson median vs `5.035 ms` prior).
+- **B4 Database Readiness Timeout (`e245b42`)**: Under injected SQL stall, `GET /v1/health/ready` returned HTTP `503` cleanly within the bounded readiness deadline (test-budget median `158.1 ms`, range `155.5–159.5 ms` vs unbounded `412.5 ms` prior; runtime DB phase deadline `3s`).
+- **Scale & SSE Load Measurements ([docs/requirements-audit.json](../requirements-audit.json))**: Mixed lineage PG16 (`120 evidence + 60 hypotheses`, 4 readers): `summary_p95 = 141.657 ms`, `page_p95 = 27.601 ms`; SSE fan-out: `p95 = 184.081 ms`, `peak_memory = 1779.83 KiB`; overload & drain PG16 (`tenant_cap=8`): `429` rejections `p95 = 30.334 ms`.
+- **Comparative Simulators**:
+  - **A1-10** (`run_a1_strategy_comparison`): `ADAPTIVE` & `CHEAPEST_FIRST` `9` probes (`6/6`, `0` unsafe, `0` target mutations, `p50=40.0ms`) vs `FIXED_RUNBOOK` `11` probes (`6/6`).
+  - **E5-05** (`run_e5_paired_recovery_cost`, 36 pairs SQLite / native Temporal): Native Temporal run (`0aae1c0`/`7fa9f69`) recorded `36/36` correct, `22` verified recoveries, `1` unknown, `13` nonrecoveries, `56` adaptive vs `64` runbook probes (`p95 = 556 ms` vs `564 ms`).

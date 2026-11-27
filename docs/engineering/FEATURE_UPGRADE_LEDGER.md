@@ -1,0 +1,26 @@
+# Feature Upgrade Ledger (B1–E8)
+
+Summary of implemented architecture improvements, verified invariants, and rejected alternatives across all 20 TITAN-20 capabilities. Detailed pre-Omega increments are also archived in [docs/architecture-improvement-plan.md](../architecture-improvement-plan.md) and [docs/implementation-status.md](../implementation-status.md).
+
+| ID | Feature | Key Implemented Capability & Recent Upgrades | Rejected Alternative & Rationale |
+|---|---|---|---|
+| **B1** | Durable incident workflow | Transactional PG outbox (`START_WORKFLOW`), deterministic `IncidentWorkflow` + pinned replay archive, reconciler | Direct in-API workflow RPC — breaks atomic admission + outbox durability on crash |
+| **B2** | Resource reservation | Monotonic `ResourceEpoch` fencing, canonical lock order (`Epoch -> Reservation -> Target`), `renew_simulator_reservation` (`b0984ad`) | Optimistic retries without DB fence — allows dual-writer stale mutation under delay |
+| **B3** | Effect receipt gateway | Pre-call `PREPARED -> SENT -> CONFIRMED -> VERIFIED` receipt ledger, fail-closed `UNKNOWN` reconciliation | Blind retry on timeout — risks duplicate side effects when remote reply is lost |
+| **B4** | Admission & monitoring | Fixed-window tenant quotas, global/tenant active caps, readiness DB deadline (`e245b42`), concurrent token cap tests (`67f2c1a`) | Unbounded background queues or global asyncpg timeouts — breaks normal transactions |
+| **A1** | Adaptive investigator | Budgeted multi-step hypothesis acquisition, strategy modes (`ADAPTIVE`, `FIXED_RUNBOOK`, `CHEAPEST_FIRST`), comparator (`2524308`) | Unconstrained LLM tool loop — violates probe/token cost & determinism bounds |
+| **A2** | Capability tool gateway | Strict allowlist (`simulator.health`, `simulator.version`), `ProbeCapability` TTL/revocation/rate limits, secret redaction | Generic HTTP/shell tool wrapper — creates RCE and prompt-injection blast radius |
+| **A3** | Evidence ledger | Immutable SHA-256 digests, `ContextManifest`, 30-day `expires_at` scrub (`0054`), `EvidenceAccessAudit`, lifecycle API (`67f2c1a`) | In-place mutation/deletion of evidence — destroys forensic auditability of past decisions |
+| **A4** | Calibrated abstention | Hard-gate `DecisionAssessment`, `EXPIRED_EVIDENCE` refusal, `freeze_dev_threshold` + disjoint eval scorer (`2524308`) | Treating raw heuristic/model scores as calibrated probabilities — misstates risk |
+| **P1** | Live workbench | Server-authoritative snapshots, resumable monotonic `UIEvent` SSE, clean EOF stale-control lock, identity fencing (`9ecdaf4`) | Optimistic UI state / unkeyed caches — risks cross-tenant/stale flash on switch |
+| **P2** | Approval cockpit | Version-bound `If-Match`, separate reviewer credential, server-clock expiry, keyboard/focus restoration (`bb96140`, `d6e6be4`) | Client-side role checks alone — bypassed trivially without server-side token separation |
+| **P3** | Trace explorer | Scoped `LineageEdge` projection, bounded cursor pagination, causal trace continuity & recovery checkpoint (`0048`) | Dynamic graph DB or heuristic edge inference — adds infra complexity and fabricates lineage |
+| **S1** | Paired replay | Time-sealed virtual clock twins (`FUTURE_DENIED`), resumable arms, version-sealed fixtures (`01b5423`) | Live unsealed benchmarks — leaks post-incident outcome signals into prior decisions |
+| **E1** | Experience capsules | Tenant + incident consent epochs, `opsblaze_projector` RLS/column isolation, provenance & `step_key` dedupe (`0052`) | App-role shared table scan — exposes raw incident secrets to compromised projector |
+| **E2** | Outcome adjudication | Append-only `OutcomeRevision`, independent witness separation, delayed-observation cascade invalidation (`0052`) | Mutable status flags or adapter ACK trust — hides false-success acknowledgements |
+| **E3** | Failure & proposals | Deterministic root-step probe signatures (`0052`), cursor-paged clusters & review attribution, non-auto-deploying drafts | Auto-merging self-patches — violates human/evaluator change-control gate |
+| **E4** | Lesson registry | Validated/ACTIVE lifecycle, applicability pins (`0053`), 3-query combined PG lookup (`bb96140`), `run_e4_memory_ablation` | External vector database (`Qdrant`/`pgvector`) — unnecessary infra before PostgreSQL limits |
+| **E5** | Regression gate | Immutable `EvaluationManifest`, negative safety controls, `UNKNOWN`/`DISPUTED` cost attribution, local 36-pair runner (`7fa9f69`) | Aggregated accuracy alone — hides minority-family regressions & unpaid uncertain trials |
+| **E6** | Canary & rollback | Immutable `PolicyBundle`, shadow-only cohort preview, simulator canary rehearsal (`01b5423`), live promote closed | Unpinned live traffic split — mixes policy assumptions mid-incident |
+| **E7** | Budgeted routing | Context-aware deterministic router (`select_route`), persisted feature & strategy attribution (`2524308`) | Bandit/RL online weights — lacks causal propensity logs and G4 efficacy evidence |
+| **E8** | Adapter conformance | 18-scenario simulator suite (`simulator-conformance-v6`), `RETENTION_SECONDS = 86400` enforcement (`67f2c1a`), G2 offline Ed25519 verifier | Stubbed mock adapters — masks real fencing, timeout, and partial-commit defects |
