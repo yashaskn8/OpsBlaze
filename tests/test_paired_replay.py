@@ -1,11 +1,13 @@
 
 import pytest
+from sqlalchemy import event, select
 
 from backend.experiments.replay import (
     FIXTURES, FutureEvidenceDenied, ProbeBudgetExceeded,
     Twin, create_pair, list_pairs_page, pair_report,
     resume_pair, run_arm, run_paired_trials, start_pair,
 )
+from backend.models import ReplayArm, ReplayExperiment
 
 
 def test_future_evidence_denied_before_release():
@@ -49,6 +51,65 @@ async def test_pair_is_reproducible_and_tenant_scoped(sessions_fixture):
         assert all(arm["outcome"] == "FAILED" for arm in result["arms"])
         assert result["arms"][0]["namespace"] != result["arms"][1]["namespace"]
         assert await pair_report(session, "other", experiment.id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("field", "value", "reason"), [
+    ("budget", 5, "FIXTURE_DIGEST_MISMATCH"),
+    ("workload_version", "unknown", "FIXTURE_DIGEST_MISMATCH"),
+    ("evidence_policy_version", "unknown", "FIXTURE_DIGEST_MISMATCH"),
+    ("namespace", "other-run/runbook", "STORED_ARM_MISMATCH"),
+    ("probe_cost", 0, "STORED_ARM_MISMATCH"),
+    ("oracle_passed", False, "STORED_ARM_MISMATCH"),
+    ("trace", [], "STORED_ARM_MISMATCH"),
+])
+async def test_resume_rejects_inconsistent_stored_experiment(sessions_fixture, field, value, reason):
+    async with sessions_fixture() as session:
+        experiment = await start_pair(session, "tenant", "recoverable-v1", seed=42)
+    async with sessions_fixture.begin() as session:
+        if reason == "FIXTURE_DIGEST_MISMATCH":
+            row = await session.get(ReplayExperiment, experiment.id)
+        else:
+            row = await session.scalar(select(ReplayArm).where(ReplayArm.experiment_id == experiment.id))
+        setattr(row, field, value)
+    async with sessions_fixture() as session:
+        result = await resume_pair(session, "tenant", experiment.id)
+        assert result.status == "INVALIDATED"
+        assert result.invalidation_reason == reason
+        report = await pair_report(session, "tenant", experiment.id)
+        assert [arm["kind"] for arm in report["arms"]] == ["RUNBOOK"]
+
+
+@pytest.mark.asyncio
+async def test_pair_report_reads_state_and_arms_in_one_query(sessions_fixture):
+    await assert_replay_report_snapshot(sessions_fixture)
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_native_replay_report_reads_state_and_arms_in_one_query(native_sessions_fixture):
+    await assert_replay_report_snapshot(native_sessions_fixture)
+
+
+async def assert_replay_report_snapshot(sessions):
+    async with sessions() as session:
+        experiment = await start_pair(session, "tenant", "recoverable-v1", seed=42, initial_arms=0)
+
+    reads = []
+
+    def count_read(_conn, _cursor, statement, _parameters, _context, _executemany):
+        reads.append(statement)
+
+    engine = sessions.kw["bind"].sync_engine
+    event.listen(engine, "before_cursor_execute", count_read)
+    try:
+        async with sessions() as session:
+            report = await pair_report(session, "tenant", experiment.id)
+        assert report["status"] == "PENDING" and report["arms"] == []
+        assert len(reads) == 1
+    finally:
+        event.remove(engine, "before_cursor_execute", count_read)
 
 
 @pytest.mark.asyncio
