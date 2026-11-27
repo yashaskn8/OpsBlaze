@@ -1006,8 +1006,16 @@ function App() {
   return (
     <main>
       <a className="skip-link" href="#incident-snapshot">Skip to incident snapshot</a>
-      <header><span className="mark">OB</span><div><strong>OpsBlaze</strong><small>Controlled incident recovery lab</small></div></header>
-      <div className="intro"><p className="eyebrow">TITAN-20 / OPERATOR WORKBENCH</p><h1>Incident operations</h1><p>Admit incidents, inspect evidence, and review simulator-only recovery.</p></div>
+      <header className="workbench-header">
+        <div className="workbench-brand"><span className="mark" aria-hidden="true">OB</span><div><strong>OpsBlaze</strong><small>Community Edition</small></div></div>
+        <nav aria-label="Workbench sections">
+          <a href="#incident-snapshot">Incident snapshot</a>
+          <a href="#queue-health">Queue health</a>
+          <a href="#recent-incidents">Recent incidents</a>
+          <a href="#replay-lab">Replay lab</a>
+        </nav>
+      </header>
+      <div className="intro"><h1>Incident operations</h1><p>Admit incidents, inspect evidence, and review simulator-only recovery.</p></div>
       <div className="layout">
         <section>
           <h2>New incident</h2><p className="muted">{usingOidc
@@ -1251,7 +1259,7 @@ function App() {
           </> : <p className="muted empty">No incident selected yet.</p>}
         </section>
       </div>
-      <section className="incident-history" aria-label="Tenant queue health">
+      <section id="queue-health" tabIndex={-1} className="incident-history" aria-label="Tenant queue health">
         <div className="history-header">
           <h2>Queue health</h2>
           <button type="button" className="secondary"
@@ -1338,9 +1346,9 @@ function App() {
             </button>}
         </div>}
       </section>
-      <section className="incident-history">
+      <section id="recent-incidents" tabIndex={-1} className="incident-history" aria-labelledby="recent-incidents-title">
         <div className="history-header">
-          <h2>Recent incidents</h2>
+          <h2 id="recent-incidents-title">Recent incidents</h2>
           <button type="button" className="secondary" disabled={!authenticated || busy} onClick={loadRecent}>
             Load from server
           </button>
@@ -1367,8 +1375,8 @@ function App() {
           }
         </div>}
       </section>
-      <section className="incident-history replay-lab">
-        <h2>Isolated replay laboratory</h2>
+      <section id="replay-lab" tabIndex={-1} className="incident-history replay-lab" aria-labelledby="replay-lab-title">
+        <h2 id="replay-lab-title">Isolated replay laboratory</h2>
         <p className="muted">
           Run two deterministic simulator arms with the same initial fixture,
           virtual-time evidence release, and independent postcondition.
@@ -1407,7 +1415,7 @@ function App() {
           }
         </>}
       </section>
-      <footer>Simulator-only recovery. External identity integration must be configured and verified for production use. Real targets, calibrated evaluation and policy rollout remain disabled.</footer>
+      <footer>Community Edition supports simulated recovery. Enterprise Edition requires independent qualification.</footer>
     </main>
   );
 }

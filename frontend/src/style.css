@@ -1,12 +1,15 @@
 :root { font-family: system-ui, sans-serif; color: #eef3fb; background: #0c1422; }
 * { box-sizing: border-box; } body { margin: 0; }
 main { max-width: 1060px; margin: auto; padding: 30px 22px 60px; }
-header { display: flex; gap: 13px; align-items: center; } header strong, small { display: block; }
+.workbench-header, .workbench-brand, .workbench-header nav { display: flex; align-items: center; gap: 14px; }
+.workbench-header { justify-content: space-between; flex-wrap: wrap; padding-bottom: 18px; border-bottom: 1px solid #34415b; }
+.workbench-header nav { flex-wrap: wrap; gap: 6px 14px; }
+.workbench-header nav a { color: #c4d7f8; padding: 8px 0; text-underline-offset: 3px; font-size: 13px; }
+header strong, small { display: block; }
 small, .muted, footer, .intro > p:last-child { color: #a3b0c6; }
 small { font-size: 12px; margin-top: 3px; }
 .mark { background: #326cff; padding: 14px; border-radius: 12px; font-weight: bold; }
-.intro { margin: 70px 0 32px; } h1 { font-size: clamp(36px, 6vw, 52px); margin: 10px 0; }
-.eyebrow { color: #89b1ff; font-weight: 700; font-size: 12px; letter-spacing: .15em; }
+.intro { margin: 38px 0 26px; } h1 { font-size: clamp(32px, 6vw, 50px); margin: 10px 0; }
 .layout { display: grid; grid-template-columns: 1.1fr .9fr; gap: 20px; }
 section { background: #162237; border: 1px solid #34415b; padding: 26px; border-radius: 16px; min-height: 350px; }
 h2 { margin: 0; font-size: 20px; } .muted { font-size: 13px; }
@@ -25,7 +28,7 @@ dt { color: #9eacc3; } dd { margin: 0; overflow-wrap: anywhere; }
 .mono { font-family: monospace; } .empty { margin-top: 50px; }
 .error { background: #542536; color: #ffd4de; padding: 12px; border-radius: 8px; }
 footer { margin-top: 28px; font-size: 13px; }
-@media (max-width: 740px) { .layout { grid-template-columns: 1fr; } .intro { margin-top: 45px; } }
+@media (max-width: 740px) { .layout { grid-template-columns: 1fr; } .intro { margin-top: 26px; } }
 
 .plan, .audit { border-top: 1px solid #34415b; margin-top: 26px; padding-top: 18px; }
 .plan h3, .audit h3 { font-size: 15px; margin: 0 0 14px; }
@@ -104,7 +107,7 @@ textarea:focus { outline: 2px solid #76a8ff; }
 :where(button, a, input, textarea, select):disabled {
   cursor: not-allowed;
 }
-#incident-snapshot:focus {
+section[tabindex="-1"]:focus {
   outline: 3px solid #b6ddff;
   outline-offset: 3px;
 }

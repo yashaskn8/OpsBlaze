@@ -4,6 +4,8 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from backend.release_profile import COMMUNITY_PROFILE, ReleaseProfile
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -21,6 +23,7 @@ class Settings(BaseSettings):
     oidc_jwks_url: str = ""
     idp_event_audience: str = ""  # Dedicated signed revocation event audience
     environment: Literal["development", "production"] = "development"
+    release_profile: ReleaseProfile = COMMUNITY_PROFILE
     otel_traces_endpoint: str = ""  # Off by default; explicit collector only.
     otel_sample_ratio: float = Field(default=0.1, ge=0, le=1)
     temporal_address: str = "127.0.0.1:7233"

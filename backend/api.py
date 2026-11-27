@@ -14,6 +14,7 @@ from backend.auth import (
     local_security_admin, local_tenant,
 )
 from backend.database import get_session
+from backend.release_profile import release_profile
 from backend.routers.operations import register_operations_routes
 from backend.schemas import IncidentCreate, IncidentView
 from backend.services import IdempotencyConflict, RateLimited, admit_incident, find_incident
@@ -99,6 +100,12 @@ async def accept_signed_idp_revocation(
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/release-profile")
+def release_profile_metadata(response: Response) -> dict[str, str | bool]:
+    response.headers["Cache-Control"] = "no-store"
+    return release_profile()
 
 
 @app.post("/v1/incidents", response_model=IncidentView, status_code=202)
