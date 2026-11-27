@@ -1,4 +1,4 @@
-"""Bounded one-shot retention across E1, P1, and B4.
+"""Bounded one-shot retention across A3, E1, P1, and B4.
 
 Each operation commits independently; a crash is safely resumed on the next
 scheduled run. Incident/effect/approval/outcome audit rows are not deleted.
@@ -15,7 +15,9 @@ from backend.settings import Settings, get_settings
 from backend.telemetry import initialize_tracing
 from backend.workers.budget_retention import prune_budget_windows
 from backend.workers.event_retention import purge_ui_events
-from backend.workers.retention import expire_capsules, scrub_revoked_tenant_capsules
+from backend.workers.retention import (
+    expire_capsules, expire_evidence_payloads, scrub_revoked_tenant_capsules,
+)
 from backend.workers.heartbeat import prune_worker_host_presence
 
 
@@ -40,6 +42,7 @@ async def run_maintenance(
         "lessons_revoked": 0,
         "tenant_capsules_scrubbed": 0,
         "tenant_lessons_revoked": 0,
+        "evidence_scrubbed": 0,
         "ui_events_deleted": 0,
         "admission_windows_deleted": 0,
         "ai_windows_deleted": 0,
@@ -57,6 +60,12 @@ async def run_maintenance(
         totals["tenant_capsules_scrubbed"] += scrubbed["capsules_scrubbed"]
         totals["tenant_lessons_revoked"] += scrubbed["lessons_revoked"]
         if scrubbed["capsules_scrubbed"] < 500:
+            break
+
+    for _ in range(max_batches):
+        scrubbed = (await expire_evidence_payloads(sessions, now=today))["evidence_scrubbed"]
+        totals["evidence_scrubbed"] += scrubbed
+        if scrubbed < 500:
             break
 
     ui_cutoff = today - timedelta(days=settings.ui_event_retention_days)

@@ -1,13 +1,18 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
 import hashlib
+from uuid import uuid4
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.investigator.baseline import inspect
 from backend.models import (
     Evidence, HypothesisStep, Incident, ProbeCall, ProbeCapability, SimulatorTarget
 )
+from backend.probes import gateway
 from backend.probes.gateway import (
-    ProbeDenied, invoke_probe, redact_evidence_excerpt,
+    _ACTIVE_TARGET_PROBES, ProbeDenied, invoke_probe, redact_evidence_excerpt,
     reserve_external_probe_intent,
 )
 from backend.schemas import IncidentCreate
@@ -29,6 +34,77 @@ async def test_allowlisted_probe_is_tenant_scoped_and_deduplicated(sessions_fixt
         row = await session.get(Incident, incident.id)
         assert row.probe_used == 1
         assert len(list((await session.scalars(select(Evidence))).all())) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True])
+async def test_completed_probe_drops_idle_target_counter(sessions_fixture, fails):
+    tenant = f"probe-counter-{uuid4().hex}"
+    async with sessions_fixture() as session:
+        incident = await admit_incident(session, tenant, "counter", IncidentCreate(target_id="checkout"))
+
+    if fails:
+        with pytest.raises(ProbeDenied, match="superseded evidence"):
+            await invoke_probe(
+                sessions_fixture, tenant, incident.id, 1, "simulator.health",
+                supersedes_evidence_id=uuid4(),
+            )
+    else:
+        await invoke_probe(sessions_fixture, tenant, incident.id, 1, "simulator.health")
+
+    assert (tenant, "checkout") not in _ACTIVE_TARGET_PROBES
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reserve_only", [False, True])
+async def test_native_probe_capability_expiry_includes_incident_lock_wait(
+    native_sessions_fixture, monkeypatch, reserve_only,
+):
+    sessions = native_sessions_fixture
+    tenant = f"probe-expiry-{uuid4().hex}"
+    async with sessions() as session:
+        incident = await admit_incident(session, tenant, "expiry", IncidentCreate(target_id="checkout"))
+    now = datetime.now(timezone.utc)
+    first = await invoke_probe(sessions, tenant, incident.id, 1, "simulator.health", now=now)
+    assert first.evidence_id is not None
+    lock_requested = asyncio.Event()
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz)
+
+    class WaitingSession(AsyncSession):
+        async def scalar(self, statement, *args, **kwargs):
+            if statement.column_descriptions[0]["entity"] is Incident:
+                lock_requested.set()
+            return await super().scalar(statement, *args, **kwargs)
+
+    monkeypatch.setattr(gateway, "datetime", Clock)
+    contenders = async_sessionmaker(sessions.kw["bind"], class_=WaitingSession)
+
+    async def checked_probe():
+        if reserve_only:
+            with pytest.raises(ProbeDenied, match="expired"):
+                await reserve_external_probe_intent(contenders, tenant, incident.id, 2, "simulator.health")
+        else:
+            result = await invoke_probe(contenders, tenant, incident.id, 2, "simulator.health")
+            assert result.outcome == "DENIED" and result.evidence_id is None
+
+    async with asyncio.TaskGroup() as tasks:
+        async with sessions.begin() as session:
+            await session.get(Incident, incident.id, with_for_update=True)
+            pending = tasks.create_task(checked_probe())
+            await asyncio.wait_for(lock_requested.wait(), timeout=5)
+            assert not pending.done()
+            now += timedelta(seconds=301)
+
+    async with sessions() as session:
+        capability = await session.scalar(select(ProbeCapability).where(ProbeCapability.incident_id == incident.id))
+        assert capability.used_calls == 1
+        assert (await session.scalars(select(Evidence.id).where(Evidence.incident_id == incident.id))).all() == [first.evidence_id]
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,5 @@
 """A2/A3: narrow simulator probes with scoped capabilities, budgets, and provenance."""
 
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -59,7 +58,7 @@ PROBE_CATALOG: dict[str, dict] = {
     },
 }
 
-_ACTIVE_TARGET_PROBES: dict[tuple[str, str], int] = defaultdict(int)
+_ACTIVE_TARGET_PROBES: dict[tuple[str, str], int] = {}
 
 
 class ProbeDenied(Exception):
@@ -266,7 +265,6 @@ async def reserve_external_probe_intent(
         raise ProbeDenied("step must be positive")
     if catalog_id not in ALLOWED_PROBES:
         raise ProbeDenied("probe catalog is not allowlisted")
-    observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     meta = PROBE_CATALOG[catalog_id]
     probe_limit = get_settings().max_probe_calls_per_incident
     async with sessions() as session:
@@ -296,6 +294,7 @@ async def reserve_external_probe_intent(
                     ProbeCapability.catalog_id == catalog_id,
                 ).with_for_update()
             )
+            observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
             if cap is None:
                 cap = ProbeCapability(
                     id=uuid4(),
@@ -347,7 +346,6 @@ async def invoke_probe(
     """No model-supplied target, URL, credentials, or executable arguments."""
     if step_no < 1:
         raise ProbeDenied("step must be positive")
-    observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     target_key: tuple[str, str] | None = None
     try:
         async with sessions() as session:
@@ -434,10 +432,11 @@ async def invoke_probe(
                 if catalog_id in ALLOWED_PROBES:
                     meta = PROBE_CATALOG[catalog_id]
                     target_key = (tenant_id, incident.target_id)
-                    if _ACTIVE_TARGET_PROBES[target_key] >= meta["max_concurrent_per_target"]:
+                    active = _ACTIVE_TARGET_PROBES.get(target_key, 0)
+                    if active >= meta["max_concurrent_per_target"]:
                         target_key = None
                         raise ProbeDenied("target probe concurrency limit reached")
-                    _ACTIVE_TARGET_PROBES[target_key] += 1
+                    _ACTIVE_TARGET_PROBES[target_key] = active + 1
 
                 incident.probe_used += 1
                 if catalog_id not in ALLOWED_PROBES:
@@ -455,6 +454,7 @@ async def invoke_probe(
                         ProbeCapability.catalog_id == catalog_id,
                     ).with_for_update()
                 )
+                observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
                 if cap is None:
                     cap = ProbeCapability(
                         id=uuid4(),
@@ -570,7 +570,11 @@ async def invoke_probe(
                 return ProbeResult(outcome, evidence_id, excerpt)
     finally:
         if target_key is not None:
-            _ACTIVE_TARGET_PROBES[target_key] = max(0, _ACTIVE_TARGET_PROBES[target_key] - 1)
+            remaining = _ACTIVE_TARGET_PROBES[target_key] - 1
+            if remaining:
+                _ACTIVE_TARGET_PROBES[target_key] = remaining
+            else:
+                del _ACTIVE_TARGET_PROBES[target_key]
 
 
 async def refresh_evidence(

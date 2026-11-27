@@ -4,7 +4,7 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.database import get_session_maker
@@ -143,6 +143,7 @@ async def expire_evidence_payloads(
                 )
                 .order_by(Evidence.id)
                 .limit(500)
+                .with_for_update(skip_locked=True)
             )).all())
             if not ids:
                 return {"evidence_scrubbed": 0}
@@ -152,7 +153,7 @@ async def expire_evidence_payloads(
                 .values(
                     validity="EXPIRED",
                     redacted_excerpt=EXPIRED_EXCERPT,
-                    expires_at=cutoff,
+                    expires_at=func.coalesce(Evidence.expires_at, cutoff, type_=Evidence.expires_at.type),
                 )
             )
             return {"evidence_scrubbed": len(ids)}

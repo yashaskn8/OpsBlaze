@@ -1,11 +1,13 @@
 """Scheduled retention operates in bounded, idempotent transactions."""
 
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select, update
 
-from backend.models import AdmissionUsage, Incident, ModelTokenWindow, UIEvent, UIEventWatermark
+from backend.models import AdmissionUsage, Evidence, Incident, ModelTokenWindow, UIEvent, UIEventWatermark
+from backend.probes.gateway import EXPIRED_EXCERPT
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
 from backend.settings import Settings
@@ -41,6 +43,7 @@ async def test_one_shot_maintenance_keeps_durable_incident_records(sessions_fixt
         "lessons_revoked": 0,
         "tenant_capsules_scrubbed": 0,
         "tenant_lessons_revoked": 0,
+        "evidence_scrubbed": 0,
         "ui_events_deleted": 1,
         "admission_windows_deleted": 1,
         "ai_windows_deleted": 1,
@@ -56,6 +59,47 @@ async def test_one_shot_maintenance_keeps_durable_incident_records(sessions_fixt
         assert not (await session.scalars(
             select(ModelTokenWindow).where(ModelTokenWindow.window_start == old)
         )).all()
+
+
+@pytest.mark.asyncio
+async def test_scheduled_maintenance_scrubs_only_expired_evidence(sessions_fixture):
+    await assert_scheduled_evidence_scrub(sessions_fixture)
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_native_maintenance_scrubs_only_expired_evidence(native_sessions_fixture):
+    await assert_scheduled_evidence_scrub(native_sessions_fixture)
+
+
+async def assert_scheduled_evidence_scrub(sessions):
+    now = datetime.now(timezone.utc)
+    tenant = f"evidence-maintenance-{uuid4().hex}"
+    expired_at = now - timedelta(days=1)
+    expired_id, fresh_id = uuid4(), uuid4()
+    digest = "b" * 64
+    async with sessions() as session:
+        incident = await admit_incident(session, tenant, "retention", IncidentCreate(target_id="checkout"))
+        async with session.begin():
+            for record_id, expires_at in ((expired_id, expired_at), (fresh_id, now + timedelta(days=1))):
+                session.add(Evidence(
+                    id=record_id, tenant_id=tenant, incident_id=incident.id, target_id="checkout",
+                    source="simulator.health", source_version="simulator-v1", observed_at=now,
+                    expires_at=expires_at, sha256=digest, redacted_excerpt='{"healthy":false}',
+                    classification="INTERNAL", validity="VALID",
+                ))
+
+    first = await run_maintenance(sessions, Settings(), now=now, max_batches=1)
+    assert first["evidence_scrubbed"] >= 1
+    again = await run_maintenance(sessions, Settings(), now=now, max_batches=1)
+    assert again["evidence_scrubbed"] == 0
+    async with sessions() as session:
+        expired = await session.get(Evidence, expired_id)
+        fresh = await session.get(Evidence, fresh_id)
+        assert expired.validity == "EXPIRED" and expired.redacted_excerpt == EXPIRED_EXCERPT
+        assert expired.sha256 == digest and expired.expires_at.replace(tzinfo=timezone.utc) == expired_at
+        assert fresh.validity == "VALID" and fresh.redacted_excerpt == '{"healthy":false}'
 
 
 @pytest.mark.asyncio
