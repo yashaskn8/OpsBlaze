@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from sqlalchemy.exc import SQLAlchemyError
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from backend.auth import (
     local_security_admin, local_tenant,
 )
 from backend.database import get_session
+from backend.docs_ui import CONTENT_POLICY, browser_content_policy, register_docs
 from backend.release_profile import release_profile
 from backend.routers.operations import register_operations_routes
 from backend.schemas import IncidentCreate, IncidentView
@@ -27,15 +28,34 @@ async def app_lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="OpsBlaze", version="0.1.0", lifespan=app_lifespan)
+app = FastAPI(
+    title="OpsBlaze", version="0.1.0", lifespan=app_lifespan,
+    docs_url=None, redoc_url=None,
+)
+register_docs(app)
 
 
 @app.middleware("http")
 async def _apply_security_headers(request: Request, call_next) -> Response:
-    response = await call_next(request)
+    return _secure_response(request, await call_next(request))
+
+
+@app.exception_handler(500)
+async def _server_error(request: Request, _error: Exception) -> Response:
+    return _secure_response(request, PlainTextResponse("Internal Server Error", status_code=500))
+
+
+def _secure_response(request: Request, response: Response) -> Response:
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if "content-security-policy" not in response.headers:
+        policy = CONTENT_POLICY
+        if response.headers.get("content-type", "").startswith("text/html"):
+            policy = browser_content_policy(get_settings().oidc_issuer)
+        response.headers["Content-Security-Policy"] = policy
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
     if request.url.path.startswith("/v1/") and "cache-control" not in response.headers:
         response.headers["Cache-Control"] = "no-store"
     return response

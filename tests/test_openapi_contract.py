@@ -86,3 +86,59 @@ async def test_http_security_headers_and_sse_cache_control(
         assert res.headers.get("X-Frame-Options") == "DENY", path
         assert res.headers.get("Referrer-Policy") == "no-referrer", path
         assert res.headers.get("Cache-Control") == "no-store", path
+        directives = set(res.headers["content-security-policy"].split("; "))
+        assert {"default-src 'self'", "object-src 'none'", "frame-ancestors 'none'", "base-uri 'none'"} <= directives
+        assert "strict-transport-security" not in res.headers
+
+
+@pytest.mark.asyncio
+async def test_docs_keep_interactive_assets_and_hash_inline_scripts():
+    import base64
+    import hashlib
+    import re
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as client:
+        for path in ("/docs", "/docs/oauth2-redirect", "/redoc"):
+            response = await client.get(path)
+            assert response.status_code == 200
+            assert response.headers["strict-transport-security"] == "max-age=31536000"
+            policy = response.headers["content-security-policy"]
+            assert ("worker-src blob:" in policy) is (path == "/redoc")
+            assert ("https://cdn.redoc.ly/redoc/logo-mini.svg" in policy) is (path == "/redoc")
+            scripts = re.findall(rb"<script>(.*?)</script>", response.content, flags=re.S)
+            for script in scripts:
+                digest = base64.b64encode(hashlib.sha256(script).digest()).decode("ascii")
+                assert f"'sha256-{digest}'" in policy
+            script_policy = next(
+                (directive for directive in policy.split("; ") if directive.startswith("script-src ")),
+                "",
+            )
+            assert "'unsafe-inline'" not in script_policy
+        assert "/openapi.json" in (await client.get("/docs")).text
+
+
+@pytest.mark.asyncio
+async def test_security_headers_cover_error_responses(monkeypatch):
+    monkeypatch.setattr(app.router, "routes", app.router.routes.copy())
+
+    @app.get("/v1/security-header-fixture", include_in_schema=False)
+    async def fail():
+        raise RuntimeError("disposable error response fixture")
+
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for path, status in (("/v1/nonexistent", 404), ("/v1/security-header-fixture", 500)):
+            response = await client.get(path)
+            assert response.status_code == status
+            assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+            assert response.headers["x-content-type-options"] == "nosniff"
+            assert response.headers["cache-control"] == "no-store"
+
+
+def test_browser_policy_allows_only_the_configured_https_issuer_origin():
+    from backend.docs_ui import CONTENT_POLICY, browser_content_policy
+
+    configured = browser_content_policy("https://idp.example.test:8443/realm")
+    assert "connect-src 'self' https://idp.example.test:8443" in configured
+    assert "/realm" not in configured
+    assert browser_content_policy("http://idp.example.test") == CONTENT_POLICY

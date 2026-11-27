@@ -74,7 +74,11 @@ def test_native_launcher_serves_the_ui_and_existing_api_on_loopback(tmp_path, mo
     def verify_server(application, *, host, port, proxy_headers):
         assert host == "127.0.0.1" and port == 8147 and proxy_headers is False
         with TestClient(application) as client:
-            assert "<title>OpsBlaze</title>" in client.get("/").text
+            for path in ("/", "/auth/callback"):
+                html = client.get(path)
+                assert html.status_code == 200
+                assert "<title>OpsBlaze</title>" in html.text
+                assert "frame-ancestors 'none'" in html.headers["content-security-policy"]
             assert client.get("/release-profile").json()["profile"] == "community"
             assert client.get("/healthz").json() == {"status": "ok"}
             assert client.get("/v1/incidents").status_code in {401, 403, 422, 503}

@@ -4,6 +4,8 @@ import argparse
 from pathlib import Path
 
 import uvicorn
+from fastapi import Request
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api import app
@@ -23,6 +25,11 @@ def main() -> None:
         get_settings()
     except ValueError as exc:
         parser.error(str(exc))
+
+    async def oidc_callback(_request: Request) -> FileResponse:
+        return FileResponse(args.frontend_dir / "index.html", media_type="text/html")
+
+    app.add_route("/auth/callback", oidc_callback, methods=["GET"], include_in_schema=False)
     app.mount("/", StaticFiles(directory=args.frontend_dir, html=True), name="workbench")
     uvicorn.run(app, host="127.0.0.1", port=args.port, proxy_headers=False)
 
