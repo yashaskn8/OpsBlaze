@@ -1,5 +1,13 @@
 # Verification & Test Evidence Ledger
 
+## TITAN-20 v2.0 working-tree evidence
+
+The Community candidate started from `c88065af312e2d2ea52150e6b47e1e69c9baaed8`. Local verification ran 791 Windows-compatible backend tests plus a targeted run of 11 profile and ledger tests, including the launcher checks introduced after full-suite collection. Combined coverage was 78.97% across 8,368 statements and 2,670 branch opportunities. The nine documented POSIX-only cases remained in Linux CI.
+
+Native Windows PostgreSQL 16.16 passed 41 integration cases, the no-drift check, restricted grants, the restore sentinel and downgrade. Temporal passed 12 separate native integration and replay cases. The PostgreSQL run retained a pre-existing asyncpg cancellation-cleanup warning. The frontend passed 17 contract tests and the production build. Isolated Playwright MCP verified keyboard navigation and rejection at 390 px. Spoken output remains pending.
+
+The profile tests reject Enterprise selection, unknown profiles, a missing frontend build and a public host argument. They exercise the existing authorization route through the same-origin launcher. The generated requirement report preserves all 176 atomic IDs, records C1–C6 separately and derives applicability and acceptance totals from the ledger. Actionlint, Ruff, Bandit, Import Linter, Dependency Cruiser and the native service source check passed.
+
 All counts below come directly from executed runs on the local repository (`main` at `7c2d567` / `b0984ad`).
 
 ## 1. Executed Test Suites

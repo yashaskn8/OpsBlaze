@@ -1,5 +1,24 @@
 # Release Verification & Decision Summary
 
+## TITAN-20 v2.0 dual-profile architecture
+
+Design baseline `c88065af312e2d2ea52150e6b47e1e69c9baaed8` passed [all ten Linux CI jobs](https://github.com/yashaskn8/OpsBlaze/actions/runs/46041260659). The original 112-page blueprint and its SHA-256 remain the historical source. The release profile is a statement of supported scope. The existing authentication, tenant isolation, approval grant, adapter and policy-promotion checks remain their own authorities.
+
+Community Edition uses the existing native single-host simulator, PostgreSQL, Temporal and React application. The runtime accepts the `community` profile and serves its scope at `/release-profile`. The artifact manifest is generated from the same backend module. The existing `development` and `production` environment settings still govern their current authentication and operational checks, including production-mode refusal when IdP configuration is missing. Enterprise selection fails at settings validation. Enterprise requirements and gates retain the existing external acceptance contract.
+
+Run `python scripts/release_requirements.py --summary` for the evidence-derived totals or omit `--summary` for all 176 rows. Each row retains the blueprint section, implementation, runtime consumers, test paths, evidence and dependencies. Local and CI evidence are distinct from release acceptance. The profile mapping is in `docs/requirements-ledger.json`, and the original atomic audit supplies the requirement IDs and historical classifications. The working decision records 0 formally accepted of 169 applicable Community requirements, 7 outside Community scope, and all 176 applicable Enterprise requirements pending aggregate qualification. The seven Community exclusions cover exclusively external behavior. Mixed requirements keep their local portions in scope.
+
+| Community gate | Current evidence and decision |
+|---|---|
+| C1 Local identity and authorization | Local API, tenant isolation, distinct review credentials and refusal tests. Community acceptance pending validation of the packaged installation and operator session procedure. |
+| C2 Simulator conformance | Native conformance and effect/reconciliation integration evidence. Candidate evidence is generated in the existing native CI job. |
+| C3 Native reliability | Native PostgreSQL migrations and restore sentinel, Temporal restart and history replay. Packaged single-host installation and backup procedure require acceptance evidence. |
+| C4 AI evaluation | The deterministic comparisons and native memory ablation retain negative and inconclusive results. Model-assisted end-to-end measurement requires separate model-run evidence. |
+| C5 Shadow rollout governance | Shadow assignment, simulator canary and rollback have repository tests. Live promotion is disabled. |
+| C6 Community release quality | Existing automated build, security, dependency and browser gates apply. Actual spoken output for approval, rejection, expiry and conflict remains pending manual acceptance. |
+
+Community decision remains **pending qualification**. Enterprise decision remains **blocked** under the six gates below. The build produces a candidate archive, profile and requirement reports, Python and npm dependency inputs, source commit, SHA-256 manifest and GitHub build provenance. The release artifact applies the same prerequisites as the existing simulator candidate job.
+
 - **Repository**: `https://github.com/yashaskn8/OpsBlaze` (`main`)
 - **Authoritative Blueprint**: `TITAN20_MASTER_PRODUCTION_ARCHITECTURE_AGENTIC_AI_BLUEPRINT_2027.pdf` (SHA-256 `135aa2b7333a1d6869193372f29ae24cae4d995705b6540e679f4b32cfd5ad87`, 112 pages)
 - **Evaluated Commits**: `7c2d567` (reconciled audit/ledger CI [45848362323](https://github.com/yashaskn8/OpsBlaze/actions/runs/45848362323) — all 10 Linux jobs `success`), `b0984ad` (HTTP security headers middleware, B2 canonical lock order + lease renewal, test fixes), and the Phase 3–4 documentation/constraint commit at HEAD.

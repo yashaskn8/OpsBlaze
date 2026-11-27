@@ -329,13 +329,21 @@ jobs:
           python -m pip install "build>=1.2,<2"
           python -m build --sdist --wheel --outdir dist
           (cd frontend && npm ci --no-audit --no-fund && npm run build)
-      - name: Package simulator release with digest manifest
+      - name: Package Community Edition candidate with digest manifest
         run: |
-          mkdir -p release/staging/frontend release/staging/python
+          mkdir -p release/staging/frontend release/staging/python release/staging/docs/engineering release/staging/docs/runbooks
           cp -a frontend/dist release/staging/frontend/
           cp -a dist/. release/staging/python/
           cp -a migrations deploy scripts alembic.ini release/staging/
+          cp README.md CONSTRAINTS.md pyproject.toml .env.example release/staging/
+          cp frontend/package.json frontend/package-lock.json release/staging/frontend/
+          cp docs/requirements-ledger.json docs/requirements-audit.json docs/production-acceptance-gates.md release/staging/docs/
+          cp docs/architecture-improvement-plan.md docs/implementation-status.md release/staging/docs/
+          cp docs/engineering/*.md release/staging/docs/engineering/
+          cp docs/runbooks/operational-gates.md release/staging/docs/runbooks/
           cp docs/production-acceptance-gates.md release/staging/PRODUCTION_GATES_BLOCKED.md
+          python -m backend.release_profile "$GITHUB_SHA" > release/staging/RELEASE_PROFILE.json
+          python scripts/release_requirements.py --source-commit "$GITHUB_SHA" > release/staging/REQUIREMENT_ACCEPTANCE.json
           printf '%s\n' "$GITHUB_SHA" > release/staging/SOURCE_COMMIT
           tar -C release/staging -czf "release/opsblaze-${GITHUB_SHA}.tar.gz" .
           (cd release && sha256sum "opsblaze-${GITHUB_SHA}.tar.gz" > SHA256SUMS)

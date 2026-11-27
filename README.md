@@ -2,6 +2,8 @@
 
 OpsBlaze is a **local, simulator-only incident investigation and controlled recovery lab** based on the TITAN-20 engineering blueprint (formerly RehearsalGate).
 
+TITAN-20 v2.0 defines **Community Edition** as the native single-host simulator release and **Enterprise Edition** as the externally qualified release profile. This build exposes Community scope at `GET /release-profile`. The supported runtime value is `OPSBLAZE_RELEASE_PROFILE=community`, which is also the default. An unsupported value stops API startup. `OPSBLAZE_ENVIRONMENT` still selects the existing authentication and readiness behavior for simulator qualification. See the [release architecture and acceptance matrix](docs/engineering/RELEASE_VERIFICATION.md).
+
 **Status:** a Docker-free end-to-end simulator path is implemented and tested with FastAPI, PostgreSQL, Temporal, and React/TypeScript. **It is not production-ready**: real-target adapters, externally verified production identity configuration, independent approvals, held-out evaluations, calibrated AI, and policy promotion remain incomplete.
 
 See [implementation status](docs/implementation-status.md) for all 20 TITAN-20 capability areas, test evidence, and missing gates. Coding guidelines are in [AGENTS.md](AGENTS.md).
@@ -282,9 +284,11 @@ python -m pip install -e ".[dev]"
 alembic upgrade head
 ```
 
-Start the Temporal development server in a separate terminal. Keep its data persistent for restart experiments. Then prepare an **isolated simulator fixture** and run the conformance suite:
+Start the Temporal development server in a separate terminal. Keep its SQLite file outside the checkout or in an untracked local directory. Then prepare an **isolated simulator fixture** and run the conformance suite:
 
 ```bash
+temporal server start-dev --ip 127.0.0.1 --db-filename /path/to/local/temporal.db
+# In another terminal, after the server is ready:
 python -m backend.workers.seed_simulator --tenant demo --target checkout
 python -m backend.adapters.conformance
 ```
@@ -292,21 +296,24 @@ python -m backend.adapters.conformance
 Run each long-lived process in a separate terminal:
 
 ```bash
-uvicorn backend.api:app --reload
 python -m backend.workers.dispatcher
 python -m backend.workers.incident_worker
 python -m backend.workers.state_age
 ```
 
-Start the operator UI:
+For Community Edition, build the UI and start it on the same loopback address as the API:
 
 ```bash
-cd frontend
-npm install
-npm run dev
+npm --prefix frontend ci
+npm --prefix frontend run build
+python -m backend.community
 ```
 
-Open `http://127.0.0.1:5173` and supply the **local** API token from your `.env`. The API specification is at `http://127.0.0.1:8000/docs`.
+Open `http://127.0.0.1:8000` and supply the **local** API token from your `.env`. Choose a distinct reviewer token. `/healthz` checks the API process and `/v1/health/ready` checks the datastore in local development mode. Use `GET /release-profile` to check the build scope. The API specification is at `/docs`. For hot reload during development, run `uvicorn backend.api:app --host 127.0.0.1 --reload` and `npm --prefix frontend run dev -- --host 127.0.0.1`, then open port 5173.
+
+For a packaged candidate, verify the archive SHA-256 and GitHub provenance before extracting it. From the extracted directory, install the wheel in `python/` into a virtual environment, configure the external PostgreSQL and Temporal prerequisites as above, and run `python -m backend.community`. The archive already contains `frontend/dist`. Keep the release's `SOURCE_COMMIT`, `RELEASE_PROFILE.json`, and `REQUIREMENT_ACCEPTANCE.json` with its verification record.
+
+Before upgrading a single-host installation, record the current source commit, drain or record in-flight work, and preserve a disposable-verified PostgreSQL backup and a copy of the stopped Temporal development store. Test the new migrations and replay in isolation first. For rollback, stop the new services and restore the paired data snapshots into isolated destinations before starting the previous verified build. Preserve receipts, revocations, and pending workflow intents. See the [operations runbook](docs/runbooks/operational-gates.md) for safe recovery and the [restore drill](docs/engineering/RECOVERY_DRILL_REPORT.md) for the tested PostgreSQL sentinel. Paired Temporal-store restoration and real multi-host recovery require separate evidence.
 
 ## Run a local incident
 

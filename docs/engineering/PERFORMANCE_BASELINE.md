@@ -1,5 +1,18 @@
 # Performance & Query Plan Baseline
 
+## TITAN-20 v2.0 Community candidate
+
+The Windows working tree based on `c88065af312e2d2ea52150e6b47e1e69c9baaed8` ran `python -m backend.benchmarks.local_capacity` with Python 3.12.10 on an Intel Core i7-10870H with 16 logical processors. This was an in-process FastAPI and SQLite run during other local verification, with no network between the benchmark caller and API.
+
+| Operation | Samples | p50 | p95 | p99 |
+|---|---:|---:|---:|---:|
+| Admission | 12 | 33.804 ms | 120.673 ms | 120.673 ms |
+| Incident snapshot | 36 | 13.854 ms | 32.376 ms | 40.028 ms |
+| Notifications | 36 | 18.525 ms | 35.659 ms | 37.646 ms |
+| Overload rejection | 4 | 49.767 ms | 52.390 ms | 52.390 ms |
+
+All four overload requests received HTTP 429, and the store retained the 12 admitted incidents and their 12 durable start intents. The React/Vite production build measured 339.88 kB JavaScript and 100.26 kB gzip on Node 24.11.1. PostgreSQL workload latency, browser interaction timing and performance on independent hosts require distinct measurements. The measured strategy, memory and recovery-cost comparisons remain below with their original source checkpoints and scope.
+
 All measurements below were collected on the native Windows PostgreSQL 16.16 instance (`127.0.0.1:55435`), local Python `.venv`, and in-process FastAPI ASGI transport. They are reproducible development baselines, not multi-host production SLOs (`G3`/`B4-07`).
 
 ## 1. Native PostgreSQL 16 `EXPLAIN (ANALYZE, BUFFERS)` Baseline (Post-Restore DB)

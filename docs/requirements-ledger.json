@@ -13,6 +13,27 @@
   },
   "production_acceptance": "BLOCKED",
   "gate_source": "docs/production-acceptance-gates.md",
+  "release_profiles": {
+    "architecture_version": "2.0",
+    "evidence_baseline": "c88065af312e2d2ea52150e6b47e1e69c9baaed8",
+    "community": {
+      "acceptance_source": "docs/engineering/RELEASE_VERIFICATION.md",
+      "gate_evidence": {},
+      "outside_local_scope": {
+        "B2-07": "Real external target fencing and compare-and-swap.",
+        "B3-07": "Real provider partial effects and contractual retention.",
+        "P1-17": "Trust and streaming behavior of a deployed HTTPS proxy. The default local installation binds to loopback.",
+        "E2-08": "Independent ownership and qualification of a real infrastructure witness.",
+        "E5-08": "Independent evaluator and deployment-authority custody.",
+        "E6-08": "Live policy exposure with external release authority. Shadow and simulated rollout remain applicable under other requirements.",
+        "E8-07": "Approval of a named external mutation adapter. Simulator conformance remains applicable."
+      },
+      "accepted_evidence": {}
+    },
+    "enterprise": {
+      "acceptance_source": "docs/production-acceptance-gates.md"
+    }
+  },
   "requirements": [
     {
       "id": "B1",

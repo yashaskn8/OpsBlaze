@@ -63,3 +63,37 @@ def test_functionality_audit_has_bidirectional_traceability():
     assert {path: set(ids) for path, ids in audit["reverse_index"].items()} == reverse
     for item in audit["findings"] + audit["repair_backlog"]:
         assert set(item["requirements"]) <= requirements.keys()
+
+
+def test_dual_profile_report_preserves_the_blueprint_and_derives_release_progress():
+    from scripts.release_requirements import release_requirements
+
+    root = Path(__file__).resolve().parents[1]
+    commit = "b" * 40
+    report = release_requirements(root / "docs", source_commit=commit)
+    assert report["source_commit"] == commit
+    assert re.fullmatch(r"[0-9a-f]{40}", report["evidence_baseline"])
+    rows = report["requirements"]
+    assert len({row["id"] for row in rows}) == len(rows) == 176
+    assert len({row["blueprint_section"] for row in rows}) == 20
+    assert report["historical_status_counts"] == {
+        "VERIFIED WORKING": 154, "PARTIALLY IMPLEMENTED": 2, "EXTERNALLY BLOCKED": 20,
+    }
+    assert report["community"]["release_status"] == "PENDING"
+    assert report["enterprise"]["release_status"] == "ENTERPRISE_BLOCKED"
+    assert set(report["community"]["gates"]) == {f"C{i}" for i in range(1, 7)}
+    assert all(gate["status"] == "PENDING" for gate in report["community"]["gates"].values())
+    assert report["community"]["accepted"] + report["community"]["pending"] == report["community"]["applicable"]
+    assert report["community"]["applicable"] + report["community"]["not_applicable"] == len(rows)
+    assert report["enterprise"]["blocked"] == len(rows)
+
+    by_id = {row["id"]: row for row in rows}
+    assert by_id["P2-08"]["community"]["applicable"] is True
+    assert by_id["P2-08"]["community"]["status"] == "PARTIALLY_IMPLEMENTED"
+    assert by_id["B1-08"]["community"]["applicable"] is True
+    assert by_id["B2-07"]["community"]["status"] == "NOT_APPLICABLE_TO_COMMUNITY"
+    assert by_id["B2-07"]["enterprise"]["status"] == "ENTERPRISE_BLOCKED"
+    for row in rows:
+        assert row["implementation"] and row["consumers"] and row["evidence"]
+        assert row["tests"] or row["remaining"]
+        assert row["engineering_status"] and row["runtime_verification"]
