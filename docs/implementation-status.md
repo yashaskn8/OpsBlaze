@@ -111,3 +111,7 @@ The functional software checkpoint `d6e6be4` passed [all ten exact-commit Linux 
 | External production acceptance | G1–G6 remain blocked. |
 
 The original PDF audit records 154 verified requirements out of 176. The two partial rows retain their manual or empirical acceptance criteria, and 20 rows remain externally blocked.
+
+### TITAN-20 v2.0 release profiles
+
+The Community scope and same-origin loopback workbench are implemented. The acceptance report preserves all 176 original IDs and tracks Community C1–C6 separately from Enterprise G1–G6. The [release verification record](engineering/RELEASE_VERIFICATION.md) links the local candidate package check, native evidence, benchmark limitations, and remaining acceptance. Community qualification is pending and Enterprise remains blocked.

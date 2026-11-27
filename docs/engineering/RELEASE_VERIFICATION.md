@@ -19,6 +19,15 @@ Run `python scripts/release_requirements.py --summary` for the evidence-derived 
 
 Community decision remains **pending qualification**. Enterprise decision remains **blocked** under the six gates below. The build produces a candidate archive, profile and requirement reports, Python and npm dependency inputs, source commit, SHA-256 manifest and GitHub build provenance. The release artifact applies the same prerequisites as the existing simulator candidate job.
 
+### Executed candidate evidence and limitations
+
+- The local Windows archive smoke used source `556088d0391d608f6f191150b20b82c492e9f504`. The archive SHA-256 was `f0e4395df98d75d11195de99229d641eed8637a087ade723a657fd947232458b`. A clean extraction and isolated wheel install started the loopback launcher, served the built frontend and profile manifest, and refused an unauthenticated incident request. The archive digest belongs to that local build. GitHub generates separate provenance for its exact artifact.
+- The [test evidence ledger](TEST_EVIDENCE.md) records native PostgreSQL restore, Temporal replay and Windows regressions. The [performance ledger](PERFORMANCE_BASELINE.md) records the synthetic workload and model comparison limitations.
+- Community shared tokens support a trusted single-host lab. Rotate local credentials and clear browser sessions as needed. Individual remote identity revocation remains an Enterprise concern. Paired restoration of the Temporal store and PostgreSQL, release-specific load objectives, measured optional model costs, and spoken-output acceptance still need evidence. The Python manifest declares dependency ranges. The npm lockfile fixes the frontend dependency resolution.
+- The 20-capability [CodeGraph runtime review](FEATURE_UPGRADE_LEDGER.md#codegraph-runtime-review) and the [architecture gap ledger](ARCHITECTURE_GAP_LEDGER.md) record targeted runtime and fault-path reviews. A fresh file-by-file audit and independent qualification remain open.
+
+## Historical simulator verification
+
 - **Repository**: `https://github.com/yashaskn8/OpsBlaze` (`main`)
 - **Authoritative Blueprint**: `TITAN20_MASTER_PRODUCTION_ARCHITECTURE_AGENTIC_AI_BLUEPRINT_2027.pdf` (SHA-256 `135aa2b7333a1d6869193372f29ae24cae4d995705b6540e679f4b32cfd5ad87`, 112 pages)
 - **Evaluated Commits**: `7c2d567` (reconciled audit/ledger CI [45848362323](https://github.com/yashaskn8/OpsBlaze/actions/runs/45848362323) — all 10 Linux jobs `success`), `b0984ad` (HTTP security headers middleware, B2 canonical lock order + lease renewal, test fixes), and the Phase 3–4 documentation/constraint commit at HEAD.
