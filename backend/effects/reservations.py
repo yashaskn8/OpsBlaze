@@ -163,7 +163,6 @@ async def reserve_simulator_target(
 ) -> Permit:
     if not 1 <= lease_seconds <= 600:
         raise ValueError("lease must be between 1 and 600 seconds")
-    now = datetime.now(timezone.utc)
     try:
         async with sessions() as session:
             async with session.begin():
@@ -173,6 +172,8 @@ async def reserve_simulator_target(
                 target = await session.get(SimulatorTarget, key, with_for_update=True)
                 if epoch is None or target is None:
                     raise ValueError("simulator target must be provisioned first")
+                # Row-lock waits count against the incumbent lease.
+                now = datetime.now(timezone.utc)
                 if (
                     reservation is not None
                     and reservation.state == "RESERVED"
@@ -243,7 +244,6 @@ async def renew_simulator_reservation(
     """Extend an active reservation only for its current valid fenced holder."""
     if not 1 <= lease_seconds <= 600:
         raise ValueError("lease must be between 1 and 600 seconds")
-    observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     try:
         async with sessions() as session:
             async with session.begin():
@@ -251,6 +251,7 @@ async def renew_simulator_reservation(
                 epoch = await session.get(ResourceEpoch, key, with_for_update=True)
                 reservation = await session.get(ResourceReservation, key, with_for_update=True)
                 target = await session.get(SimulatorTarget, key, with_for_update=True)
+                observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
                 if (
                     epoch is None
                     or reservation is None

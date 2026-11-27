@@ -1,13 +1,16 @@
 """B2 stateful randomized & lease-renewal invariant tests."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import random
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.adapters.simulator import SimulatorAdapter, StaleFence, TargetVersionConflict
+from backend.effects import reservations
 from backend.effects.reservations import (
     ReservationBusy,
     expire_stale_reservations,
@@ -15,9 +18,10 @@ from backend.effects.reservations import (
     renew_simulator_reservation,
     reserve_simulator_target,
 )
-from backend.models import ResourceEpoch, ResourceReservation, SimulatorTarget
+from backend.models import ResourceEpoch, ResourceReservation, SimulatorAppliedEffect, SimulatorTarget
 from backend.schemas import IncidentCreate
 from backend.services import admit_incident
+from backend.settings import get_settings
 
 
 @pytest.mark.asyncio
@@ -59,6 +63,118 @@ async def test_b2_lease_renewal_enforces_fence_owner_and_expiry(sessions_fixture
         sessions_fixture, "t-b2", "svc-a", inc_a.id, permit.fence,
         lease_seconds=60, now=renewed.expires_at + timedelta(seconds=1),
     ) is None
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["renew", "reserve"])
+async def test_b2_checks_expiry_after_waiting_for_postgres_lock(operation, monkeypatch):
+    database_url = get_settings().database_url
+    assert database_url.startswith("postgresql+asyncpg:")
+    engine = create_async_engine(database_url)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = f"lease-clock-{uuid4().hex}"
+    target = "checkout"
+    lock_requested = asyncio.Event()
+
+    class WaitingSession(AsyncSession):
+        async def get(self, entity, ident, **kwargs):
+            if entity is ResourceEpoch:
+                lock_requested.set()
+            return await super().get(entity, ident, **kwargs)
+
+    contenders = async_sessionmaker(engine, class_=WaitingSession, expire_on_commit=False)
+    try:
+        async with sessions.begin() as session:
+            session.add_all([
+                SimulatorTarget(tenant_id=tenant, target_id=target, version=1, healthy=False, last_fence=0),
+                ResourceEpoch(tenant_id=tenant, target_id=target, latest_fence=0, version_seen=1),
+            ])
+        async with sessions() as session:
+            holder = await admit_incident(session, tenant, "holder", IncidentCreate(target_id=target))
+        original = await reserve_simulator_target(
+            sessions, tenant, target, holder.id, "a" * 64, lease_seconds=30,
+        )
+        clock = original.expires_at - timedelta(seconds=1)
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return clock.astimezone(tz)
+
+        monkeypatch.setattr(reservations, "datetime", Clock)
+        async with asyncio.TaskGroup() as tasks:
+            async with sessions.begin() as session:
+                await session.get(ResourceEpoch, (tenant, target), with_for_update=True)
+                if operation == "renew":
+                    waiting = tasks.create_task(renew_simulator_reservation(
+                        contenders, tenant, target, holder.id, original.fence,
+                    ))
+                else:
+                    waiting = tasks.create_task(reserve_simulator_target(
+                        contenders, tenant, target, holder.id, original.action_digest,
+                    ))
+                await asyncio.wait_for(lock_requested.wait(), timeout=5)
+                assert not waiting.done()
+                clock = original.expires_at + timedelta(seconds=1)
+
+        result = waiting.result()
+        async with sessions() as session:
+            stored = await session.get(ResourceReservation, (tenant, target))
+            if operation == "renew":
+                assert result is None
+                assert stored.expires_at == original.expires_at
+                assert stored.fence == original.fence
+            else:
+                assert result.fence > original.fence
+                assert stored.expires_at == result.expires_at == clock + timedelta(seconds=60)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_b2_concurrent_simulator_retries_return_the_committed_effect():
+    database_url = get_settings().database_url
+    assert database_url.startswith("postgresql+asyncpg:")
+    engine = create_async_engine(database_url)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = f"effect-retry-{uuid4().hex}"
+    target = "checkout"
+    requests = asyncio.Barrier(2)
+
+    class ConcurrentSession(AsyncSession):
+        async def get(self, entity, ident, **kwargs):
+            if entity is ResourceEpoch:
+                await asyncio.wait_for(requests.wait(), timeout=5)
+            return await super().get(entity, ident, **kwargs)
+
+    try:
+        async with sessions.begin() as session:
+            session.add_all([
+                SimulatorTarget(tenant_id=tenant, target_id=target, version=1, healthy=False, last_fence=0),
+                ResourceEpoch(tenant_id=tenant, target_id=target, latest_fence=0, version_seen=1),
+            ])
+        async with sessions() as session:
+            incident = await admit_incident(session, tenant, "retry", IncidentCreate(target_id=target))
+        permit = await reserve_simulator_target(sessions, tenant, target, incident.id, "b" * 64)
+        effect_id = uuid4()
+        contenders = async_sessionmaker(engine, class_=ConcurrentSession, expire_on_commit=False)
+        adapter = SimulatorAdapter(contenders)
+        results = await asyncio.wait_for(asyncio.gather(
+            adapter.apply(effect_id, permit), adapter.apply(effect_id, permit),
+            return_exceptions=True,
+        ), timeout=10)
+
+        assert results == [2, 2]
+        async with sessions() as session:
+            current = await session.get(SimulatorTarget, (tenant, target))
+            durable = await session.get(SimulatorAppliedEffect, effect_id)
+            assert current.version == durable.observed_version == 2
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

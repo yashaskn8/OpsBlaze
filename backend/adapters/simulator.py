@@ -88,6 +88,9 @@ class SimulatorAdapter:
         """Check fence + target version immediately before the simulated effect."""
         async with self.sessions() as session:
             async with session.begin():
+                key = (permit.tenant_id, permit.target_id)
+                # Serialize same-target retries before reading the committed effect.
+                epoch = await session.get(ResourceEpoch, key, with_for_update=True)
                 prior = await session.get(SimulatorAppliedEffect, effect_id)
                 digest = permit_digest(permit)
                 if prior is not None:
@@ -101,8 +104,6 @@ class SimulatorAdapter:
                         )
                     return prior.observed_version
 
-                key = (permit.tenant_id, permit.target_id)
-                epoch = await session.get(ResourceEpoch, key, with_for_update=True)
                 reservation = await session.get(ResourceReservation, key, with_for_update=True)
                 target = await session.get(SimulatorTarget, key, with_for_update=True)
                 if epoch is None or reservation is None or target is None:
