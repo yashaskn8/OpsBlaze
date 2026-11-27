@@ -169,10 +169,10 @@ async def reserve_simulator_target(
             async with session.begin():
                 key = (tenant_id, target_id)
                 epoch = await session.get(ResourceEpoch, key, with_for_update=True)
+                reservation = await session.get(ResourceReservation, key, with_for_update=True)
                 target = await session.get(SimulatorTarget, key, with_for_update=True)
                 if epoch is None or target is None:
                     raise ValueError("simulator target must be provisioned first")
-                reservation = await session.get(ResourceReservation, key, with_for_update=True)
                 if (
                     reservation is not None
                     and reservation.state == "RESERVED"
@@ -227,4 +227,56 @@ async def reserve_simulator_target(
     except OperationalError as exc:
         if "locked" in str(exc).lower():
             raise ReservationBusy("target is already reserved") from exc
+        raise
+
+
+async def renew_simulator_reservation(
+    sessions: async_sessionmaker[AsyncSession],
+    tenant_id: str,
+    target_id: str,
+    incident_id: UUID,
+    fence: int,
+    lease_seconds: int = 60,
+    *,
+    now: datetime | None = None,
+) -> Permit | None:
+    """Extend an active reservation only for its current valid fenced holder."""
+    if not 1 <= lease_seconds <= 600:
+        raise ValueError("lease must be between 1 and 600 seconds")
+    observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    try:
+        async with sessions() as session:
+            async with session.begin():
+                key = (tenant_id, target_id)
+                epoch = await session.get(ResourceEpoch, key, with_for_update=True)
+                reservation = await session.get(ResourceReservation, key, with_for_update=True)
+                target = await session.get(SimulatorTarget, key, with_for_update=True)
+                if (
+                    epoch is None
+                    or reservation is None
+                    or target is None
+                    or epoch.latest_fence != fence
+                    or reservation.fence != fence
+                    or reservation.holder_incident != incident_id
+                    or reservation.state != "RESERVED"
+                    or utc(reservation.expires_at) <= observed
+                ):
+                    return None
+                extended = max(
+                    utc(reservation.expires_at),
+                    observed + timedelta(seconds=lease_seconds),
+                )
+                reservation.expires_at = extended
+                return Permit(
+                    tenant_id=tenant_id,
+                    target_id=target_id,
+                    incident_id=incident_id,
+                    action_digest=reservation.action_digest,
+                    fence=reservation.fence,
+                    expected_version=reservation.expected_version,
+                    expires_at=extended,
+                )
+    except OperationalError as exc:
+        if "locked" in str(exc).lower():
+            raise ReservationBusy("target reservation lock contention") from exc
         raise

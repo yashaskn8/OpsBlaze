@@ -29,6 +29,17 @@ async def app_lifespan(_app: FastAPI):
 app = FastAPI(title="OpsBlaze", version="0.1.0", lifespan=app_lifespan)
 
 
+@app.middleware("http")
+async def _apply_security_headers(request: Request, call_next) -> Response:
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if request.url.path.startswith("/v1/") and "cache-control" not in response.headers:
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/v1/auth/me")
 async def authenticated_identity(
     principal: Principal = Depends(get_principal),

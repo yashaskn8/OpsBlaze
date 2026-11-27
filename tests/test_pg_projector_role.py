@@ -316,10 +316,14 @@ async def test_restricted_projector_can_capture_but_cannot_mutate_recovery():
                 })
 
         for sql in (
-            "UPDATE public.incident SET status_projection = 'VERIFIED'"
-            " WHERE tenant_id = :tenant",
-            "UPDATE public.experience_consent SET allowed = false"
-            " WHERE tenant_id = :tenant",
+            (
+                "UPDATE public.incident SET status_projection = 'VERIFIED'"
+                " WHERE tenant_id = :tenant"
+            ),
+            (
+                "UPDATE public.experience_consent SET allowed = false"
+                " WHERE tenant_id = :tenant"
+            ),
             "SELECT id FROM public.effect_receipt LIMIT 1",
             "SELECT id FROM public.incident_plan LIMIT 1",
             "SELECT created_by FROM public.incident LIMIT 1",

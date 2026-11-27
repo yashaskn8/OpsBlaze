@@ -29,13 +29,13 @@ def frozen_qualification(tmp_path):
         effect_id = str(uuid5(NAMESPACE_URL, "g2-disposable/" + identity_name))
         permit = hashlib.sha256(("permit/" + identity_name).encode()).hexdigest()
 
-        def event(number, kind, observation):
+        def event(number, kind, observation, _name=name, _effect_id=effect_id, _permit=permit):
             return {
                 "schema": "opsblaze-g2-trace-v1",
-                "scenario": name,
+                "scenario": _name,
                 "sequence": number,
-                "effect_id": effect_id,
-                "permit_sha256": permit,
+                "effect_id": _effect_id,
+                "permit_sha256": _permit,
                 "event": kind,
                 "observed": observation,
             }
