@@ -1,8 +1,7 @@
-"""Native, CI-only PostgreSQL restore sentinel; never use on production data.
+"""Native disposable PostgreSQL and optional paired Temporal restore sentinel.
 
-A local backup is restored into a fresh database by the GitHub Actions job.
-This checks the recovery of selected privacy/capture records and RLS schema.
-It does not test Temporal persistence, multi-host failover, RPO or RTO.
+Checks a fresh PostgreSQL restore and, when supplied, a cold copy of the
+native Temporal development store. The drill uses synthetic simulator data.
 """
 
 import argparse
@@ -18,8 +17,10 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import insert, select, text
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.engine import make_url
+from temporalio.client import WorkflowExecutionStatus
+from temporalio.testing import WorkflowEnvironment
 
 from backend.models import (
     EffectReceipt,
@@ -34,7 +35,7 @@ from backend.models import (
     TenantExperienceConsent,
 )
 from backend.settings import get_settings
-from backend.workers.dispatcher import workflow_id
+from backend.workers.dispatcher import deliver_intent, dispatch_once, workflow_id
 
 
 def validate_pending_restore(
@@ -86,7 +87,10 @@ def require_ephemeral_ci(phase: str) -> str:
     return settings.database_url
 
 
-async def seed(database_url: str, manifest_path: Path) -> None:
+async def seed(
+    database_url: str, manifest_path: Path,
+    temporal_store: Path | None = None, temporal_cli: str | None = None,
+) -> None:
     case_id, outcome_id, capsule_id = uuid4(), uuid4(), uuid4()
     uncertain_id, receipt_id = uuid4(), uuid4()
     pending_id = uuid4()
@@ -169,7 +173,7 @@ async def seed(database_url: str, manifest_path: Path) -> None:
                 delivered_at=now, payload={"outcome_id": str(outcome_id)},
             ))
             revision = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-        manifest_path.write_text(json.dumps({
+        record = {
             "tenant": tenant,
             "incident_id": str(case_id),
             "outcome_id": str(outcome_id),
@@ -183,12 +187,27 @@ async def seed(database_url: str, manifest_path: Path) -> None:
             "revoked_actor": revoked_actor,
             "identity_event_digest": event_digest,
             "revision": revision,
-        }), encoding="utf-8")
+        }
+        if temporal_store is not None:
+            if temporal_store.exists():
+                raise ValueError("seed requires a new disposable Temporal store")
+            async with await WorkflowEnvironment.start_local(
+                dev_server_database_filename=str(temporal_store), dev_server_existing_path=temporal_cli,
+            ) as env:
+                await deliver_intent(env.client, (
+                    pending_outbox_id, tenant, str(pending_id), "START_WORKFLOW", None,
+                ))
+                handle = env.client.get_workflow_handle(record["pending_workflow_id"])
+                record["temporal_run_id"] = (await handle.describe()).run_id
+        manifest_path.write_text(json.dumps(record), encoding="utf-8")
     finally:
         await engine.dispose()
 
 
-async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
+async def verify(
+    database_url: str, manifest_path: Path, output: Path,
+    temporal_store: Path | None = None, temporal_cli: str | None = None,
+) -> None:
     record = json.loads(manifest_path.read_text(encoding="utf-8"))
     tenant = record["tenant"]
     incident_id = UUID(record["incident_id"])
@@ -201,6 +220,11 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
     event_digest = record["identity_event_digest"]
     head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
     assert record["revision"] == head, "source schema is not at migration head"
+    paired = "temporal_run_id" in record
+    if paired != (temporal_store is not None):
+        raise ValueError("paired restore requires both its Temporal store and seed manifest")
+    if temporal_store is not None and (not temporal_store.is_file() or not temporal_store.stat().st_size):
+        raise ValueError("restored Temporal store is missing or empty")
     engine = create_async_engine(database_url)
     try:
         async with engine.connect() as conn:
@@ -415,10 +439,28 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
                 raise AssertionError("restored role can forge revoked capsule")
         finally:
             await restricted.dispose()
+        if temporal_store is not None:
+            async with await WorkflowEnvironment.start_local(
+                dev_server_database_filename=str(temporal_store), dev_server_existing_path=temporal_cli,
+            ) as env:
+                handle = env.client.get_workflow_handle(record["pending_workflow_id"])
+                before = await handle.describe()
+                assert before.run_id == record["temporal_run_id"], "restored Temporal run changed"
+                assert before.status == WorkflowExecutionStatus.RUNNING, "restored workflow is not running"
+                history = await handle.fetch_history()
+                assert history.events[0].workflow_execution_started_event_attributes.workflow_type.name == "IncidentWorkflow"
+                sessions = async_sessionmaker(engine)
+                assert await dispatch_once(env.client, sessions, tenant_filter=tenant)
+                assert not await dispatch_once(env.client, sessions, tenant_filter=tenant)
+                async with sessions() as session:
+                    outbox = await session.get(OutboxEntry, record["pending_outbox_id"])
+                    assert outbox.attempt == 3 and outbox.delivered_at is not None, "restored outbox was not acknowledged"
+                    assert outbox.dead_lettered_at is None
+                assert (await handle.describe()).run_id == before.run_id, "recovery created a duplicate Temporal run"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps({
             "result": "PASS",
-            "scope": "synthetic-single-host-postgresql-only",
+            "scope": "synthetic-single-host-postgresql-and-temporal" if paired else "synthetic-single-host-postgresql-only",
             "source_commit": os.environ.get("GITHUB_SHA", ""),
             "migration_revision": head,
             "revocation_rows": 2,
@@ -432,7 +474,10 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
             "completed_projection_preserved": True,
             "pending_temporal_start_preserved": True,
             "pending_attempt_count": 2,
-            "pending_still_undelivered": True,
+            "pending_still_undelivered": not paired,
+            "pending_undelivered_before_reconciliation": True,
+            "temporal_history_restored": paired,
+            "restored_outbox_acknowledged_without_duplicate_workflow": paired,
             "pending_workflow_identity_stable": True,
             "pending_temporal_start_hidden_from_projector": True,
             "rls_tables_preserved": len(protected),
@@ -443,7 +488,8 @@ async def verify(database_url: str, manifest_path: Path, output: Path) -> None:
             "forged_capsule_denied_after_restore": True,
             "production_certified": False,
         }, indent=2), encoding="utf-8")
-        print("Native PostgreSQL restore sentinel PASS (single-host simulator only)")
+        stores = "PostgreSQL and Temporal" if paired else "PostgreSQL"
+        print(f"Native {stores} restore sentinel PASS (single-host simulator only)")
     finally:
         await engine.dispose()
 
@@ -453,14 +499,16 @@ def main() -> None:
     parser.add_argument("phase", choices=("seed", "verify"))
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--temporal-store", type=Path)
+    parser.add_argument("--temporal-cli", help="existing official Temporal CLI executable for disposable testing")
     args = parser.parse_args()
     url = require_ephemeral_ci(args.phase)
     if args.phase == "seed":
-        asyncio.run(seed(url, args.manifest))
+        asyncio.run(seed(url, args.manifest, args.temporal_store, args.temporal_cli))
     else:
         if args.output is None:
             parser.error("--output is required for verify")
-        asyncio.run(verify(url, args.manifest, args.output))
+        asyncio.run(verify(url, args.manifest, args.output, args.temporal_store, args.temporal_cli))
 
 
 if __name__ == "__main__":

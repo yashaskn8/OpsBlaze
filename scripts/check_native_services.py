@@ -14,8 +14,10 @@ SERVICE_COMMANDS = {
     "opsblaze-api.service": (
         "opsblaze",
         "opsblaze.env",
-        "/srv/opsblaze/.venv/bin/uvicorn backend.api:app "
-        "--host 127.0.0.1 --port 8000 --no-proxy-headers",
+        (
+            "/srv/opsblaze/.venv/bin/uvicorn backend.api:app "
+            "--host 127.0.0.1 --port 8000 --no-proxy-headers"
+        ),
     ),
     "opsblaze-dispatcher.service": (
         "opsblaze",
@@ -41,6 +43,14 @@ SERVICE_COMMANDS = {
         "opsblaze",
         "opsblaze.env",
         "/srv/opsblaze/.venv/bin/python -m backend.workers.maintenance",
+    ),
+    "opsblaze-temporal-community.service": (
+        "opsblaze-temporal",
+        None,
+        (
+            "/usr/local/bin/temporal server start-dev --ip 127.0.0.1 --port 7233 --headless "
+            "--db-filename /var/lib/opsblaze-temporal/temporal.db"
+        ),
     ),
 }
 
@@ -84,17 +94,29 @@ def check_native_services(root: Path = REPOSITORY_ROOT) -> list[str]:
             **REQUIRED_HARDENING,
             "User": identity,
             "Group": identity,
-            "WorkingDirectory": "/srv/opsblaze",
-            "EnvironmentFile": f"/etc/opsblaze/{envfile}",
             "ExecStart": command,
         }
+        if envfile is None:
+            requirements.update({
+                "WorkingDirectory": "/var/lib/opsblaze-temporal",
+                "StateDirectory": "opsblaze-temporal",
+                "StateDirectoryMode": "0700",
+                "UMask": "0077",
+            })
+            if "EnvironmentFile" in service or "Environment" in service:
+                problems.append(f"{filename}: Community Temporal must not load application credentials")
+        else:
+            requirements.update({
+                "WorkingDirectory": "/srv/opsblaze",
+                "EnvironmentFile": f"/etc/opsblaze/{envfile}",
+            })
+            if source.count("Environment=PYTHONDONTWRITEBYTECODE=1") != 1:
+                problems.append(f"{filename}: Python bytecode must stay disabled")
+            if source.count("Environment=PYTHONUNBUFFERED=1") != 1 and filename != "opsblaze-maintenance.service":
+                problems.append(f"{filename}: Python logs must be unbuffered")
         for name, expected in requirements.items():
             if service.get(name) != expected:
                 problems.append(f"{filename}: unsafe/missing {name}")
-        if source.count("Environment=PYTHONDONTWRITEBYTECODE=1") != 1:
-            problems.append(f"{filename}: Python bytecode must stay disabled")
-        if source.count("Environment=PYTHONUNBUFFERED=1") != 1 and filename != "opsblaze-maintenance.service":
-            problems.append(f"{filename}: Python logs must be unbuffered")
         for forbidden in ("ExecStartPre", "ExecStartPost", "ExecStopPost", "ExecReload"):
             if forbidden in service:
                 problems.append(f"{filename}: unexpected {forbidden} hook")

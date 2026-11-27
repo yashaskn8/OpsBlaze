@@ -13,6 +13,7 @@
   },
   "production_acceptance": "BLOCKED",
   "gate_source": "docs/production-acceptance-gates.md",
+  "omega_atomic_ledger": "requirements-omega.json",
   "release_profiles": {
     "architecture_version": "2.0",
     "evidence_baseline": "c88065af312e2d2ea52150e6b47e1e69c9baaed8",

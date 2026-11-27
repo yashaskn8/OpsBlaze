@@ -106,7 +106,34 @@ database, required worker heartbeats, and Temporal reachability, but
 **does not** certify real-user identity flows, cross-host topology or
 external adapters. A mere `healthz` is not a readiness check.
 
-## Multi-host acceptance remains an external exercise
+## Temporal persistence and recovery
+
+### Community single-host Temporal
+
+The optional `opsblaze-temporal-community.service` runs the Temporal CLI
+development server on IPv4 loopback with its web UI disabled. Provision the
+separate unprivileged `opsblaze-temporal` user and group and install the
+official Temporal CLI at `/usr/local/bin/temporal`. The unit stores its
+SQLite database at `/var/lib/opsblaze-temporal/temporal.db` with a private
+state directory. On Windows, use the native CLI command in the root README.
+This service is for a trusted single-host simulator.
+
+For a paired backup, stop the API, dispatcher, worker, projector and
+maintenance jobs, then stop the Temporal server. With writers quiesced, retain a PostgreSQL custom-format
+dump and the stopped Temporal data directory from the same maintenance
+window. Protect both copies as operational state. Restore the PostgreSQL
+dump into a fresh database, reapply `scripts/projector_grants.sql` with the
+owner account, and copy the stopped Temporal data into a fresh private state
+directory. Before reopening intake, verify the expected schema, restricted
+role, original Temporal run IDs and pending outbox intents. Keep services
+stopped if either backup is absent or the stores disagree.
+
+The CI paired restore rehearsal exercises that boundary with disposable
+data. It verifies workflow history and an outbox retry after both restores.
+Running the systemd unit on the supported Linux installation remains a
+separate host acceptance check.
+
+### Enterprise topology and recovery
 
 Install the dispatcher and Temporal workers on at least two genuinely
 independent hosts, with separately durable PostgreSQL and Temporal

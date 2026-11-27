@@ -1,7 +1,11 @@
 """Keep the feature ledger exhaustive at the capability level and evidence-aware."""
 import json
 import re
+import subprocess
+import sys
+import tarfile
 from collections import Counter, defaultdict
+from hashlib import sha256
 from pathlib import Path
 
 
@@ -91,9 +95,68 @@ def test_dual_profile_report_preserves_the_blueprint_and_derives_release_progres
     assert by_id["P2-08"]["community"]["applicable"] is True
     assert by_id["P2-08"]["community"]["status"] == "PARTIALLY_IMPLEMENTED"
     assert by_id["B1-08"]["community"]["applicable"] is True
+    assert by_id["B1-08"]["runtime_verification"] == "PARTIALLY_IMPLEMENTED"
+    assert by_id["B2-07"]["runtime_verification"] == "NOT_APPLICABLE"
     assert by_id["B2-07"]["community"]["status"] == "NOT_APPLICABLE_TO_COMMUNITY"
     assert by_id["B2-07"]["enterprise"]["status"] == "ENTERPRISE_BLOCKED"
     for row in rows:
         assert row["implementation"] and row["consumers"] and row["evidence"]
         assert row["tests"] or row["remaining"]
         assert row["engineering_status"] and row["runtime_verification"]
+
+
+def test_omega_report_preserves_atomic_scope_and_excludes_only_license_creation():
+    from scripts.release_requirements import release_requirements
+
+    report = release_requirements(Path(__file__).resolve().parents[1] / "docs")
+    omega = report["omega"]
+    rows = {row["id"]: row for row in omega["requirements"]}
+    assert len(rows) == 269
+    assert omega["origins"] == {"ORIGINAL": 193, "PROJECT_SPECIFIC": 5, "SHARED": 46, "AI": 25}
+    assert set(omega["original_anchors"]) == {row["id"] for row in report["requirements"]}
+    assert len({child for children in omega["original_anchors"].values() for child in children}) == 193
+    assert omega["community"]["applicability"] == {
+        "MANDATORY": 224, "CONDITIONAL": 13, "RECOMMENDED": 8, "NOT_APPLICABLE": 23,
+    }
+    assert omega["community"]["accepted"] == omega["enterprise"]["accepted"] == 0
+    assert omega["exclusions"] == {"SH-REL-01": "USER_AUTHORIZED_SCOPE_EXCLUSION"}
+    assert rows["SH-REL-01"]["profile_status"]["OpsBlaze"] == "NOT_IMPLEMENTED"
+    assert "AI-GRD-03" not in rows
+    assert rows["OB-B1-08a"]["verification"]["community"] == "PARTIALLY_IMPLEMENTED"
+    assert rows["OB-B1-08a"]["profile_dependencies"] == {"community": [], "enterprise": ["G3"]}
+    assert rows["OB-B1-08b"]["verification"] == {
+        "community": "NOT_APPLICABLE", "enterprise": "BLOCKED_EXTERNAL_DEPENDENCY",
+    }
+    assert rows["SH-SEC-07"]["verification"]["community"] == "NOT_APPLICABLE"
+    assert rows["AI-EVAL-07"]["verification"]["community"] == "NOT_APPLICABLE"
+    assert rows["OB-P2-08a"]["verification"]["community"] == "ACCEPTANCE_PENDING"
+
+
+def test_release_decision_requires_commit_and_hashes_the_built_artifact(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    artifact = tmp_path / "candidate.tar.gz"
+    commit = "a" * 40
+    marker = tmp_path / "SOURCE_COMMIT"
+    marker.write_bytes((commit + "\n").encode("ascii"))
+    with tarfile.open(artifact, "w:gz") as archive:
+        archive.add(marker, arcname="./SOURCE_COMMIT")
+    command = [sys.executable, "scripts/release_requirements.py", "--decision"]
+    for args in (
+        ["--source-commit", commit],
+        ["--artifact", str(artifact)],
+        ["--source-commit", commit, "--artifact", str(tmp_path / "missing.tar.gz")],
+        ["--source-commit", "b" * 40, "--artifact", str(artifact)],
+    ):
+        result = subprocess.run([*command, *args], cwd=root, capture_output=True, text=True)
+        assert result.returncode == 2 and not result.stdout
+
+    result = subprocess.run(
+        [*command, "--source-commit", commit, "--artifact", str(artifact)],
+        cwd=root, capture_output=True, text=True, check=True,
+    )
+    decision = json.loads(result.stdout)
+    assert decision["report_kind"] == "release_decision"
+    assert decision["source_commit"] == commit
+    assert decision["artifact_sha256"] == sha256(artifact.read_bytes()).hexdigest()
+    assert decision["community"]["release_status"] == "PENDING"
+    assert decision["enterprise"]["release_status"] == "ENTERPRISE_BLOCKED"

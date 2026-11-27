@@ -15,7 +15,7 @@ from scripts.check_native_services import (
 
 def test_all_native_service_roles_are_isolated_and_hardened():
     assert check_native_services() == []
-    assert len(SERVICE_COMMANDS) == 6
+    assert len(SERVICE_COMMANDS) == 7
 
 
 @pytest.fixture
@@ -43,6 +43,11 @@ def alter(root: Path, filename: str, before: str, after: str) -> None:
     ("opsblaze-state-age.service", "Restart=always", "Restart=no", "restart"),
     ("opsblaze-api.service", "CapabilityBoundingSet=",
      "CapabilityBoundingSet=CAP_SYS_ADMIN", "CapabilityBoundingSet"),
+    ("opsblaze-temporal-community.service", "--ip 127.0.0.1", "--ip 0.0.0.0", "ExecStart"),
+    ("opsblaze-temporal-community.service", "StateDirectoryMode=0700",
+     "StateDirectoryMode=0755", "StateDirectoryMode"),
+    ("opsblaze-temporal-community.service", "--db-filename /var/lib/opsblaze-temporal/temporal.db",
+     "--db-filename /tmp/temporal.db", "ExecStart"),
 ])
 def test_unsafe_service_mutations_fail_closed(
     deployed_copy, name, old, new, signal,
