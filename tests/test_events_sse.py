@@ -1,6 +1,7 @@
 """P1 bounded SSE parser and tenant-isolated replay."""
 
 import pytest
+from sqlalchemy import event
 
 from backend.events import encode_sse, read_event_batch, stream_incident_events
 from backend.models import UIEvent
@@ -26,6 +27,72 @@ async def test_sse_resumes_in_order_without_cross_tenant_records(sessions_fixtur
     assert payload.startswith(f"id: {items[0].id}\nevent: incident\ndata: ")
     assert '"kind":"ADMITTED"' in payload
     assert await read_event_batch(sessions_fixture, "alpha", first.id, items[0].id) == []
+
+
+@pytest.mark.asyncio
+async def test_event_page_checks_retention_and_reads_notifications_in_one_statement(sessions_fixture):
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "alpha", "one-snapshot", IncidentCreate(target_id="checkout"),
+        )
+    statements = []
+
+    def count_read(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    engine = sessions_fixture.kw["bind"].sync_engine
+    event.listen(engine, "before_cursor_execute", count_read)
+    try:
+        batch = await read_event_batch(sessions_fixture, "alpha", incident.id, 0)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_read)
+    assert [item.kind for item in batch] == ["ADMITTED"]
+    assert len(statements) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_native_retention_commit_cannot_be_reported_as_an_empty_event_page(native_sessions_fixture):
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    from sqlalchemy import select, update
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from backend.events import ExpiredCursor
+    from backend.models import UIEventWatermark
+    from backend.workers.event_retention import purge_ui_events
+
+    sessions = native_sessions_fixture
+    tenant = f"notifications-{uuid4().hex}"
+    async with sessions() as session:
+        incident = await admit_incident(session, tenant, "snapshot", IncidentCreate(target_id="checkout"))
+        async with session.begin():
+            event_id = await session.scalar(select(UIEvent.id).where(UIEvent.incident_id == incident.id))
+            await session.execute(update(UIEvent).where(UIEvent.id == event_id).values(
+                created_at=datetime(2000, 1, 1, tzinfo=timezone.utc),
+            ))
+
+    async def purge():
+        assert await purge_ui_events(sessions, datetime(2000, 1, 2, tzinfo=timezone.utc)) == 1
+
+    class PausedReader(AsyncSession):
+        async def get(self, entity, ident, **kwargs):
+            row = await super().get(entity, ident, **kwargs)
+            if entity is UIEventWatermark:
+                await purge()
+            return row
+
+        async def execute(self, statement, *args, **kwargs):
+            await purge()
+            return await super().execute(statement, *args, **kwargs)
+
+    readers = async_sessionmaker(sessions.kw["bind"], class_=PausedReader)
+    with pytest.raises(ExpiredCursor) as gap:
+        await read_event_batch(readers, tenant, incident.id, 0)
+    assert gap.value.min_after_id == event_id
+    assert await read_event_batch(sessions, tenant, incident.id, event_id) == []
 
 
 @pytest.mark.asyncio

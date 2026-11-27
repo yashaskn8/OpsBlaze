@@ -39,7 +39,7 @@ class StreamCapacity:
 STREAM_CAPACITY = StreamCapacity()
 
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.models import RevokedIdentity, UIEvent, UIEventWatermark
@@ -78,17 +78,38 @@ async def read_event_batch(
             RevokedIdentity, (tenant_id, actor_id)
         ) is not None:
             raise StreamAccessRevoked()
-        await validate_event_cursor(session, tenant_id, incident_id, after_id)
-        return list((await session.scalars(
-            select(UIEvent)
-            .where(
+        return await read_event_page(session, tenant_id, incident_id, after_id)
+
+
+async def read_event_page(
+    session: AsyncSession, tenant_id: str, incident_id: UUID, after_id: int,
+) -> list[UIEvent]:
+    """Read notifications and the retention watermark in one snapshot."""
+    watermark = select(UIEventWatermark.last_purged_id).where(
+        UIEventWatermark.tenant_id == tenant_id,
+        UIEventWatermark.incident_id == incident_id,
+    ).scalar_subquery()
+    floor = select(func.coalesce(watermark, 0).label("minimum")).subquery()
+    # The left join retains the watermark when no notification is available.
+    rows = (await session.execute(
+        select(floor.c.minimum, UIEvent)
+        .select_from(floor)
+        .outerjoin(
+            UIEvent,
+            and_(
                 UIEvent.tenant_id == tenant_id,
                 UIEvent.incident_id == incident_id,
                 UIEvent.id > after_id,
-            )
-            .order_by(UIEvent.id)
-            .limit(100)
-        )).all())
+                floor.c.minimum <= after_id,
+            ),
+        )
+        .order_by(UIEvent.id)
+        .limit(100)
+    )).all()
+    minimum = rows[0][0]
+    if after_id < minimum:
+        raise ExpiredCursor(minimum)
+    return [item for _, item in rows if item is not None]
 
 
 async def is_stream_identity_revoked(

@@ -2010,32 +2010,19 @@ async def incident_ui_events(
     tenant_id: str = Depends(local_tenant),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    from sqlalchemy import select
-    from backend.models import UIEvent
+    from backend.events import ExpiredCursor, read_event_page
 
     if not 0 <= after_id <= (1 << 63) - 1:
         raise HTTPException(422, "after_id is outside supported cursor range")
     if await find_incident(session, tenant_id, incident_id) is None:
         raise HTTPException(404, "incident not found")
-    from backend.events import ExpiredCursor, validate_event_cursor
-
     try:
-        await validate_event_cursor(session, tenant_id, incident_id, after_id)
+        rows = await read_event_page(session, tenant_id, incident_id, after_id)
     except ExpiredCursor as exc:
         raise HTTPException(
             410, {"reason": "event history trimmed; refetch snapshot",
                   "min_after_id": exc.min_after_id},
         ) from exc
-    rows = (await session.scalars(
-        select(UIEvent)
-        .where(
-            UIEvent.tenant_id == tenant_id,
-            UIEvent.incident_id == incident_id,
-            UIEvent.id > after_id,
-        )
-        .order_by(UIEvent.id)
-        .limit(100)
-    )).all()
     return {
         "events": [
             {"id": event.id, "kind": event.kind,
