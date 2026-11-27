@@ -350,11 +350,14 @@ jobs:
           cp docs/engineering/*.md release/staging/docs/engineering/
           cp docs/runbooks/operational-gates.md release/staging/docs/runbooks/
           cp docs/production-acceptance-gates.md release/staging/PRODUCTION_GATES_BLOCKED.md
+          npm --prefix frontend sbom --sbom-format cyclonedx --package-lock-only --omit=dev > "$RUNNER_TEMP/npm-runtime.cdx.json"
+          python scripts/release_sbom.py --npm-inventory "$RUNNER_TEMP/npm-runtime.cdx.json" --output release/staging/SBOM.cdx.json
+          cp release/staging/SBOM.cdx.json release/SBOM.cdx.json
           python -m backend.release_profile "$GITHUB_SHA" > release/staging/RELEASE_PROFILE.json
           python scripts/release_requirements.py --source-commit "$GITHUB_SHA" > release/staging/REQUIREMENT_ACCEPTANCE.json
           printf '%s\n' "$GITHUB_SHA" > release/staging/SOURCE_COMMIT
           tar -C release/staging -czf "release/opsblaze-${GITHUB_SHA}.tar.gz" .
-          (cd release && sha256sum "opsblaze-${GITHUB_SHA}.tar.gz" > SHA256SUMS)
+          (cd release && sha256sum "opsblaze-${GITHUB_SHA}.tar.gz" SBOM.cdx.json > SHA256SUMS)
           python scripts/release_requirements.py --decision --source-commit "$GITHUB_SHA" \
             --artifact "release/opsblaze-${GITHUB_SHA}.tar.gz" > release/RELEASE_DECISION.json
           rm -rf release/staging
@@ -368,5 +371,6 @@ jobs:
             release/*.tar.gz
             release/SHA256SUMS
             release/RELEASE_DECISION.json
+            release/SBOM.cdx.json
           if-no-files-found: error
           retention-days: 30

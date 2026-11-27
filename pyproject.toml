@@ -39,7 +39,7 @@ dev = [
 include = ["backend*"]
 
 [dependency-groups]
-release-build = ["build>=1.2,<2", "setuptools>=75"]
+release-build = ["build>=1.2,<2", "setuptools>=75", "cyclonedx-python-lib[json-validation]>=11.12,<12"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
