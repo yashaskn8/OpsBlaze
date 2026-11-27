@@ -5,7 +5,10 @@ import { evidenceProjectionWarning, replaceLineagePage, type EvidenceProjectionS
 import { authManager, oidcConfigError, usingOidc } from "./auth";
 import { consumeIncidentStream } from "./incidentStream";
 import { InvestigationPanel } from "./InvestigationPanel";
-import { emptyDiagnostics, snapshotAgeSeconds, type ClientDiagnostics } from "./clientDiagnostics";
+import { useWorkspace, WorkbenchNavigation } from "./WorkbenchNavigation";
+import { IncidentRegister } from "./IncidentRegister";
+import { StreamDiagnostics } from "./StreamDiagnostics";
+import { emptyDiagnostics, type ClientDiagnostics } from "./clientDiagnostics";
 import {
   detail, fetchQueueHealth, fetchDeadLetters, fetchEvidencePage,
   fetchInvestigation, fetchLineageRecordDetail, finishReview, handoffIncident,
@@ -119,6 +122,7 @@ type ReplayReport = {
 };
 
 function App() {
+  const workspace = useWorkspace();
   const [tenant, setTenant] = useState("demo");
   const [token, setToken] = useState("");
   const [reviewToken, setReviewToken] = useState("");
@@ -130,6 +134,7 @@ function App() {
   const [target, setTarget] = useState("checkout");
   const [key, setKey] = useState(() => crypto.randomUUID());
   const [selectedIncident, setIncident] = useState<Incident | null>(null);
+  const [openIntakeFor, setOpenIntakeFor] = useState<string | null>(null);
   const [selectionScope, setSelectionScope] = useState<object | null>(null);
   const [reviewSnapshot, setReviewSnapshot] = useState<{
     scope: object; incidentId: string; plan: PlanDetail | null; expiresAt: number | null;
@@ -149,7 +154,6 @@ function App() {
   const [evidencePaging, setEvidencePaging] = useState(false);
   const [effects, setEffects] = useState<Effect[]>([]);
   const [clientDiag, setClientDiag] = useState<ClientDiagnostics>(emptyDiagnostics);
-  const [diagNowMs, setDiagNowMs] = useState(() => Date.now());
   const [lineage, setLineage] = useState<Lineage | null>(null);
   const [lineagePages, setLineagePages] = useState<{
     incidentId: string; pages: Record<string, LineagePage>;
@@ -160,7 +164,8 @@ function App() {
   const [recordBusy, setRecordBusy] = useState(false);
   const [recordError, setRecordError] = useState("");
   const recordRequestVersion = useRef(0);
-  const [recent, setRecent] = useState<Incident[]>([]);
+  const [recent, setRecent] = useState<{ scope: object; items: Incident[] } | null>(null);
+  const [registerRequest, setRegisterRequest] = useState<{ scope: object; error?: string } | null>(null);
   const [queueHealth, setQueueHealth] = useState<QueueHealth | null>(null);
   const [queueBusy, setQueueBusy] = useState(false);
   const [queueError, setQueueError] = useState("");
@@ -470,7 +475,8 @@ function App() {
     authRequests.current = auth;
     resetIncident(null);
     setKey(crypto.randomUUID());
-    setRecent([]);
+    setRecent(null);
+    setRegisterRequest(null);
     setReplay(null);
     setReplayError("");
     setReplayBusy(false);
@@ -652,14 +658,19 @@ function App() {
 
   async function loadRecent() {
     const { signal } = authRequests.current;
-    setError("");
+    setRegisterRequest({ scope: authScope });
     try {
       const response = await fetch("/v1/incidents", { headers: headers(), signal });
       const data: unknown = await response.json();
       if (!response.ok) throw new Error(detail(data));
-      if (!signal.aborted) setRecent(data as Incident[]);
+      if (!signal.aborted) {
+        setRecent({ scope: authScope, items: data as Incident[] });
+        setRegisterRequest(null);
+      }
     } catch (cause) {
-      if (!signal.aborted) setError(cause instanceof Error ? cause.message : "Could not list incidents");
+      if (!signal.aborted) setRegisterRequest({
+        scope: authScope, error: cause instanceof Error ? cause.message : "Could not list incidents",
+      });
     }
   }
 
@@ -673,6 +684,7 @@ function App() {
   function chooseIncident(item: Incident) {
     if (incident?.id === item.id) acceptIncident(item);
     else resetIncident(item);
+    document.getElementById("incident-snapshot")?.focus();
   }
 
   function resetIncident(item: Incident | null) {
@@ -681,6 +693,7 @@ function App() {
     recordRequestVersion.current += 1;
     setSelectionScope(item ? authScope : null);
     setIncident(item);
+    setOpenIntakeFor(null);
     setReviewSnapshot(null);
     setExpiredReview(null);
     setReviewStale(false);
@@ -702,12 +715,6 @@ function App() {
     setBusy(false);
   }
 
-  useEffect(() => {
-    if (!incident?.id || clientDiag.lastSnapshotAtMs === null) return;
-    const timer = window.setInterval(() => setDiagNowMs(Date.now()), 5000);
-    return () => window.clearInterval(timer);
-  }, [incident?.id, clientDiag.lastSnapshotAtMs]);
-
   useLayoutEffect(() => {
     const selectedId = incident?.id;
     if (!selectedId || !authenticated) return;
@@ -724,7 +731,6 @@ function App() {
       const snapshot = await fetchInvestigation(incidentId, auth, controller.signal);
       if (controller.signal.aborted) return;
       setClientDiag(prev => ({ ...prev, lastSnapshotAtMs: Date.now() }));
-      setDiagNowMs(Date.now());
       const incoming = snapshot.incident;
       acceptIncident(incoming);
       setInvestigation(previous =>
@@ -1003,69 +1009,95 @@ function App() {
     ? [...lineage.edges, ...additionalLineagePages.flatMap(page => page.edges)]
     : [];
 
+  const incidentWorkspace = workspace.id === "incident-snapshot";
+  const intakeVisible = !incident || openIntakeFor === incident.id;
+  const workspaceTenant = usingOidc ? identity?.tenant_id : tenant.trim();
+  const identityLabel = usingOidc
+    ? identity?.roles.join(", ") || "Sign in required"
+    : authenticated ? "Local credentials entered" : "Local access required";
+  const registerItems = recent?.scope === authScope ? recent.items : null;
+  const activeRegisterRequest = registerRequest?.scope === authScope ? registerRequest : null;
+  const registerBusy = Boolean(activeRegisterRequest && !activeRegisterRequest.error);
+
   return (
-    <main>
+    <div className="workbench">
       <a className="skip-link" href="#incident-snapshot">Skip to incident snapshot</a>
-      <header className="workbench-header">
-        <div className="workbench-brand"><span className="mark" aria-hidden="true">OB</span><div><strong>OpsBlaze</strong><small>Community Edition</small></div></div>
-        <nav aria-label="Workbench sections">
-          <a href="#incident-snapshot">Incident snapshot</a>
-          <a href="#queue-health">Queue health</a>
-          <a href="#recent-incidents">Recent incidents</a>
-          <a href="#replay-lab">Replay lab</a>
-        </nav>
-      </header>
-      <div className="intro"><h1>Incident operations</h1><p>Admit incidents, inspect evidence, and review simulator-only recovery.</p></div>
-      <div className="layout">
-        <section>
-          <h2>New incident</h2><p className="muted">{usingOidc
-            ? "Verified role-based access. Access tokens stay in browser memory."
-            : "Development only. Token stays in browser memory."}</p>
+      <WorkbenchNavigation active={workspace.id} />
+      <main className="workbench-main">
+        <header className="workbench-header">
+          <span>{workspace.label}</span>
+          <div className="workspace-context">
+            <span>Tenant <strong>{workspaceTenant || "Not selected"}</strong></span>
+            <span>{identityLabel}</span>
+          </div>
+        </header>
+        <div className="workbench-canvas">
+          <div className="intro">
+            <h1>{workspace.title}</h1>
+            <p>{workspace.description}</p>
+          </div>
+          {!incidentWorkspace && !authenticated && <p className="workspace-notice">
+            <a href="#workspace-access">Set up workspace access</a> to load tenant records.
+          </p>}
+          <div className="layout" hidden={!incidentWorkspace}>
+            <section id="workspace-access" tabIndex={-1} className="intake surface" aria-labelledby="intake-title">
+              <div className="history-header intake-heading">
+                <h2 id="intake-title">New incident</h2>
+                {incident && <button type="button" className="secondary"
+                  aria-controls="intake-controls" aria-expanded={intakeVisible}
+                  onClick={() => setOpenIntakeFor(intakeVisible ? null : incident.id)}>
+                  {intakeVisible ? "Hide intake" : "Open intake"}
+                </button>}
+              </div>
+              <div id="intake-controls" hidden={!intakeVisible}>
+              <p className="muted">{usingOidc ? "Sign in to access your tenant." : "Enter your local credentials for this session."}</p>
           {usingOidc && <div className="auth-session" aria-live="polite">
             {authLoading && <p>Checking sign-in…</p>}
             {signInError && <p role="alert" className="error">{signInError}</p>}
             {identity ? <>
-              <p>Signed in · Tenant <strong>{identity.tenant_id}</strong></p>
+              <p>Signed in to <strong>{identity.tenant_id}</strong></p>
               <p className="muted">Roles: {identity.roles.join(", ")}</p>
               <p className="muted mono">{identity.actor_id}</p>
               <button className="secondary" type="button" onClick={() => void signOut()}>
                 Clear browser session
               </button>
-            </> : !authLoading && authManager && <button type="button"
+            </> : !authLoading && authManager && <button type="button" className="action-label"
               onClick={() => void signIn()}>Sign in with identity provider</button>}
           </div>}
           <form onSubmit={admit}>
             {!usingOidc && <>
-              <label>Tenant ID<input required maxLength={64} value={tenant} onChange={e => setTenant(e.target.value)} /></label>
-              <label>Local API token<input type="password" autoComplete="off" required value={token} onChange={e => setToken(e.target.value)} /></label>
-              <label>Local reviewer token<input type="password" autoComplete="off"
+              <label>Tenant ID<input name="tenant" autoComplete="off" spellCheck={false} required maxLength={64} value={tenant} onChange={e => setTenant(e.target.value)} /></label>
+              <label>Local API token<input name="operator-credential" type="password" autoComplete="off" required value={token} onChange={e => setToken(e.target.value)} /></label>
+              <label>Local reviewer token<input name="reviewer-credential" type="password" autoComplete="off"
                 value={reviewToken} onChange={e => setReviewToken(e.target.value)} /></label>
             </>}
-            <label>Target ID<input required maxLength={256} value={target} onChange={e => setTarget(e.target.value)} /></label>
-            <p className="key">Idempotency key <code>{key}</code></p>
+            <label>Target ID<input name="target" autoComplete="off" spellCheck={false} required maxLength={256} value={target} onChange={e => setTarget(e.target.value)} /></label>
+            <details className="key"><summary>Idempotency key</summary><code>{key}</code></details>
             <div className="actions">
-              <button type="submit" disabled={busy || !canOperate}>{busy ? "Working..." : "Admit incident"}</button>
+              <button type="submit" disabled={busy || !canOperate}>{busy ? "Working…" : "Admit incident"}</button>
               <button type="button" className="secondary" disabled={busy} onClick={() => { setKey(crypto.randomUUID()); resetIncident(null); }}>New request key</button>
             </div>
           </form>
+        </div>
         </section>
-        <section id="incident-snapshot" tabIndex={-1} aria-labelledby="incident-snapshot-title">
-          <h2 id="incident-snapshot-title">Incident snapshot</h2>
-          <p role="status" aria-live="polite" aria-atomic="true"
-            className={"connection " + connection.toLowerCase()}>
-            {connection === "LIVE" ? "Live updates — server snapshot authoritative"
-              : connection === "STALE" ? "Connection stale — action controls disabled"
-              : "Synchronizing incident events"}
-          </p>
-          {incident && <p className="muted" aria-label="Client stream diagnostics">
-            Client signals: {clientDiag.disconnects} disconnect(s) · {clientDiag.eventGaps} event gap(s) · snapshot age {snapshotAgeSeconds(clientDiag, diagNowMs) ?? "pending"}s · {clientDiag.clientErrors} client error(s)
-          </p>}
+        <section id="incident-snapshot" tabIndex={-1} className="surface incident-snapshot" aria-labelledby="incident-snapshot-title">
+          <div className="history-header">
+            <h2 id="incident-snapshot-title">Incident snapshot</h2>
+            {incident && <p role="status" aria-live="polite" aria-atomic="true"
+              className={"connection " + connection.toLowerCase()}>
+              {connection === "LIVE" ? "Live updates"
+                : connection === "STALE" ? "Connection stale. Actions paused"
+                : "Synchronizing incident events"}
+            </p>}
+          </div>
           {error && <p className="error" role="alert">{error}</p>}
           {incident ? <>
-            <span className="status">{incident.status_projection.replaceAll("_", " ")}</span>
-            <dl>
+            <div className="incident-identity">
+              <h3>{incident.target_id}</h3>
+              <span className="status" data-state={incident.status_projection}>{incident.status_projection.toLowerCase().replaceAll("_", " ")}</span>
+            </div>
+            <dl className="incident-facts">
               <dt>Incident ID</dt><dd className="mono">{incident.id}</dd>
-              <dt>Target</dt><dd>{incident.target_id}</dd>
               <dt>Version</dt><dd>{incident.status_version}</dd>
               <dt>Created</dt><dd>{new Date(incident.created_at).toLocaleString()}</dd>
             </dl>
@@ -1094,23 +1126,26 @@ function App() {
             </div>
             {handoffInfo && <div className="audit" role="status">
               <strong>Handoff reason: {handoffInfo.reason_code}</strong>
-              <p className="muted">Next steps: {handoffInfo.next_steps.join(" · ")}</p>
+              <p className="muted">Next steps: {handoffInfo.next_steps.join(", ")}</p>
             </div>}
-            {activeInvestigation && <InvestigationPanel report={activeInvestigation}
-              stale={connection !== "LIVE" || activeInvestigation.incident.status_version !== incident.status_version} />}
-            {plan && <div className="plan">
-              <h3>Proposed simulator plan</h3>
+            {plan && <section className="plan" aria-labelledby="simulator-plan-title">
+              <h3 id="simulator-plan-title">Proposed simulator plan</h3>
               <p><strong>{plan.action_id}</strong> for {plan.target_id}</p>
-              <p className="muted">Plan state: {plan.status} · Expected target version: {plan.expected_version}</p>
               <p ref={reviewStatus} tabIndex={-1} role="status">Review status: {reviewState}</p>
-              {plan.review.pending_since && <p className="muted">
-                Pending since {new Date(plan.review.pending_since).toLocaleString()}
-              </p>}
-              <p>Pinned policy: {plan.policy_id ? `${plan.policy_id}${plan.policy_version ? ` (${plan.policy_version})` : ""}` : "Unavailable"}</p>
-              <p>Expected postcondition: {plan.postcondition
-                ? `Simulator target healthy at version ${plan.postcondition.version}` : "Unavailable"}</p>
+              <dl className="plan-facts">
+                <dt>Plan state</dt><dd>{plan.status.toLowerCase().replaceAll("_", " ")}</dd>
+                <dt>Expected target version</dt><dd>{plan.expected_version}</dd>
+                <dt>Expected postcondition</dt><dd>{plan.postcondition
+                  ? `Simulator target healthy at version ${plan.postcondition.version}` : "Unavailable"}</dd>
+                {plan.review.pending_since && <><dt>Pending since</dt>
+                  <dd>{new Date(plan.review.pending_since).toLocaleString()}</dd></>}
+              </dl>
               {reviewStale && <p role="status" className="muted">Refresh the plan before reviewing it again.</p>}
-              <p className="muted">Digest</p><code>{plan.plan_digest}</code>
+              <details className="plan-identity">
+                <summary>Policy and plan digest</summary>
+                <p>{plan.policy_id ? `${plan.policy_id}${plan.policy_version ? ` (${plan.policy_version})` : ""}` : "Policy unavailable"}</p>
+                <code>{plan.plan_digest}</code>
+              </details>
               {plan.status === "PROPOSED" && incident.status_projection === "AWAITING_APPROVAL" &&
                 <label className="review-reason">Review reason
                   <textarea minLength={8} maxLength={256}
@@ -1126,7 +1161,7 @@ function App() {
               }
               {approval && <div className="approval-review">
                 <h4>Durable reviewer decision</h4>
-                <p className="muted">Recorded decision: {approval.decision} · Version {approval.version}</p>
+                <p className="muted">Recorded decision: {approval.decision}, Version {approval.version}</p>
                 <p className="muted">Decided: {new Date(approval.decided_at).toLocaleString()}</p>
                 <p className="muted">Reviewer ID: {approval.reviewer}</p>
                 <p className="muted">Scope: {approval.scope}</p>
@@ -1139,30 +1174,52 @@ function App() {
                       onChange={event => setRevocationReason(event.target.value)}
                     />
                   </label>
-                  <button type="button" className="secondary"
+                  <button type="button" className="secondary action-label"
                     disabled={busy || reviewStale || connection !== "LIVE" || !canReview || revocationReason.trim().length < 8}
                     onClick={revokeApproval}>
                     Revoke unconsumed approval
                   </button>
                 </div>}
               </div>}
-            </div>}
+            </section>}
+            {activeInvestigation && <InvestigationPanel report={activeInvestigation}
+              stale={connection !== "LIVE" || activeInvestigation.incident.status_version !== incident.status_version} />}
+            {incidentWorkspace && <StreamDiagnostics key={incident.id} diagnostics={clientDiag} />}
+            <p className="inline-nav"><a href="#incident-evidence">Open evidence and trace</a></p>
+          </> : !error && <div className="empty">
+            <strong>No incident selected</strong>
+            <p>Admit a simulator incident or open one from the recent register.</p>
+          </div>}
+        </section>
+          <IncidentRegister items={registerItems} incidentId={incident?.id} events={events}
+            error={activeRegisterRequest?.error} loading={registerBusy}
+            canLoad={authenticated && !busy} loadRecent={loadRecent} chooseIncident={chooseIncident} />
+        </div>
+        <section id="incident-evidence" className="surface workspace-sheet" tabIndex={-1}
+          aria-labelledby="evidence-workspace-title" hidden={workspace.id !== "incident-evidence"}>
+          <div className="history-header">
+            <h2 id="evidence-workspace-title">{incident ? incident.target_id : "Selected incident"}</h2>
+            <a href="#incident-snapshot">Open incident snapshot</a>
+          </div>
+          {incident ? <>
+            <code className="record-id">{incident.id}</code>
+            {error && workspace.id === "incident-evidence" && <p className="error" role="alert">{error}</p>}
             {evidence.length > 0 && <div className="audit">
               <h3>Evidence ({evidence.length})</h3>
               {evidence.map(item => <div className="audit-item" key={item.id}>
-                <strong>{item.source}</strong><span>{item.validity}{item.freshness ? ` · ${item.freshness}` : ""}</span>
+                <strong>{item.source}</strong><span>{item.validity}{item.freshness ? `, ${item.freshness}` : ""}</span>
                 <code>{item.redacted_excerpt}</code>
               </div>)}
               {evidenceCursor && <button type="button" className="secondary" disabled={evidencePaging}
                 onClick={() => void loadMoreEvidence()}>
-                {evidencePaging ? "Loading evidence..." : "Load more evidence"}
+                {evidencePaging ? "Loading evidence…" : "Load more evidence"}
               </button>}
             </div>}
             {lineage && <div className="audit">
               <h3>Evidence-to-effect trace</h3>
-              <p className="muted">{lineage.projection.replaceAll("_", " ")} · {lineage.nodes.length} durable records · {lineage.edges.length} links</p>
+              <p className="muted">{lineage.projection.replaceAll("_", " ")}, {lineage.nodes.length} durable records, {lineage.edges.length} links</p>
               {lineage.diagnostics && <p className="muted">
-                Diagnostics: {lineage.diagnostics.missing_edge_count} missing link(s) · {lineage.diagnostics.context_loss_count} missing span context(s) · projection lag {lineage.diagnostics.projection_lag_seconds ?? "unknown"}s
+                Diagnostics: {lineage.diagnostics.missing_edge_count} missing link(s), {lineage.diagnostics.context_loss_count} missing span context(s), projection lag {lineage.diagnostics.projection_lag_seconds ?? "unknown"}s
               </p>}
               {evidenceProjectionWarning([lineage.evidence_projection, ...additionalLineagePages.map(page => page.evidence_projection)]) && <p className="error" role="status">{evidenceProjectionWarning([lineage.evidence_projection, ...additionalLineagePages.map(page => page.evidence_projection)])}</p>}
               {!lineage.trace_spans_available && <p className="muted">Collector delivery is not verified. Durable records remain authoritative; recorded span references are diagnostic only.</p>}
@@ -1197,7 +1254,10 @@ function App() {
                 <p className="error">One or more record pages have over 200 references. Some links were intentionally omitted; this is not a complete trace.</p>}
               {additionalLineagePages.some(page => page.missing_refs.length > 0) &&
                 <p className="error">Additional record pages contain {additionalLineagePages.reduce((n, page) => n + page.missing_refs.length, 0)} out-of-scope or missing references.</p>}
-              <div className="trace-scroll">
+              <div className="trace-inspector">
+              <div>
+              <h4>Durable records</h4>
+              <div className="trace-records">
                 {[...lineage.nodes, ...additionalLineagePages.flatMap(page => page.nodes)].map((node, index) => {
                   const recordId = node.id.split(":")[1];
                   return <div className="trace-node" key={node.id}>
@@ -1214,20 +1274,26 @@ function App() {
                   </div>;
                 })}
               </div>
+              </div>
+              <section className="source-inspector" aria-labelledby="source-inspector-title" aria-busy={recordBusy}>
+              <h4 id="source-inspector-title">Source record</h4>
               {recordError && <p role="alert" className="error">{recordError}</p>}
+              {recordBusy && <p role="status">Loading the source record…</p>}
+              {!recordError && !recordBusy && !selectedRecord &&
+                <p className="muted">Choose Inspect record to read the authoritative details available for that record.</p>}
               {selectedRecord && selectedRecord.scope === authScope && selectedRecord.incidentId === incident.id &&
                 <div className="audit-item" aria-live="polite">
-                  <h4>Source record: {selectedRecord.record.id}</h4>
+                  <h5>Source record: {selectedRecord.record.id}</h5>
                   <p className="muted">
                     Authority: {selectedRecord.record.authority_kind === "MODEL_OR_INVESTIGATION_CLAIM"
-                      ? "Model or investigation claim only — not an independently verified outcome"
+                      ? "Model or investigation claim only: not an independently verified outcome"
                       : selectedRecord.record.authority_kind === "INDEPENDENT_OUTCOME"
                         ? "Independently witnessed outcome"
                         : selectedRecord.record.authority_kind.replaceAll("_", " ")}
-                    {" · "}Status: {selectedRecord.record.status}
+                    {", "}Status: {selectedRecord.record.status}
                   </p>
                   {selectedRecord.record.unresolved_or_failed &&
-                    <p role="status" className="error">Unresolved, adverse, or non-verified record state — review authoritative details before acting.</p>}
+                    <p role="status" className="error">Unresolved, adverse, or non-verified record state: review authoritative details before acting.</p>}
                   <dl>
                     {Object.entries(selectedRecord.record.details).map(([field, value]) => (
                       <div key={field}>
@@ -1237,10 +1303,12 @@ function App() {
                     ))}
                   </dl>
                 </div>}
+              </section>
+              </div>
               <h3>Causal links ({allLineageEdges.length})</h3>
               {allLineageEdges.length > 80 &&
                 <p className="muted">Showing 80 of {allLineageEdges.length} links. Page records remain available above.</p>}
-              <div className="trace-scroll">
+              <div className="trace-records">
                 {allLineageEdges.slice(0, 80).map((edge, index) =>
                   <div className="trace-node" key={edge.from + edge.to + edge.relation + index}>
                     <strong>{edge.relation.replaceAll("_", " ")}</strong>
@@ -1256,24 +1324,30 @@ function App() {
                 <code>Observed version: {effect.observed_version ?? "unknown"}</code>
               </div>)}
             </div>}
-          </> : <p className="muted empty">No incident selected yet.</p>}
+            {!lineage && evidence.length === 0 && effects.length === 0 && !error &&
+              <p className="empty">No evidence or effect records loaded for this incident.</p>}
+          </> : <div className="empty"><strong>No incident selected</strong><p>Choose an incident to inspect its evidence and causal links.</p></div>}
         </section>
-      </div>
-      <section id="queue-health" tabIndex={-1} className="incident-history" aria-label="Tenant queue health">
+      <section id="queue-health" tabIndex={-1} className="surface workspace-sheet" aria-label="Tenant queue health" hidden={workspace.id !== "queue-health"}>
         <div className="history-header">
           <h2>Queue health</h2>
           <button type="button" className="secondary"
             disabled={!authenticated || queueBusy} onClick={() => void loadQueueHealth()}>
-            {queueBusy ? "Checking queues..." : "Refresh queue health"}
+            {queueBusy ? "Checking queues…" : "Refresh queue health"}
           </button>
         </div>
-        <p className="muted">Durable, tenant-scoped snapshot. This is not a multi-host capacity certification.</p>
+        {!queueHealth && !queueError && <p className="empty">{queueBusy ? "Loading queue health…" : "Refresh queue health to load the latest tenant snapshot."}</p>}
         {queueError && <p role="alert" className="error">{queueError}</p>}
         {queueHealth && <div aria-live="polite">
-          <p><strong>{queueHealth.active_incidents}</strong> active incidents · <strong>{queueHealth.pending_approvals}</strong> pending approvals · <strong>{queueHealth.pending_outbox}</strong> pending outbox intents · <strong>{queueHealth.unresolved_effects}</strong> unresolved effects</p>
-          <p className="muted">Pending approval age p95: {queueHealth.pending_approval_age_p95_seconds}s · Oldest pending approval: {queueHealth.oldest_pending_approval_seconds}s</p>
-          <p className="muted">Pending age p95: {queueHealth.pending_age_p95_seconds}s · Oldest pending: {queueHealth.oldest_pending_seconds}s · Oldest active phase: {queueHealth.oldest_active_phase_seconds}s</p>
-          <p className="muted">Maximum pending delivery attempts: {queueHealth.max_pending_attempts} · Stuck threshold: {queueHealth.stuck_after_seconds}s</p>
+          <dl className="queue-strip">
+            <div><dt>Active incidents</dt><dd>{queueHealth.active_incidents}</dd></div>
+            <div><dt>Pending approvals</dt><dd>{queueHealth.pending_approvals}</dd></div>
+            <div><dt>Pending outbox intents</dt><dd>{queueHealth.pending_outbox}</dd></div>
+            <div><dt>Unresolved effects</dt><dd>{queueHealth.unresolved_effects}</dd></div>
+          </dl>
+          <p className="muted">Pending approval age p95: {queueHealth.pending_approval_age_p95_seconds}s, Oldest pending approval: {queueHealth.oldest_pending_approval_seconds}s</p>
+          <p className="muted">Pending age p95: {queueHealth.pending_age_p95_seconds}s, Oldest pending: {queueHealth.oldest_pending_seconds}s, Oldest active phase: {queueHealth.oldest_active_phase_seconds}s</p>
+          <p className="muted">Maximum pending delivery attempts: {queueHealth.max_pending_attempts}, Stuck threshold: {queueHealth.stuck_after_seconds}s</p>
           {queueHealth.experience_dead_letters_unreviewed > 0 &&
             <p role="alert" className="error">
               {queueHealth.experience_dead_letters_unreviewed} experience projection dead letter(s) need operator review. These are excluded from the pending queue.
@@ -1284,13 +1358,13 @@ function App() {
             </p>}
         </div>}
       </section>
-      <section className="incident-history" aria-label="Experience projection dead-letter review">
+      <section id="experience-review" tabIndex={-1} className="surface workspace-sheet" aria-label="Experience projection dead-letter review" hidden={workspace.id !== "experience-review"}>
         <div className="history-header">
           <h2>Experience projection review</h2>
           <button type="button" className="secondary"
             disabled={!authenticated || deadLetterBusy}
             onClick={() => void loadDeadLetters()}>
-            {deadLetterBusy ? "Loading..." : "Load dead letters"}
+            {deadLetterBusy ? "Loading…" : "Load dead letters"}
           </button>
         </div>
         <p className="muted">
@@ -1310,13 +1384,14 @@ function App() {
             </select>
           </label>}
         {deadLetterError && <p className="error" role="alert">{deadLetterError}</p>}
+        {!deadLetterPage && !deadLetterError && <p className="empty">{deadLetterBusy ? "Loading dead letters…" : "Load dead letters to see projections awaiting review."}</p>}
         {deadLetterPage && <div aria-live="polite">
           {deadLetterPage.records.length === 0 &&
             <p className="muted">No experience dead letters for this tenant.</p>}
           {deadLetterPage.records.map(record =>
             <div className="audit-item" key={record.id}>
-              <strong>Projection #{record.id} — {record.code.replaceAll("_", " ")}</strong>
-              <span>Incident {record.incident_id} · {record.attempts} attempt(s)</span>
+              <strong>Projection #{record.id}: {record.code.replaceAll("_", " ")}</strong>
+              <span>Incident {record.incident_id}, {record.attempts} attempt(s)</span>
               <span>{record.reviewed ? "Reviewed" : "Needs review"}</span>
               {record.redriven_to !== null &&
                 <span>Redrive queued as projection #{record.redriven_to}</span>}
@@ -1346,77 +1421,52 @@ function App() {
             </button>}
         </div>}
       </section>
-      <section id="recent-incidents" tabIndex={-1} className="incident-history" aria-labelledby="recent-incidents-title">
-        <div className="history-header">
-          <h2 id="recent-incidents-title">Recent incidents</h2>
-          <button type="button" className="secondary" disabled={!authenticated || busy} onClick={loadRecent}>
-            Load from server
-          </button>
-        </div>
-        {recent.length === 0 ? <p className="muted">Load the latest tenant-scoped incidents.</p> :
-          <div className="recent-items">
-            {recent.map(item => (
-              <button type="button" className="recent-item" key={item.id}
-                onClick={() => chooseIncident(item)}>
-                <strong>{item.target_id}</strong>
-                <span>{item.status_projection.replaceAll("_", " ")}</span>
-                <code>{item.id}</code>
-              </button>
-            ))}
-          </div>
-        }
-        {incident && <div className="audit">
-          <h3>Durable event history</h3>
-          {events.length === 0 ? <p className="muted">No events loaded yet.</p> :
-            events.map(event => <div className="audit-item" key={event.id}>
-              <strong>#{event.id} — {event.kind.replaceAll("_", " ")}</strong>
-              <span>Version {event.projection_version}</span>
-            </div>)
-          }
-        </div>}
-      </section>
-      <section id="replay-lab" tabIndex={-1} className="incident-history replay-lab" aria-labelledby="replay-lab-title">
+      <section id="replay-lab" tabIndex={-1} className="surface workspace-sheet replay-lab" aria-labelledby="replay-lab-title" hidden={workspace.id !== "replay-lab"}>
         <h2 id="replay-lab-title">Isolated replay laboratory</h2>
         <p className="muted">
-          Run two deterministic simulator arms with the same initial fixture,
-          virtual-time evidence release, and independent postcondition.
-          This is not a measured AI-versus-human experiment.
+          Both strategies use the same fixture, virtual-time evidence release, and independent postcondition.
         </p>
         <form className="replay-form" onSubmit={runReplay}>
           <label>Fixture
-            <select value={replayFixture} onChange={event => setReplayFixture(event.target.value as ReplayFixture)}>
+            <select name="fixture" value={replayFixture} onChange={event => setReplayFixture(event.target.value as ReplayFixture)}>
               <option value="recoverable-v1">Recoverable fault</option>
               <option value="false-ack-v1">False success acknowledgment</option>
               <option value="already-healthy-v1">Healthy target</option>
             </select>
           </label>
           <label>Seed
-            <input type="number" min="0" max="1000000" step="1"
+            <input name="seed" type="number" min="0" max="1000000" step="1"
               value={replaySeed} onChange={event => setReplaySeed(event.target.value)} />
           </label>
           <button type="submit" disabled={!canOperate || replayBusy}>
-            {replayBusy ? "Running..." : "Run paired replay"}
+            {replayBusy ? "Running…" : "Run paired replay"}
           </button>
         </form>
         {replayError && <p role="alert" className="error">{replayError}</p>}
         {replay && <>
-          <p className="muted">Experiment {replay.id} · {replay.status} · Seed {replay.seed}</p>
-          <div className="replay-results">
-            {replay.arms.map(arm => (
-              <div className="replay-arm" key={arm.kind}>
-                <strong>{arm.kind.replaceAll("_", " ")}</strong>
-                <span>{arm.outcome}</span>
-                <p className="muted">Oracle passed: {arm.oracle_passed ? "Yes" : "No"} · Read probes: {arm.probe_cost} · Virtual time: {arm.virtual_time}</p>
-              </div>
-            ))}
+          <p className="muted">Experiment {replay.id}, {replay.status}, Seed {replay.seed}</p>
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Paired replay results">
+            <table className="comparison-table">
+              <caption className="sr-only">Results for each simulator strategy</caption>
+              <thead><tr><th scope="col">Strategy</th><th scope="col">Outcome</th><th scope="col">Oracle passed</th><th scope="col">Read probes</th><th scope="col">Virtual time</th></tr></thead>
+              <tbody>{replay.arms.map(arm => (
+                <tr key={arm.kind}>
+                  <th scope="row">{arm.kind.toLowerCase().replaceAll("_", " ")}</th>
+                  <td>{arm.outcome}</td><td>{arm.oracle_passed ? "Yes" : "No"}</td>
+                  <td>{arm.probe_cost}</td><td>{arm.virtual_time}</td>
+                </tr>
+              ))}</tbody>
+            </table>
           </div>
           {!replay.measured_ai_comparison &&
             <p className="muted">Deterministic baseline only; no production or model performance claim.</p>
           }
         </>}
       </section>
-      <footer>Community Edition supports simulated recovery. Enterprise Edition requires independent qualification.</footer>
-    </main>
+      <footer>Simulator recovery only. Enterprise operations require independent qualification.</footer>
+      </div>
+      </main>
+    </div>
   );
 }
 

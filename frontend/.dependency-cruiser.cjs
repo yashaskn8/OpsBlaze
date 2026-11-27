@@ -23,10 +23,10 @@ module.exports = {
       severity: "error",
       comment: "Leaf API/stream/auth/guidance helpers must not import UI components or main.tsx.",
       from: {
-        path: "^frontend/src/(api|auth|clientDiagnostics|incidentStream|investigationGuidance|lineagePages)\\.ts$",
+        path: "^frontend/src/(api|auth|clientDiagnostics|incidentStream|investigationGuidance|lineagePages|workspacePaths)\\.ts$",
       },
       to: {
-        path: "^frontend/src/(main|InvestigationPanel)\\.tsx$",
+        path: "^frontend/src/.*\\.tsx$",
       },
     },
     {
@@ -34,7 +34,7 @@ module.exports = {
       severity: "error",
       comment: "UI subcomponents must not import main.tsx.",
       from: {
-        path: "^frontend/src/InvestigationPanel\\.tsx$",
+        path: "^frontend/src/(?!main\\.tsx$).*\\.tsx$",
       },
       to: {
         path: "^frontend/src/main\\.tsx$",

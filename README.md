@@ -351,7 +351,7 @@ The local token is **not** reviewer authentication or a real multi-tenant securi
 
 ### Verify spoken approval announcements on Windows
 
-This is a deferred manual acceptance check for the UI redesign. The immediate software gate uses the simulator and automated Playwright accessibility checks.
+Spoken-output acceptance remains a manual check for the redesigned console. The software verification uses the simulator and automated Playwright checks.
 
 Use the isolated simulator setup above with separate disposable local operator and reviewer tokens. Use a fresh simulator target for each review. For the expiry case, start the lab API with `OPSBLAZE_APPROVAL_TTL_SECONDS=30` and stop the lab dispatcher after the incident reaches `AWAITING_APPROVAL`. This holds the decision signal while the approval expires. Leave the API, frontend, and Temporal worker running.
 
