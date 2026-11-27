@@ -26,5 +26,7 @@ Executed `.venv\Scripts\python.exe -m pytest -q -m "integration or not integrati
 - Verified pinned source history replay without nondeterminism errors, worker shutdown/restart across `INVESTIGATING`, `AWAITING_APPROVAL`, and `EXECUTING`, duplicate signal idempotency, and outbox crash recovery without repeating applied effects.
 
 ## 3. Conditional Limits (`G3` Remains `BLOCKED`)
-- PostgreSQL logical dump/restore does **not** restore Temporal server persistence cleanly as a single cross-store atomic snapshot; restore drills must reconcile outbox intents against `recovery_audit.py` before enabling effects.
-- Windows single-host PG16 + Temporal tests do **not** certify physical multi-host HA, real WAN partitions, or externally witnessed failover campaigns (`G3`).
+
+The paired single-host drill at `01afb3656d7acec8ad096fd1bf9130e07e79538d` passed in the [native PostgreSQL and Temporal CI job](https://github.com/yashaskn8/OpsBlaze/actions/runs/46049377476). It stages a workflow with a pending acknowledgment, stops Temporal, restores a cold copy and a PostgreSQL dump into separate stores, and checks the original workflow history. The restored dispatcher acknowledges the row with the same run ID. The drill also passed on Windows with PostgreSQL 16.16 and Temporal CLI 1.10.1.
+
+The drill uses a quiesced single-host snapshot window and synthetic data. Continue to require independent evidence of physical multi-host availability, network partition recovery, RPO, RTO and failover for G3.

@@ -250,9 +250,10 @@ time, real measurement or authorize promotion.**
 
 ### Native Linux service topology (G3, deployment preparation only)
 
-The native PostgreSQL restore rehearsal also verifies an undelivered
-Temporal start outbox record retains its retry state and stable workflow ID,
-without issuing a remote call. This is not a Temporal persistence restore.
+The paired native restore rehearsal restores PostgreSQL and a cold copy of
+the local Temporal store into separate destinations. It checks the original
+workflow history and verifies that replay of the pending outbox intent
+acknowledges the same run.
 
 The repository now includes Docker-free systemd services for the API,
 Temporal outbox dispatcher, Temporal incident worker, separate experience
@@ -270,12 +271,35 @@ Run `python scripts/check_native_services.py` to validate tracked
 unit permissions, startup commands and credential separation. Read the
 [full native deployment guide](deploy/systemd/README.md) before any host
 installation. CI validates unit source but does **not** deploy to
-production, restore Temporal history, certify multi-host failover or
-activate external effects.
+production, certify multi-host failover or activate external effects.
 
 ## Setup (no Docker)
 
 Install Python 3.11+, native PostgreSQL and a native Temporal development server. Create a PostgreSQL database and credentials, then configure them in a local untracked `.env` copied from `.env.example`.
+
+Generate Community operator and reviewer tokens in an existing private
+directory outside the checkout and shared or synced folders. The issuer
+creates a new file with two independent 256-bit tokens, keeps the original
+file if the destination already exists, and prints no credentials. It
+restricts access to the current user with a Windows ACL or Unix mode 0600.
+
+```powershell
+$env:OPSBLAZE_CREDENTIALS_FILE = Join-Path $env:LOCALAPPDATA 'OpsBlaze.credentials.env'
+python scripts/issue_local_credentials.py $env:OPSBLAZE_CREDENTIALS_FILE
+```
+
+On Linux, use `export OPSBLAZE_CREDENTIALS_FILE="$HOME/.opsblaze.credentials.env"`
+and run the same issuer with that path. Set the path in each process environment.
+Remove any old operator, reviewer and review-epoch environment overrides so
+the generated file is authoritative. Use a password manager or another
+private local mechanism to enter the tokens in the workbench.
+
+For rotation, issue a new file with `--review-epoch` set to the next integer.
+Quiesce the simulator processes, update their credential file paths, restart
+them and clear existing browser credentials. Verify the old operator credential
+is refused, the new one works, and the distinct reviewer credential is still
+required. Keep the review epoch advancing so grants from the earlier epoch
+cannot authorize new simulator dispatch.
 
 ```bash
 python -m venv .venv
@@ -309,11 +333,11 @@ npm --prefix frontend run build
 python -m backend.community
 ```
 
-Open `http://127.0.0.1:8000` and supply the **local** API token from your `.env`. Choose a distinct reviewer token. `/healthz` checks the API process and `/v1/health/ready` checks the datastore in local development mode. Use `GET /release-profile` to check the build scope. The API specification is at `/docs`. For hot reload during development, run `uvicorn backend.api:app --host 127.0.0.1 --reload` and `npm --prefix frontend run dev -- --host 127.0.0.1`, then open port 5173.
+Open `http://127.0.0.1:8000` and supply the local operator token. Use the separate reviewer token when reviewing a plan. `/healthz` checks the API process and `/v1/health/ready` checks the datastore in local development mode. Use `GET /release-profile` to check the build scope and excluded capabilities. Community startup refuses `OPSBLAZE_EFFECT_ADAPTER` values other than `simulator` and refuses `OPSBLAZE_LIVE_POLICY_PROMOTION=true`. The API specification is at `/docs`. For hot reload during development, run `uvicorn backend.api:app --host 127.0.0.1 --reload` and `npm --prefix frontend run dev -- --host 127.0.0.1`, then open port 5173.
 
 For a packaged candidate, verify the archive SHA-256 and GitHub provenance before extracting it. From the extracted directory, install the wheel in `python/` into a virtual environment, configure the external PostgreSQL and Temporal prerequisites as above, and run `python -m backend.community`. The archive already contains `frontend/dist`. Keep the release's `SOURCE_COMMIT`, `RELEASE_PROFILE.json`, and `REQUIREMENT_ACCEPTANCE.json` with its verification record.
 
-Before upgrading a single-host installation, record the current source commit, drain or record in-flight work, and preserve a disposable-verified PostgreSQL backup and a copy of the stopped Temporal development store. Test the new migrations and replay in isolation first. For rollback, stop the new services and restore the paired data snapshots into isolated destinations before starting the previous verified build. Preserve receipts, revocations, and pending workflow intents. See the [operations runbook](docs/runbooks/operational-gates.md) for safe recovery and the [restore drill](docs/engineering/RECOVERY_DRILL_REPORT.md) for the tested PostgreSQL sentinel. Paired Temporal-store restoration and real multi-host recovery require separate evidence.
+Before upgrading a single-host installation, record the current source commit, drain or record in-flight work, and preserve a disposable-verified PostgreSQL backup and a copy of the stopped Temporal development store. Test the new migrations and replay in isolation first. For rollback, stop the new services and restore the paired data snapshots into isolated destinations before starting the previous verified build. Preserve receipts, revocations, and pending workflow intents. See the [operations runbook](docs/runbooks/operational-gates.md) for safe recovery and the [native paired recovery procedure](deploy/systemd/README.md#temporal-persistence-and-recovery). Multi-host recovery requires independent evidence.
 
 ## Run a local incident
 

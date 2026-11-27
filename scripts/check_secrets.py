@@ -17,7 +17,8 @@ def main() -> None:
     failures = []
     for name in names:
         path = Path(name)
-        if path.name.startswith(".env") and name != ".env.example":
+        filename = path.name.casefold()
+        if (filename.startswith(".env") or filename.endswith(".credentials.env")) and name != ".env.example":
             failures.append(f"{name}: environment file must not be tracked")
         if path.suffix in {".pem", ".key", ".p12", ".pfx"}:
             failures.append(f"{name}: credential file must not be tracked")

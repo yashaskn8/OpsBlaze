@@ -9,12 +9,21 @@ ReleaseProfile = Literal["community"]
 COMMUNITY_PROFILE: ReleaseProfile = "community"
 
 
-def release_profile() -> dict[str, str | bool]:
+def release_profile() -> dict[str, str | bool | list[str]]:
     return {
         "architecture_version": "2.0",
         "profile": COMMUNITY_PROFILE,
         "effect_scope": "simulator_only",
         "live_policy_promotion": False,
+        "excluded_capabilities": [
+            "external_identity_qualification",
+            "external_adapter_execution",
+            "multi_host_availability_qualification",
+            "independent_ai_qualification",
+            "live_policy_promotion",
+            "independent_release_authority",
+            "external_security_and_privacy_qualification",
+        ],
         "enterprise_acceptance": "ENTERPRISE_BLOCKED",
     }
 

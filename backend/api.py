@@ -103,7 +103,7 @@ def healthz() -> dict[str, str]:
 
 
 @app.get("/release-profile")
-def release_profile_metadata(response: Response) -> dict[str, str | bool]:
+def release_profile_metadata(response: Response) -> dict[str, str | bool | list[str]]:
     response.headers["Cache-Control"] = "no-store"
     return release_profile()
 

@@ -7,6 +7,7 @@ import uvicorn
 from fastapi.staticfiles import StaticFiles
 
 from backend.api import app
+from backend.settings import get_settings
 
 
 def main() -> None:
@@ -18,6 +19,10 @@ def main() -> None:
         parser.error("port must be between 1 and 65535")
     if not (args.frontend_dir / "index.html").is_file():
         parser.error("the frontend build is missing index.html")
+    try:
+        get_settings()
+    except ValueError as exc:
+        parser.error(str(exc))
     app.mount("/", StaticFiles(directory=args.frontend_dir, html=True), name="workbench")
     uvicorn.run(app, host="127.0.0.1", port=args.port, proxy_headers=False)
 

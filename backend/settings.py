@@ -1,7 +1,9 @@
 from functools import lru_cache
+import os
+from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.release_profile import COMMUNITY_PROFILE, ReleaseProfile
@@ -9,7 +11,7 @@ from backend.release_profile import COMMUNITY_PROFILE, ReleaseProfile
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="OPSBLAZE_", env_file=".env", extra="ignore"
+        env_prefix="OPSBLAZE_", env_file=".env", extra="ignore", hide_input_in_errors=True
     )
 
     database_url: str = "postgresql+asyncpg://opsblaze:opsblaze@localhost:5432/opsblaze"
@@ -24,6 +26,8 @@ class Settings(BaseSettings):
     idp_event_audience: str = ""  # Dedicated signed revocation event audience
     environment: Literal["development", "production"] = "development"
     release_profile: ReleaseProfile = COMMUNITY_PROFILE
+    effect_adapter: Literal["simulator"] = "simulator"
+    live_policy_promotion: bool = False
     otel_traces_endpoint: str = ""  # Off by default; explicit collector only.
     otel_sample_ratio: float = Field(default=0.1, ge=0, le=1)
     temporal_address: str = "127.0.0.1:7233"
@@ -53,7 +57,27 @@ class Settings(BaseSettings):
     ai_advisory_model: str = "gpt-6.2-sol"
     ai_token_limit_per_minute: int = 2048
 
+    @field_validator("local_token", "review_token")
+    @classmethod
+    def reject_sample_token(cls, value: str | None) -> str | None:
+        if value in {"replace-with-a-long-random-local-token", "use-a-different-long-random-reviewer-token"}:
+            return None
+        return value
+
+    @field_validator("live_policy_promotion")
+    @classmethod
+    def refuse_live_policy_promotion(cls, enabled: bool) -> bool:
+        if enabled:
+            raise ValueError("live policy promotion is unavailable in Community Edition")
+        return enabled
+
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    credentials_file = os.environ.get("OPSBLAZE_CREDENTIALS_FILE")
+    if not credentials_file:
+        return Settings()
+    path = Path(credentials_file)
+    if not path.is_file():
+        raise ValueError("OPSBLAZE_CREDENTIALS_FILE must name an existing local file")
+    return Settings(_env_file=(".env", path))
