@@ -38,6 +38,9 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["backend*"]
 
+[dependency-groups]
+release-build = ["build>=1.2,<2", "setuptools>=75"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
