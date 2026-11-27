@@ -136,6 +136,45 @@ async def test_b2_checks_expiry_after_waiting_for_postgres_lock(operation, monke
 @pytest.mark.integration
 @pytest.mark.pg_e2e
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["renew", "reserve"])
+async def test_b2_contention_times_out_without_mutating_the_reservation(operation):
+    database_url = get_settings().database_url
+    assert database_url.startswith("postgresql+asyncpg:")
+    engine = create_async_engine(database_url)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    tenant = f"lease-contention-{uuid4().hex}"
+    target = "checkout"
+    digest = "c" * 64
+    try:
+        async with sessions.begin() as session:
+            session.add_all([
+                SimulatorTarget(tenant_id=tenant, target_id=target, version=1, healthy=False, last_fence=0),
+                ResourceEpoch(tenant_id=tenant, target_id=target, latest_fence=0, version_seen=1),
+            ])
+        async with sessions() as session:
+            holder = await admit_incident(session, tenant, "holder", IncidentCreate(target_id=target))
+        permit = await reserve_simulator_target(sessions, tenant, target, holder.id, digest)
+        async with sessions.begin() as session:
+            epoch = await session.get(ResourceEpoch, (tenant, target), with_for_update=True)
+            if operation == "renew":
+                request = renew_simulator_reservation(sessions, tenant, target, holder.id, permit.fence)
+            else:
+                request = reserve_simulator_target(sessions, tenant, target, holder.id, digest)
+            with pytest.raises(ReservationBusy):
+                await asyncio.wait_for(request, timeout=3)
+            assert epoch.latest_fence == permit.fence
+
+        async with sessions() as session:
+            row = await session.get(ResourceReservation, (tenant, target))
+            assert row.fence == permit.fence and row.expires_at == permit.expires_at
+        assert await reserve_simulator_target(sessions, tenant, target, holder.id, digest) == permit
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
 async def test_b2_concurrent_simulator_retries_return_the_committed_effect():
     database_url = get_settings().database_url
     assert database_url.startswith("postgresql+asyncpg:")

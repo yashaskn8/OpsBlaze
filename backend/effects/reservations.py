@@ -3,8 +3,8 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.adapters.simulator import Permit, utc
@@ -13,6 +13,17 @@ from backend.models import ResourceEpoch, ResourceReservation, SimulatorTarget
 
 class ReservationBusy(Exception):
     pass
+
+
+async def _bound_reservation_lock_wait(session: AsyncSession) -> None:
+    if session.get_bind().dialect.name == "postgresql":
+        await session.execute(text("SET LOCAL lock_timeout = '1s'"))
+
+
+def _is_lock_contention(exc: DBAPIError) -> bool:
+    return getattr(exc.orig, "sqlstate", None) == "55P03" or (
+        isinstance(exc, OperationalError) and "locked" in str(exc.orig).lower()
+    )
 
 
 def _project_reservation(
@@ -167,6 +178,7 @@ async def reserve_simulator_target(
         async with sessions() as session:
             async with session.begin():
                 key = (tenant_id, target_id)
+                await _bound_reservation_lock_wait(session)
                 epoch = await session.get(ResourceEpoch, key, with_for_update=True)
                 reservation = await session.get(ResourceReservation, key, with_for_update=True)
                 target = await session.get(SimulatorTarget, key, with_for_update=True)
@@ -225,8 +237,8 @@ async def reserve_simulator_target(
                 )
     except IntegrityError as exc:
         raise ReservationBusy("target is already reserved") from exc
-    except OperationalError as exc:
-        if "locked" in str(exc).lower():
+    except DBAPIError as exc:
+        if _is_lock_contention(exc):
             raise ReservationBusy("target is already reserved") from exc
         raise
 
@@ -248,6 +260,7 @@ async def renew_simulator_reservation(
         async with sessions() as session:
             async with session.begin():
                 key = (tenant_id, target_id)
+                await _bound_reservation_lock_wait(session)
                 epoch = await session.get(ResourceEpoch, key, with_for_update=True)
                 reservation = await session.get(ResourceReservation, key, with_for_update=True)
                 target = await session.get(SimulatorTarget, key, with_for_update=True)
@@ -277,7 +290,7 @@ async def renew_simulator_reservation(
                     expected_version=reservation.expected_version,
                     expires_at=extended,
                 )
-    except OperationalError as exc:
-        if "locked" in str(exc).lower():
+    except DBAPIError as exc:
+        if _is_lock_contention(exc):
             raise ReservationBusy("target reservation lock contention") from exc
         raise

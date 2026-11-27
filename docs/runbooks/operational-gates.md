@@ -45,6 +45,12 @@ tokens, and identity-provider subject values out of public tickets and logs.
   idempotency identity, fence, expected target version and immutable receipt.
   Simulator operators can use the existing status-only reconciliation API
   `POST /v1/effects/{effect_id}/reconcile` with an authorized session.
+  For a disposable simulator database, run
+  `python -m backend.workers.reconciler --mode effects --limit 20`. If the
+  result contains `next_cursor`, repeat with `--after <next_cursor>` to inspect
+  the remaining receipts in effect ID order. A null cursor ends the pass.
+  Start another pass without `--after` to revisit unresolved or newly created
+  receipts. Each page observes current database state.
 - **Safe action:** status inquiry for the *same* effect identity only.
   Reconciliation must not issue a new apply. If status or postcondition
   cannot be proved, leave the receipt unresolved and escalate to a human.

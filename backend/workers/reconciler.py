@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -92,17 +93,17 @@ async def reconcile_unresolved_effects(
     adapter: SimulatorAdapter,
     *,
     limit: int = 20,
+    after: UUID | None = None,
 ) -> dict:
-    """B3-06: bounded read-only reconciliation poller for unresolved receipts."""
+    """Page through unresolved receipts without authorizing another apply."""
     if not 1 <= limit <= 100:
         raise ValueError("scan bounds must be positive and limited")
+    query = select(EffectReceipt.id).where(EffectReceipt.state.in_(UNRESOLVED_EFFECT_STATES))
+    if after is not None:
+        query = query.where(EffectReceipt.id > after)
     async with sessions() as session:
-        effect_ids = list((await session.scalars(
-            select(EffectReceipt.id)
-            .where(EffectReceipt.state.in_(UNRESOLVED_EFFECT_STATES))
-            .order_by(EffectReceipt.updated_at, EffectReceipt.id)
-            .limit(limit)
-        )).all())
+        selected = (await session.scalars(query.order_by(EffectReceipt.id).limit(limit + 1))).all()
+    effect_ids = selected[:limit]
 
     reconciled_verified = 0
     still_unresolved = 0
@@ -127,6 +128,7 @@ async def reconcile_unresolved_effects(
 
     return {
         "scanned": len(effect_ids),
+        "next_cursor": str(effect_ids[-1]) if len(selected) > limit else None,
         "reconciled_verified": reconciled_verified,
         "still_unresolved": still_unresolved,
         "needs_review": needs_review,
@@ -142,12 +144,15 @@ async def main() -> None:
     parser.add_argument("--mode", choices=("temporal", "effects"), default="temporal")
     parser.add_argument("--stale-seconds", type=int, default=300)
     parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--after", type=UUID, help="Continue effect reconciliation from next_cursor")
     args = parser.parse_args()
+    if args.after is not None and args.mode != "effects":
+        parser.error("--after requires --mode effects")
     settings = get_settings()
     sessions = get_session_maker()
     if args.mode == "effects":
         summary = await reconcile_unresolved_effects(
-            sessions, SimulatorAdapter(sessions), limit=args.limit,
+            sessions, SimulatorAdapter(sessions), limit=args.limit, after=args.after,
         )
         print(json.dumps(summary, indent=2))
         return

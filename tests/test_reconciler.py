@@ -1,6 +1,7 @@
 """B1 discrepancy scan never guesses workflow state or mutates incidents."""
 
 from datetime import datetime, timedelta, timezone
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
@@ -153,6 +154,59 @@ async def test_bounded_effect_reconciliation_poller_handles_lost_ack_and_outage(
         r_b = await session.get(EffectReceipt, eid_b)
         assert r_a.state == "VERIFIED" and r_a.attempt_count == 1
         assert r_b.state == "VERIFIED" and r_b.attempt_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_can_advance_past_a_receipt_with_unavailable_status(sessions_fixture):
+    await assert_reconciliation_cursor(sessions_fixture)
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_native_reconciliation_pages_advance_past_unavailable_status(native_sessions_fixture):
+    await assert_reconciliation_cursor(native_sessions_fixture)
+
+
+async def assert_reconciliation_cursor(sessions):
+    last_uuid = 2**128 - 1
+    first_id, second_id = UUID(int=last_uuid - 1), UUID(int=last_uuid)
+    tenant = f"reconcile-{uuid4().hex}"
+    async with sessions() as session:
+        incident = await admit_incident(session, tenant, "scan", IncidentCreate(target_id="svc"))
+        async with session.begin():
+            for index, effect_id in enumerate((first_id, second_id), start=1):
+                session.add(EffectReceipt(
+                    id=effect_id, tenant_id=tenant, incident_id=incident.id, target_id="svc",
+                    plan_digest=f"{index:064x}", permit_digest="a" * 64,
+                    idempotency_key=f"effect-{index}", state="UNKNOWN", attempt_count=1,
+                    fence=index, expected_version=1,
+                ))
+
+    class StatusOnlyAdapter:
+        async def query_effect(self, effect_id):
+            if effect_id == first_id:
+                raise ConnectionError("status unavailable")
+            assert effect_id == second_id
+            return 2
+
+        async def observe(self, tenant_id, target_id):
+            assert (tenant_id, target_id) == (tenant, "svc")
+            return 2, True
+
+    adapter = StatusOnlyAdapter()
+    first = await reconcile_unresolved_effects(sessions, adapter, limit=1, after=UUID(int=last_uuid - 2))
+    assert first["still_unresolved"] == 1
+    assert first["next_cursor"] == str(first_id)
+    second = await reconcile_unresolved_effects(
+        sessions, adapter, limit=1, after=UUID(first["next_cursor"]),
+    )
+    assert second["reconciled_verified"] == 1
+    assert second["next_cursor"] is None
+    async with sessions() as session:
+        assert (await session.get(EffectReceipt, first_id)).state == "UNKNOWN"
+        verified = await session.get(EffectReceipt, second_id)
+        assert verified.state == "VERIFIED" and verified.attempt_count == 1
 
 
 @pytest.mark.asyncio
