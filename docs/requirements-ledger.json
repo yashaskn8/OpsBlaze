@@ -4,8 +4,8 @@
   "source": {
     "document": "TITAN20_MASTER_PRODUCTION_ARCHITECTURE_AGENTIC_AI_BLUEPRINT_2027.pdf",
     "sections": [
-      "2.1\u20132.20",
-      "5.2\u20135.5",
+      "2.1–2.20",
+      "5.2–5.5",
       "6.6"
     ],
     "source_snapshot": "f30c355fa8c97f88ec12f567c12ef3e49f2aefb9",
@@ -676,6 +676,27 @@
         "requirement": "P3",
         "change": "Bounded database readiness probes, workbench fencing, and pre-UI-redesign functional closure",
         "workflow_run": 45821688845,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+      },
+      {
+        "commit": "59948b08d9fe65925d147c6bbb6d5c13c3de44cc",
+        "requirement": "B2",
+        "change": "Simulator lease and effect contention hardening, including the preceding bounded Temporal outbox delivery change; exact-commit simulator CI only.",
+        "workflow_run": 46008100337,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+      },
+      {
+        "commit": "55df22119082a7a73527726d710f41f4b75eb047",
+        "requirement": "S1",
+        "change": "Resumable replay validation and production feature criteria; preceding reservation contention and effect-recovery pagination included in this exact source tree.",
+        "workflow_run": 46009589052,
+        "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
+      },
+      {
+        "commit": "783692facdd2a671ff92368a6f50a5b3db6954c1",
+        "requirement": "E7",
+        "change": "Optional routing memory failure isolation and runtime feature traces; preceding probe expiry, evidence scrubbing, notification watermark, rate-denial and retention continuation changes included in this source tree. Does not establish independent AI effectiveness or production qualification.",
+        "workflow_run": 46011531225,
         "verification": "EXACT_COMMIT_CI_SUCCESS_ALL_10_JOBS"
       }
     ],
