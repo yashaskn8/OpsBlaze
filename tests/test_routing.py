@@ -1,6 +1,6 @@
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from backend.models import PolicyAssignment, RouteDecision, SimulatorTarget
 from backend.routing.decision import ROUTER_POLICY_ID, select_route
@@ -52,6 +52,35 @@ async def test_simulator_route_never_uses_model_or_memory(sessions_fixture):
     assert selected.route == "RUNBOOK"
     assert selected.propensity == 1
     assert selected.cost_cap_probes == 2
+
+
+@pytest.mark.integration
+@pytest.mark.pg_e2e
+@pytest.mark.asyncio
+async def test_postgres_memory_statement_failure_preserves_the_router_fallback(
+    native_sessions_fixture, monkeypatch,
+):
+    from uuid import uuid4
+
+    tenant = f"route-fallback-{uuid4().hex}"
+    async with native_sessions_fixture.begin() as session:
+        session.add(SimulatorTarget(
+            tenant_id=tenant, target_id="checkout", version=1, healthy=False, last_fence=0,
+        ))
+    async with native_sessions_fixture() as session:
+        incident = await admit_incident(session, tenant, "route", IncidentCreate(target_id="checkout"))
+
+    async def unavailable_lessons(session, *_args, **_kwargs):
+        await session.execute(text("SELECT 1 / 0"))
+
+    monkeypatch.setattr("backend.routing.decision.retrieve_active_lessons", unavailable_lessons)
+    decision = await select_route(native_sessions_fixture, tenant, incident.id)
+    assert decision.route == "RUNBOOK"
+    assert decision.context_features["memory_status"] == "MEMORY_FALLBACK_UNAVAILABLE"
+    assert decision.context_features["eligible_lesson_ids"] == []
+    async with native_sessions_fixture() as session:
+        stored = await session.get(RouteDecision, decision.id)
+        assert stored.context_features == decision.context_features
 
 
 @pytest.mark.asyncio

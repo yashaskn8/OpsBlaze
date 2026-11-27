@@ -99,9 +99,11 @@ async def select_route(
                 classify_evidence_freshness(latest_ev) if latest_ev is not None else "NONE"
             )
             try:
-                eligible_lessons = await retrieve_active_lessons(
-                    session, tenant_id, incident.target_id, limit=4,
-                )
+                # Optional reads must not abort the transaction holding the route lock.
+                async with session.begin_nested():
+                    eligible_lessons = await retrieve_active_lessons(
+                        session, tenant_id, incident.target_id, limit=4,
+                    )
                 eligible_memory_ids = [str(lesson.id) for lesson in eligible_lessons]
                 memory_status = "VALIDATED_LESSONS" if eligible_memory_ids else "NO_MEMORY"
             except SQLAlchemyError:

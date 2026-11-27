@@ -55,3 +55,32 @@ These criteria apply published engineering practices to the existing capability 
 This increment gives B2 reserve and renew a one-second PostgreSQL timeout per lock acquisition within their transactions. The native test held a competing row lock and reproduced the original three-second caller timeout. The revised operation reports contention while preserving the incumbent lease. B3 adds a continuation cursor to the reconciliation tool. S1 checks stored manifests and partial results before resume. Reading a replay result fell from two SQL statements to one, and historical terminal results remain available with their recorded versions. The changes leave the independent acceptance criteria in place.
 
 Verification passed 780 Windows-compatible backend tests at 78.91% branch-aware coverage, 36 native PostgreSQL tests, 12 separate Temporal integration and replay tests, and 17 frontend tests and the build. Playwright MCP verified both false-acknowledgment replay arms in the browser. Alembic found zero schema drift. CodeGraph, Import Linter, and Dependency Cruiser passed.
+
+## CodeGraph runtime review
+
+The review followed the paths below from the `55df221` source checkpoint. The listed regressions are entry points for verification. The [production gates](../production-acceptance-gates.md) still define independent acceptance.
+
+| Capability | Runtime path traced | Regression or implementation result |
+|---|---|---|
+| B1 | `admit_incident` → `claim_intent_batch` → `dispatch_batch` → `IncidentWorkflow` | `test_dispatcher.py`, `test_temporal_dispatch_recovery.py`, `test_temporal_history_replay.py` cover causal ordering, retry and replay. |
+| B2 | `reserve_simulator_target` → `SimulatorAdapter.apply` → `release_simulator_reservation` | `test_b2_reservation_invariants.py` covers contention, expiry and concurrent retry. |
+| B3 | `execute_simulator_effect` → `set_state` → `reconcile_effect` | `test_simulator_effects.py` and `test_reconciler.py` cover unknown status and continuation without a second apply. |
+| B4 | `admit_incident` → `enforce_active_capacity`, plus `queue_health` and `readiness` | `test_admission.py`, `test_queue_metrics.py`, and `test_worker_heartbeat.py` cover limits and degraded readiness. |
+| A1 | `inspect` → `build_competing_hypotheses` → `write_step` | `test_investigation_contracts.py` exercises bounded investigation and persisted context. |
+| A2 | `invoke_probe` and `reserve_external_probe_intent` → `ProbeCapability` → `ProbeCall` | Idle target counters are removed after normal and exceptional exit. Both paths check expiry after acquiring database locks. `test_probes.py` covers both cleanup paths and expiry during native PostgreSQL contention. |
+| A3 | `_record_evidence_access` and `run_maintenance` → `expire_evidence_payloads` | The hourly maintenance entry point now scrubs expired excerpts in bounded transactions. `test_maintenance.py` verifies that audit digests and original expiry deadlines survive. |
+| A4 | `assess_decision` → `DecisionAssessment` → plan eligibility | `test_assessments.py` and `test_retention.py` cover abstention and evidence expiry. |
+| P1 | `incident_ui_events` and `stream_incident_events` → `read_event_page` | Polling and streaming now read events and the retention watermark in one statement. `test_events_sse.py` covers expiry, concurrent retention, and tenant scope. |
+| P2 | `decide_incident_plan` → `decide_plan` → `current_plan_evidence_is_intact` | `test_plans.py` and `test_pg_two_worker_failover.py` cover approval constraints and stale evidence. |
+| P3 | `read_lineage_page`, plus `recover_lineage_page` → `rebuild_evidence_page` | `test_lineage.py` and `test_lineage_recovery.py` cover scoped reads and atomic repair checkpoints. |
+| S1 | `start_pair` → `resume_pair` → `pair_report` | `test_paired_replay.py` covers sealed fixtures, partial results and one-snapshot reporting. |
+| E1 | `project_experience_outbox` → `capture_capsule` or `mark_projection_dead_letter` | `test_experience_projector.py` and `test_pg_projector_role.py` cover idempotency and scoped database permissions. |
+| E2 | `adjudicate_simulator` → `OutcomeRevision` → `invalidate_outcome_dependents` | `test_outcomes.py` covers independent witness requirements, revisions and downstream invalidation. |
+| E3 | `record_case` → `review_classification` → `draft_candidate` → `submit_candidate` | `test_failure_proposals.py` and `test_failure_reviews.py` cover review conflicts and candidate restrictions. |
+| E4 | `run_e4_memory_ablation` → `evaluate_memory_vs_no_memory` → `retrieve_cited_memory_context` | `test_local_benchmarks.py` retains the native three-statement lookup and fresh-evidence controls. Effectiveness remains unverified. |
+| E5 | `evaluate_heldout` → `measured_recovery_cost` → `verify_release_evidence` | `test_heldout.py`, `test_recovery_cost.py`, and `test_release_evidence.py` cover distinct held-out cases and cost accounting. |
+| E6 | `register_bundle` → `create_rollout` → `record_shadow_observation` → `stop_rollout` | `test_policy_drafts.py` covers shadow-only assignment, stop, and rollback. |
+| E7 | `select_incident_route` → `select_route` → `retrieve_active_lessons` | A savepoint now confines a PostgreSQL statement error during optional memory retrieval to that read. `test_routing.py` verifies the no-memory route persists. |
+| E8 | `execute_suite` → `SimulatorAdapter.apply` and `query_effect` | `test_adapter_conformance.py` covers the simulator. `test_external_adapter_qualification.py` exercises offline evidence validation. |
+
+Verification passed 784 Windows-compatible backend tests plus two targeted tests for rate-denial replay and evidence backlog continuation. Combined branch-aware coverage was 78.95%. The native suite passed 41 PostgreSQL tests with zero schema drift. The separate Temporal suite passed 12 integration and replay tests, and the frontend passed 17 tests and the build. Playwright MCP verified the live workbench, keyboard review and result focus. CodeGraph reported no cycles, all six Import Linter contracts held, and Dependency Cruiser reported no violations.
