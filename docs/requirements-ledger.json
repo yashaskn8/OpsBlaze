@@ -14,6 +14,48 @@
   "production_acceptance": "BLOCKED",
   "gate_source": "docs/production-acceptance-gates.md",
   "omega_atomic_ledger": "requirements-omega.json",
+  "omega_engineering_evidence": {
+    "OB-B1-08a": {
+      "profile": "community",
+      "verification": "PARTIALLY_IMPLEMENTED",
+      "commit": "01afb3656d7acec8ad096fd1bf9130e07e79538d",
+      "covered_paths": ["scripts/pg_restore_smoke.py", "backend/workers/dispatcher.py", "migrations", "pyproject.toml"],
+      "environment": "GitHub-hosted Linux native PostgreSQL and Temporal",
+      "evidence": "CI run 46049377476 paired restore record preserves a pending workflow and its history. Cross-store recovery audit coverage and paired RPO/RTO measurements are still open."
+    },
+    "OB-X-02": {
+      "profile": "community",
+      "verification": "PARTIALLY_IMPLEMENTED",
+      "commit": "01afb3656d7acec8ad096fd1bf9130e07e79538d",
+      "covered_paths": ["deploy/systemd/opsblaze-temporal-community.service", "scripts/check_native_services.py", "scripts/pg_restore_smoke.py", "pyproject.toml"],
+      "environment": "GitHub-hosted Linux static unit check and native restore drill",
+      "evidence": "CI run 46049377476 checks supervision source, the cold Temporal restore and the matching PostgreSQL backup. The systemd unit still needs supervised clean-host execution."
+    },
+    "OB-X-04": {
+      "profile": "community",
+      "verification": "LOCALLY_VERIFIED",
+      "commit": "3284eb32444473f3b123d5aad27d349808fd1d5d",
+      "covered_paths": [".env.example", ".gitignore", "scripts/issue_local_credentials.py", "scripts/check_secrets.py", "backend/settings.py", "backend/auth.py", "tests/test_release_profiles.py", "pyproject.toml"],
+      "environment": "Windows native ACLs and disposable Community API settings",
+      "evidence": "Credential rotation regression verifies owner-only protected ACLs, separate credentials, refusal to overwrite and rejection of the old operator token."
+    },
+    "OB-X-05": {
+      "profile": "community",
+      "verification": "LOCALLY_VERIFIED",
+      "commit": "3284eb32444473f3b123d5aad27d349808fd1d5d",
+      "covered_paths": ["backend/community.py", "backend/settings.py", "backend/release_profile.py", "backend/api.py", "backend/adapters", "backend/policy", "tests/test_release_profiles.py", "pyproject.toml"],
+      "environment": "Windows launcher subprocess and Playwright Chromium against the built loopback workbench",
+      "evidence": "Both excluded configurations exit before startup. The live /release-profile response lists the excluded capabilities."
+    },
+    "SH-REL-05": {
+      "profile": "community",
+      "verification": "LOCALLY_VERIFIED",
+      "commit": "01afb3656d7acec8ad096fd1bf9130e07e79538d",
+      "covered_paths": [".github/workflows/ci.yml"],
+      "environment": "GitHub-hosted provenance verified with GitHub CLI on Windows",
+      "evidence": "The archive from CI run 46049377476 verifies against the exact repository, workflow, main ref, source commit and artifact SHA-256."
+    }
+  },
   "release_profiles": {
     "architecture_version": "2.0",
     "evidence_baseline": "c88065af312e2d2ea52150e6b47e1e69c9baaed8",

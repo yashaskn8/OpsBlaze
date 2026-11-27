@@ -160,3 +160,47 @@ def test_release_decision_requires_commit_and_hashes_the_built_artifact(tmp_path
     assert decision["artifact_sha256"] == sha256(artifact.read_bytes()).hexdigest()
     assert decision["community"]["release_status"] == "PENDING"
     assert decision["enterprise"]["release_status"] == "ENTERPRISE_BLOCKED"
+
+
+def test_evidence_becomes_stale_after_covered_changes_even_if_reverted(tmp_path):
+    from scripts.release_requirements import apply_engineering_evidence, evidence_freshness
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
+            cwd=tmp_path, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    def commit(filename, contents):
+        (tmp_path / filename).write_text(contents, encoding="utf-8")
+        git("add", "--", filename)
+        git("commit", "-m", "Synthetic freshness fixture")
+        return git("rev-parse", "HEAD")
+
+    git("init", "--quiet")
+    baseline = commit("covered.py", "original")
+    uncovered = commit("uncovered.py", "unrelated")
+    changed = commit("covered.py", "changed")
+    reverted = commit("covered.py", "original")
+    assert evidence_freshness(tmp_path, baseline, baseline, ["covered.py"]) == "FRESH"
+    assert evidence_freshness(tmp_path, baseline, uncovered, ["covered.py"]) == "FRESH"
+    assert evidence_freshness(tmp_path, baseline, changed, ["covered.py"]) == "STALE"
+    assert evidence_freshness(tmp_path, baseline, reverted, ["covered.py"]) == "STALE"
+    assert evidence_freshness(tmp_path, changed, baseline, ["covered.py"]) == "STALE"
+    assert evidence_freshness(tmp_path, "a" * 40, baseline, ["covered.py"]) == "STALE"
+    assert evidence_freshness(tmp_path, baseline, None, ["covered.py"]) == "NOT_EVALUATED"
+
+    evidence = {"example": {
+        "profile": "community", "commit": baseline, "covered_paths": ["covered.py"],
+        "verification": "CI_VERIFIED", "environment": "test", "evidence": "fixture",
+    }}
+    for target in (uncovered, reverted):
+        row = {"id": "example", "applicability": {"community": "MANDATORY"}}
+        omega = {"requirements": [row], "exclusions": {}}
+        apply_engineering_evidence(omega, evidence, tmp_path, target)
+        if target == uncovered:
+            assert row["current_verification"] == {"community": "CI_VERIFIED"}
+            assert omega["engineering_evidence_status"] == {"FRESH": 1}
+        else:
+            assert "current_verification" not in row
+            assert omega["engineering_evidence_status"] == {"STALE": 1}

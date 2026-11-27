@@ -12,6 +12,8 @@ Record-level Community applicability after the sole authorized exclusion is 224 
 
 `SH-REL-01` remains visible as `USER_AUTHORIZED_SCOPE_EXCLUSION` and contributes no verification or acceptance credit. The candidate carries no redistribution claim. For an artifact-bound decision, run `python scripts/release_requirements.py --decision --source-commit <full-sha> --artifact <candidate.tar.gz>`. The command checks the archive's source marker and hashes the completed archive. CI uploads the decision beside the archive and checksum. The inventory assembled inside the archive is historical verification context. Zero Omega requirements have formal acceptance recorded.
 
+New engineering evidence records include the verified commit and covered repository paths. When assembling an exact-commit inventory, the release workflow checks the history between the verified and candidate commits. A later change to a covered path, including a reverted change, marks the record `STALE`. A missing verifiable history also marks it stale. The report retains stale records for traceability and withholds their current verification credit. Use `--source-commit` with a checkout that includes the relevant history to run the same check locally.
+
 | Community gate | Current evidence and decision |
 |---|---|
 | C1 Local identity and authorization | Local API, tenant isolation, distinct review credentials and refusal tests. Community acceptance pending validation of the packaged installation and operator session procedure. |

@@ -4,8 +4,9 @@ import argparse
 from collections import Counter
 from hashlib import file_digest
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
+import subprocess
 import tarfile
 
 COMMUNITY_GATES = ("C1", "C2", "C3", "C4", "C5", "C6")
@@ -24,6 +25,61 @@ VERIFICATION_PRECEDENCE = (
     "PARTIALLY_IMPLEMENTED", "INCONCLUSIVE", "ACCEPTANCE_PENDING", "IMPLEMENTED_UNVERIFIED",
     "LOCALLY_VERIFIED", "CI_VERIFIED",
 )
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def evidence_freshness(
+    repository: Path, verified_commit: str, target_commit: str | None, covered_paths: list[str],
+) -> str:
+    if not FULL_SHA.fullmatch(verified_commit) or (target_commit and not FULL_SHA.fullmatch(target_commit)):
+        raise ValueError("evidence requires full source commits")
+    if not covered_paths or any(
+        not path or path == "." or "\\" in path or PurePosixPath(path).is_absolute()
+        or ".." in PurePosixPath(path).parts
+        for path in covered_paths
+    ):
+        raise ValueError("evidence requires literal repository-relative covered paths")
+    if target_commit is None:
+        return "NOT_EVALUATED"
+    try:
+        ancestry = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", verified_commit, target_commit],
+            cwd=repository, capture_output=True, check=False,
+        )
+        if ancestry.returncode:
+            return "STALE"
+        changes = subprocess.run(
+            ["git", "--literal-pathspecs", "log", "--full-history", "-1", "--format=%H",
+             f"{verified_commit}..{target_commit}", "--", *covered_paths],
+            cwd=repository, capture_output=True, check=False,
+        )
+        return "STALE" if changes.returncode or changes.stdout else "FRESH"
+    except OSError:
+        return "STALE"
+
+
+def apply_engineering_evidence(
+    omega: dict, evidence: dict, repository: Path, target_commit: str | None,
+) -> None:
+    rows = {row["id"]: row for row in omega["requirements"]}
+    freshness = Counter()
+    for row_id, record in evidence.items():
+        if (
+            row_id not in rows or row_id in omega["exclusions"]
+            or record["profile"] not in PROFILES
+            or rows[row_id]["applicability"][record["profile"]] == "NOT_APPLICABLE"
+            or record["verification"] not in {"PARTIALLY_IMPLEMENTED", "LOCALLY_VERIFIED", "CI_VERIFIED"}
+            or not record["evidence"] or not record["environment"]
+        ):
+            raise ValueError(f"invalid engineering evidence for {row_id}")
+        status = evidence_freshness(repository, record["commit"], target_commit, record["covered_paths"])
+        rows[row_id]["engineering_evidence"] = {**record, "freshness": status}
+        if status == "FRESH":
+            rows[row_id]["current_verification"] = {record["profile"]: record["verification"]}
+        else:
+            rows[row_id].pop("current_verification", None)
+        freshness[status] += 1
+    omega["engineering_evidence_status"] = dict(freshness)
 
 
 def omega_requirements(path: Path, anchor_ids: set[str], capability_ids: set[str]) -> dict:
@@ -124,6 +180,7 @@ def release_requirements(docs: Path, source_commit: str | None = None) -> dict:
     capability_gates = {row["id"]: row["production_gates"] for row in ledger["requirements"]}
     anchor_ids = {row["id"] for capability in audit["capabilities"] for row in capability["requirements"]}
     omega = omega_requirements(docs / ledger["omega_atomic_ledger"], anchor_ids, set(capability_gates))
+    apply_engineering_evidence(omega, ledger["omega_engineering_evidence"], docs.resolve().parent, source_commit)
     atomic_status = {row["id"]: row["verification"]["community"] for row in omega["requirements"]}
     rows = []
     for capability in audit["capabilities"]:
@@ -232,7 +289,7 @@ def main() -> None:
     parser.add_argument("--decision", action="store_true", help="emit an artifact-bound release decision")
     parser.add_argument("--artifact", type=Path, help="completed artifact to hash for a release decision")
     args = parser.parse_args()
-    if args.source_commit is not None and re.fullmatch(r"[0-9a-f]{40}", args.source_commit) is None:
+    if args.source_commit is not None and FULL_SHA.fullmatch(args.source_commit) is None:
         parser.error("source commit must be a full lowercase Git SHA")
     if args.decision and (not args.source_commit or args.artifact is None):
         parser.error("a release decision requires --source-commit and --artifact")
