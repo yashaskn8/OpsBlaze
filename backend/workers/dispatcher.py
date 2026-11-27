@@ -22,6 +22,7 @@ from backend.workers.outbox import (
 )
 
 log = logging.getLogger(__name__)
+DELIVERY_TIMEOUT_SECONDS = 5
 
 
 def workflow_id(tenant_id: str, incident_id: UUID) -> str:
@@ -87,7 +88,8 @@ async def _deliver_and_ack(
             "opsblaze.outbox.deliver", incident_id=incident_id,
             event_id=entry_id, parent=parent,
         ):
-            await deliver_intent(client, intent)
+            async with asyncio.timeout(DELIVERY_TIMEOUT_SECONDS):
+                await deliver_intent(client, intent)
     except Exception as exc:
         # Temporal exception text may include sensitive payloads. Persist a
         # safe class label only; never log the exception or traceback.

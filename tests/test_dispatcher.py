@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from backend.models import OutboxEntry
-from backend.workers.dispatcher import claim_intent, dispatch_once, workflow_id
+from backend.workers.dispatcher import claim_intent, dispatch_batch, dispatch_once, workflow_id
 
 
 def test_workflow_identity_is_stable() -> None:
@@ -34,6 +34,33 @@ async def test_dispatch_failure_retains_outbox(sessions_fixture) -> None:
         row = await session.scalar(select(OutboxEntry))
         assert row.delivered_at is None
         assert row.attempt == 1
+
+
+@pytest.mark.asyncio
+async def test_stalled_temporal_delivery_leaves_retry_pending_and_batch_continues(
+    sessions_fixture, monkeypatch,
+):
+    from backend.schemas import IncidentCreate
+    from backend.services import admit_incident
+
+    async with sessions_fixture() as session:
+        stalled = await admit_incident(session, "a", "stalled", IncidentCreate(target_id="test-a"))
+    async with sessions_fixture() as session:
+        healthy = await admit_incident(session, "a", "healthy", IncidentCreate(target_id="test-b"))
+
+    class Client:
+        async def start_workflow(self, _workflow, *, id, **_options):
+            if id == workflow_id("a", stalled.id):
+                await asyncio.Event().wait()
+
+    monkeypatch.setattr("backend.workers.dispatcher.DELIVERY_TIMEOUT_SECONDS", 0.05, raising=False)
+    count = await asyncio.wait_for(dispatch_batch(Client(), sessions_fixture), timeout=1)
+    assert count == 2
+    async with sessions_fixture() as session:
+        entries = {row.incident_id: row for row in await session.scalars(select(OutboxEntry))}
+        assert entries[stalled.id].delivered_at is None
+        assert entries[stalled.id].attempt == 1
+        assert entries[healthy.id].delivered_at is not None
 
 
 @pytest.mark.asyncio

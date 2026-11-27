@@ -1,5 +1,6 @@
 """B1 lost-ack replay against native Temporal, with a durable outbox row."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -14,19 +15,28 @@ from backend.workers.dispatcher import dispatch_once, workflow_id
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_lost_start_ack_reuses_one_temporal_workflow(sessions_fixture):
+@pytest.mark.parametrize("loss", ["connection", "deadline"])
+async def test_lost_start_ack_reuses_one_temporal_workflow(sessions_fixture, monkeypatch, loss):
     async with sessions_fixture() as session:
         incident = await admit_incident(
             session, "t", "lost-ack", IncidentCreate(target_id="checkout")
         )
     async with await WorkflowEnvironment.start_local() as env:
+        committed_run = None
+
         class LostAckClient:
             async def start_workflow(self, *args, **kwargs):
-                await env.client.start_workflow(*args, **kwargs)
+                nonlocal committed_run
+                handle = await env.client.start_workflow(*args, **kwargs)
+                committed_run = handle.result_run_id
+                if loss == "deadline":
+                    await asyncio.Event().wait()
                 raise ConnectionError("Temporal start committed, acknowledgment lost")
 
         # The outbox is not marked delivered after the simulated lost response.
-        assert await dispatch_once(LostAckClient(), sessions_fixture)
+        monkeypatch.setattr("backend.workers.dispatcher.DELIVERY_TIMEOUT_SECONDS", 2)
+        assert await asyncio.wait_for(dispatch_once(LostAckClient(), sessions_fixture), timeout=7)
+        assert committed_run is not None
         async with sessions_fixture() as session:
             pending = await session.scalar(select(OutboxEntry))
             assert pending.attempt == 1
@@ -47,6 +57,7 @@ async def test_lost_start_ack_reuses_one_temporal_workflow(sessions_fixture):
             assert await session.scalar(
                 select(OutboxEntry.id).where(OutboxEntry.delivered_at.is_(None))
             ) is None
-        assert await env.client.get_workflow_handle(
+        live = await env.client.get_workflow_handle(
             workflow_id("t", incident.id)
-        ).describe() is not None
+        ).describe()
+        assert live.run_id == committed_run
