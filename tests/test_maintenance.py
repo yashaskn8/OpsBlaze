@@ -103,6 +103,27 @@ async def assert_scheduled_evidence_scrub(sessions):
 
 
 @pytest.mark.asyncio
+async def test_scheduled_evidence_scrub_resumes_after_reaching_batch_limit(sessions_fixture):
+    now = datetime.now(timezone.utc)
+    async with sessions_fixture() as session:
+        incident = await admit_incident(
+            session, "tenant", "evidence-backlog", IncidentCreate(target_id="checkout"),
+        )
+        async with session.begin():
+            session.add_all(Evidence(
+                id=uuid4(), tenant_id="tenant", incident_id=incident.id, target_id="checkout",
+                source="simulator.health", source_version="simulator-v1", observed_at=now,
+                expires_at=now, sha256="a" * 64, redacted_excerpt="{}",
+                classification="INTERNAL", validity="VALID",
+            ) for _ in range(501))
+
+    first = await run_maintenance(sessions_fixture, Settings(), now=now, max_batches=1)
+    assert first["evidence_scrubbed"] == 500
+    remainder = await run_maintenance(sessions_fixture, Settings(), now=now, max_batches=1)
+    assert remainder["evidence_scrubbed"] == 1
+
+
+@pytest.mark.asyncio
 async def test_maintenance_rejects_unbounded_schedule_settings(sessions_fixture):
     with pytest.raises(ValueError, match="batch count"):
         await run_maintenance(sessions_fixture, Settings(), max_batches=0)

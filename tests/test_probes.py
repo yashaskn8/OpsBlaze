@@ -55,6 +55,26 @@ async def test_completed_probe_drops_idle_target_counter(sessions_fixture, fails
     assert (tenant, "checkout") not in _ACTIVE_TARGET_PROBES
 
 
+@pytest.mark.asyncio
+async def test_rate_denial_replays_without_taking_another_active_probe_slot(sessions_fixture, monkeypatch):
+    tenant = f"probe-rate-{uuid4().hex}"
+    monkeypatch.setitem(gateway.PROBE_CATALOG["simulator.health"], "rate_limit_per_minute", 1)
+    async with sessions_fixture() as session:
+        first = await admit_incident(session, tenant, "first", IncidentCreate(target_id="checkout"))
+        second = await admit_incident(session, tenant, "second", IncidentCreate(target_id="checkout"))
+
+    await invoke_probe(sessions_fixture, tenant, first.id, 1, "simulator.health")
+    key = (tenant, "checkout")
+    monkeypatch.setitem(_ACTIVE_TARGET_PROBES, key, 1)
+    denied = await invoke_probe(sessions_fixture, tenant, second.id, 1, "simulator.health")
+    assert denied.outcome == "DENIED" and denied.evidence_id is None
+    assert await invoke_probe(sessions_fixture, tenant, second.id, 1, "simulator.health") == denied
+    assert _ACTIVE_TARGET_PROBES[key] == 1
+    async with sessions_fixture() as session:
+        stored = await session.get(Incident, second.id)
+        assert stored.probe_used == 1
+
+
 @pytest.mark.integration
 @pytest.mark.pg_e2e
 @pytest.mark.asyncio
